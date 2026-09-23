@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HyperStream — Transmissão P2P (60 FPS)</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <div id="app" class="app-container">
+    
+    <!-- TELA 1: LOBBY DE ENTRADA / CRIAÇÃO DE SALA -->
+    <div id="lobbyScreen" class="screen active">
+      <div class="lobby-card">
+        <div class="lobby-header">
+          <div class="logo-icon">⚡</div>
+          <h1>HyperStream</h1>
+          <p class="subtitle">Transmissão P2P de Alta Performance a 60 FPS</p>
+        </div>
+
+        <!-- Seletor de Modo: Criar Sala vs Entrar em Sala -->
+        <div class="lobby-tabs" id="lobbyTabs">
+          <button type="button" class="lobby-tab-btn active" data-tab="create" id="tabBtnCreate">
+            👑 Criar Sala
+          </button>
+          <button type="button" class="lobby-tab-btn" data-tab="join" id="tabBtnJoin">
+            🚪 Entrar em Sala
+          </button>
+        </div>
+
+        <!-- Alerta / Mensagem de Erro do Lobby -->
+        <div id="lobbyAlert" class="lobby-alert hidden"></div>
+
+        <!-- PAINEL 1: CRIAR NOVA SALA (HOST) -->
+        <form id="createRoomForm" class="lobby-form lobby-pane active">
+          <div class="form-group">
+            <label for="createUsernameInput">Seu Nome ou Apelido</label>
+            <input type="text" id="createUsernameInput" placeholder="Ex: Alex" required maxlength="25">
+          </div>
+
+          <div class="form-group">
+            <label for="createRoomIdInput">Código da Sala</label>
+            <div class="input-with-button">
+              <input type="text" id="createRoomIdInput" placeholder="Ex: stream-gamer" required maxlength="32">
+              <button type="button" id="btnRandomRoom" class="btn btn-secondary" title="Gerar código aleatório">🎲 Gerar</button>
+            </div>
+            <span class="help-text">Letras, números e hífens. Você será o Host desta sala.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="createPasswordInput">
+              <span>🔒 Senha / PIN de Acesso</span>
+              <span class="label-badge-optional">Opcional</span>
+            </label>
+            <input type="text" id="createPasswordInput" placeholder="Ex: 1234 (deixe vazio se for pública)" maxlength="20" autocomplete="off">
+            <span class="help-text">Se definida, apenas convidados com o PIN ou link com token poderão entrar.</span>
+          </div>
+
+          <button type="submit" id="btnSubmitCreate" class="btn btn-primary btn-block">
+            🚀 Criar Sala e Iniciar
+          </button>
+        </form>
+
+        <!-- PAINEL 2: ENTRAR EM SALA EXISTENTE (CONVIDADO) -->
+        <form id="joinRoomForm" class="lobby-form lobby-pane">
+          <div class="form-group">
+            <label for="joinUsernameInput">Seu Nome ou Apelido</label>
+            <input type="text" id="joinUsernameInput" placeholder="Ex: Visitante" required maxlength="25">
+          </div>
+
+          <div class="form-group">
+            <label for="joinRoomIdInput">Código da Sala</label>
+            <input type="text" id="joinRoomIdInput" placeholder="Ex: stream-gamer" required maxlength="32">
+          </div>
+
+          <div class="form-group">
+            <label for="joinPasswordInput">
+              <span>🔑 Senha / PIN da Sala</span>
+              <span class="label-badge-optional">Se exigida</span>
+            </label>
+            <input type="text" id="joinPasswordInput" placeholder="Digite o PIN se a sala for protegida" maxlength="20" autocomplete="off">
+          </div>
+
+          <button type="submit" id="btnSubmitJoin" class="btn btn-primary btn-block">
+            🚪 Entrar na Transmissão
+          </button>
+        </form>
+
+        <div class="lobby-footer">
+          <span class="badge-pill">Sem Media Relay</span>
+          <span class="badge-pill">P2P Mesh</span>
+          <span class="badge-pill">60 FPS Ready</span>
+          <span class="badge-pill">PIN Opcional</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELA 2: SALA DE TRANSMISSÃO E REPRODUÇÃO -->
+    <div id="roomScreen" class="screen">
+      
+      <!-- Topbar / Cabeçalho da Sala -->
+      <header class="room-header">
+        <div class="header-left">
+          <span class="room-title">Sala: <strong id="displayRoomId">---</strong></span>
+          <button id="btnCopyLink" class="btn-icon" title="Copiar link de convite com chave de acesso">📋 Copiar Link</button>
+          <span id="roleBadge" class="badge">Espectador</span>
+          <span id="roomLockBadge" class="badge hidden">🔒 Protegida</span>
+          <span id="desktopAppBadge" class="badge badge-desktop hidden" title="Aceleração por Hardware Windows Graphics Capture (WGC) Ativa">🖥️ Desktop WGC</span>
+          <span id="connectionBadge" class="status-badge connecting">Sinalizando...</span>
+        </div>
+
+        <div class="header-right">
+          <!-- Seletor Unificado de Layouts (Web & Desktop) -->
+          <div class="layout-selector-group" id="layoutSelectorGroup" role="group" aria-label="Seletor de Layout">
+            <button type="button" id="btnLayoutGrid" class="btn-layout active" title="Layout Mosaico (Grid)" data-layout="grid">
+              <span class="icon">🔲</span>
+              <span class="label">Mosaico</span>
+            </button>
+            <button type="button" id="btnLayoutStage" class="btn-layout" title="Layout Palco (Destaque Principal)" data-layout="stage">
+              <span class="icon">🎭</span>
+              <span class="label">Palco</span>
+            </button>
+            <button type="button" id="btnLayoutTheater" class="btn-layout" title="Modo Teatro (Expandido sem painel lateral)" data-layout="theater">
+              <span class="icon">🎬</span>
+              <span class="label">Teatro</span>
+            </button>
+          </div>
+
+          <!-- Botão para Recolher / Expandir Painel Lateral -->
+          <button type="button" id="btnToggleSidebar" class="btn btn-secondary btn-sm" title="Alternar Painel Lateral">
+            💬 <span id="sidebarBtnLabel">Chat</span>
+          </button>
+
+          <button id="btnToggleHud" class="btn btn-secondary btn-sm" title="Alternar métricas da transmissão">
+            📊 Telemetria (HUD)
+          </button>
+          <span id="userCountBadge" class="user-counter">👥 1 participante</span>
+        </div>
+      </header>
+
+      <!-- Área de Conteúdo Principal -->
+      <div class="room-body" id="roomBody" data-layout="grid">
+        
+        <!-- Player de Vídeo e Palco Central -->
+        <main class="stream-viewport">
+          <div class="video-wrapper" id="videoWrapper">
+            <!-- Grid Dinâmico Adaptativo de Transmissões (Câmeras e Telas) -->
+            <div id="videoGrid" class="video-grid" data-count="0">
+              <!-- Stream tiles injetados dinamicamente via JavaScript -->
+            </div>
+
+            <!-- Banner para ativar áudio em caso de restrição do navegador -->
+            <div id="unmuteBanner" class="unmute-banner hidden">
+              <span>🔊 O áudio da transmissão está silenciado. <strong>Clique aqui para ouvir</strong></span>
+            </div>
+
+            <!-- Dock Flutuante de Prévia Local (Self-View: Câmera e Tela Local) -->
+            <div id="localDock" class="local-dock hidden">
+              <div class="local-dock-header">
+                <span class="dock-title">👁️ Sua Prévia</span>
+                <div class="dock-actions">
+                  <button id="btnMinimizeDock" class="dock-btn" title="Minimizar prévias">−</button>
+                </div>
+              </div>
+              <div id="localDockContent" class="local-dock-content">
+                <!-- Cards de mídia local injetados via JavaScript -->
+              </div>
+            </div>
+
+            <!-- Pill Flutuante para reabrir a prévia quando minimizada -->
+            <button id="localDockPill" class="local-dock-pill hidden" title="Clique para expandir sua prévia">
+              <span id="localDockPillLabel">📹 Sua Transmissão</span>
+              <span class="pill-expand-icon">▲</span>
+            </button>
+
+            <!-- Placeholder quando ninguém estiver transmitindo -->
+            <div id="streamPlaceholder" class="stream-placeholder">
+              <div class="placeholder-content">
+                <div class="placeholder-icon">📡</div>
+                <h3>Nenhuma transmissão ativa</h3>
+                <p id="placeholderNotice">Inicie sua câmera ou compartilhe sua tela para começar a transmitir.</p>
+                <div class="placeholder-actions">
+                  <button id="btnPromptCamera" class="btn btn-primary btn-sm">📹 Ativar Câmera</button>
+                  <button id="btnPromptShare" class="btn btn-secondary btn-sm">🖥️ Compartilhar Tela (60 FPS)</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- HUD de Telemetria e Diagnóstico WebRTC (Quality Controller) -->
+            <div id="telemetryHud" class="telemetry-hud hidden">
+              <div class="hud-header">Métricas de Conexão WebRTC (getStats)</div>
+              <div class="hud-grid">
+                <div class="hud-item">
+                  <span class="hud-label">FPS Real:</span>
+                  <span id="hudFps" class="hud-value">--</span>
+                </div>
+                <div class="hud-item">
+                  <span class="hud-label">Resolução:</span>
+                  <span id="hudResolution" class="hud-value">--</span>
+                </div>
+                <div class="hud-item">
+                  <span class="hud-label">Latência (RTT):</span>
+                  <span id="hudRtt" class="hud-value">-- ms</span>
+                </div>
+                <div class="hud-item">
+                  <span class="hud-label">Bitrate:</span>
+                  <span id="hudBitrate" class="hud-value">-- Mbps</span>
+                </div>
+                <div class="hud-item">
+                  <span class="hud-label">Perda de Pacotes:</span>
+                  <span id="hudPacketLoss" class="hud-value">-- %</span>
+                </div>
+                <div class="hud-item">
+                  <span class="hud-label">Codec Ativo:</span>
+                  <span id="hudCodec" class="hud-value">Negociando</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Barra de Controles Inferior -->
+          <footer class="controls-toolbar">
+            <button id="btnShareScreen" class="btn-control" title="Compartilhar Tela (60 FPS)">
+              <span class="icon">🖥️</span>
+              <span class="label">Compartilhar Tela</span>
+            </button>
+
+            <button id="btnToggleCamera" class="btn-control" title="Ativar/Desativar Câmera">
+              <span class="icon" id="cameraIcon">📹</span>
+              <span class="label" id="cameraLabel">Câmera</span>
+            </button>
+
+            <button id="btnToggleAudio" class="btn-control" title="Ativar/Desativar Microfone">
+              <span class="icon" id="micIcon">🎤</span>
+              <span class="label" id="micLabel">Microfone</span>
+            </button>
+
+            <button id="btnFullscreen" class="btn-control" title="Tela Cheia">
+              <span class="icon">⛶</span>
+              <span class="label">Tela Cheia</span>
+            </button>
+
+            <button id="btnLeaveRoom" class="btn-control btn-danger" title="Sair da Sala">
+              <span class="icon">🚪</span>
+              <span class="label">Sair</span>
+            </button>
+          </footer>
+        </main>
+
+        <!-- Painel Lateral: Participantes e Chat -->
+        <aside class="room-sidebar">
+          <div class="sidebar-tabs">
+            <button class="tab-btn active" data-tab="chat">Chat</button>
+            <button class="tab-btn" data-tab="participants">Participantes (<span id="tabUserCount">1</span>)</button>
+          </div>
+
+          <!-- Aba de Chat -->
+          <div id="tabChat" class="tab-pane active">
+            <div id="chatMessages" class="chat-messages">
+              <div class="system-message">
+                <span>Bem-vindo à sala! O tráfego de mídia é transmitido via P2P direto.</span>
+              </div>
+            </div>
+            <form id="chatForm" class="chat-input-form">
+              <input type="text" id="chatInput" placeholder="Digite sua mensagem..." maxlength="300" autocomplete="off">
+              <button type="submit" class="btn btn-primary btn-sm">Enviar</button>
+            </form>
+          </div>
+
+          <!-- Aba de Participantes -->
+          <div id="tabParticipants" class="tab-pane">
+            <ul id="participantsList" class="participants-list">
+              <!-- Renderizado dinamicamente via JS -->
+            </ul>
+          </div>
+        </aside>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Scripts Modularizados (Canal 1 e 2) -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

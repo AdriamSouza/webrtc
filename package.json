@@ -1,0 +1,22 @@
+{
+  "name": "hyperstream",
+  "version": "1.0.0",
+  "description": "HyperStream — Plataforma de Transmissão WebRTC P2P em 60 FPS (Web & Desktop WGC)",
+  "private": true,
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "backend": "node backend/src/server.js",
+    "desktop": "npm --prefix desktop start",
+    "test:layouts": "node backend/test_layouts.cjs"
+  },
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "screen-sharing",
+    "electron",
+    "windows-graphics-capture",
+    "60fps"
+  ],
+  "author": "",
+  "license": "MIT"
+}

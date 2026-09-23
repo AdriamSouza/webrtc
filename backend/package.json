@@ -1,0 +1,29 @@
+{
+  "name": "webrtc-signaling-backend",
+  "version": "1.0.0",
+  "description": "Servidor de sinalização e orquestração para plataforma de transmissão WebRTC P2P em 60 FPS",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "signaling",
+    "screen-share",
+    "60fps",
+    "websocket"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.11.0"
+  }
+}

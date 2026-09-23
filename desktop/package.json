@@ -1,0 +1,23 @@
+{
+  "name": "hyperstream-desktop",
+  "version": "1.0.0",
+  "description": "HyperStream — Cliente Desktop Nativo com aceleração Windows Graphics Capture (WGC) a 60 FPS",
+  "main": "src/main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "webrtc",
+    "electron",
+    "wgc",
+    "windows-graphics-capture",
+    "60fps",
+    "gaming"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^33.2.1"
+  }
+}

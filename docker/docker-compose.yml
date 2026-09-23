@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Canal 1 e Canal 2: Backend Node.js com Express e WebSocket
+  backend:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.backend
+    container_name: webrtc-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - MAX_USERS_PER_ROOM=20
+      - TURN_URL=turn:localhost:3478
+      - TURN_USERNAME=webrtcuser
+      - TURN_PASSWORD=webrtcpass
+    networks:
+      - webrtc-net
+
+  # Canal 3 Relay Fallback: Servidor STUN / TURN coturn
+  coturn:
+    image: coturn/coturn:latest
+    container_name: webrtc-coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "5349:5349/udp"
+      - "49152-49200:49152-49200/udp"
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    network_mode: "host"
+
+  # Proxy Reverso e Terminação SSL (Obrigatório para getDisplayMedia em produção)
+  nginx:
+    image: nginx:alpine
+    container_name: webrtc-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - webrtc-net
+
+networks:
+  webrtc-net:
+    driver: bridge

@@ -113,6 +113,8 @@ let currentSpotlightId = null;
 let isDockMinimized = false;
 let currentAttemptedPin = null;
 let isConnecting = false;
+const peerSyncTimers = new Map(); // Map<userId, number> - Timer de retry único por peer (previne loop exponencial)
+const peerRetryCounts = new Map(); // Map<userId, number> - Contador de tentativas limitadas
 
 // Estado de Layout (Sincronizado entre Web e Desktop)
 let currentLayoutMode = (() => {
@@ -268,8 +270,10 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
     entry.stream = stream;
     if (entry.videoEl.srcObject !== stream) {
       entry.videoEl.srcObject = stream;
+      entry.videoEl.play().catch(e => console.warn('[App] Play tile:', e));
+    } else if (entry.videoEl.paused) {
+      entry.videoEl.play().catch(e => console.warn('[App] Resume tile:', e));
     }
-    entry.videoEl.play().catch(e => console.warn('[App] Play tile:', e));
     return entry;
   }
 
@@ -390,7 +394,11 @@ function removeTile(id) {
   if (!entry) return;
 
   if (entry.videoEl) {
-    entry.videoEl.srcObject = null;
+    try {
+      entry.videoEl.pause();
+      entry.videoEl.srcObject = null;
+      entry.videoEl.load();
+    } catch (_) {}
   }
 
   entry.tileEl.remove();
@@ -408,16 +416,26 @@ function removeTile(id) {
   updateGridLayout();
 }
 
-  /**
+function clearPeerSyncTimer(userId) {
+  if (peerSyncTimers.has(userId)) {
+    clearTimeout(peerSyncTimers.get(userId));
+    peerSyncTimers.delete(userId);
+  }
+}
+
+/**
  * Sincroniza dinamicamente as transmissões remotas de um usuário no grid
  * Garante que Tela e Câmera sejam exibidas em cards distintos e re-conectem instantaneamente
+ * Utiliza retentativas controladas e limitadas com cancelamento, eliminando vazamento de CPU/RAM.
  */
 function syncRemotePeerTiles(userId) {
+  clearPeerSyncTimer(userId);
+
   const participant = roomState.participants.get(userId);
   const participantName = participant ? participant.name : `Usuário ${userId.substring(0, 4)}`;
   const userMedia = remoteUserMedia.get(userId) || { screen: false, camera: false };
 
-  console.log(`[App] syncRemotePeerTiles para ${participantName}: tela=${userMedia.screen}, camera=${userMedia.camera}`);
+  let pendingTrack = false;
 
   // 1. Sincroniza Transmissão de Tela
   const screenTileId = `${userId}-screen`;
@@ -425,7 +443,7 @@ function syncRemotePeerTiles(userId) {
     const screenStream = webrtc.getRemoteStreamForTile(userId, 'screen');
     const screenVideoTrack = webrtc.getRemoteVideoTrack(userId, 'screen');
 
-    if (screenVideoTrack) {
+    if (screenVideoTrack && screenVideoTrack.readyState === 'live') {
       addOrUpdateTile({
         id: screenTileId,
         title: `${participantName} (Tela 60 FPS)`,
@@ -437,13 +455,12 @@ function syncRemotePeerTiles(userId) {
       screenVideoTrack.onunmute = () => {
         console.log(`[App] Tela de ${participantName} pronta para reprodução (unmute)`);
         const tile = activeTiles.get(screenTileId);
-        if (tile && tile.videoEl) {
+        if (tile && tile.videoEl && tile.videoEl.paused) {
           tile.videoEl.play().catch(e => console.warn(e));
         }
       };
     } else {
-      setTimeout(() => syncRemotePeerTiles(userId), 300);
-      setTimeout(() => syncRemotePeerTiles(userId), 800);
+      pendingTrack = true;
     }
   } else {
     removeTile(screenTileId);
@@ -455,7 +472,7 @@ function syncRemotePeerTiles(userId) {
     const cameraStream = webrtc.getRemoteStreamForTile(userId, 'camera');
     const cameraVideoTrack = webrtc.getRemoteVideoTrack(userId, 'camera');
 
-    if (cameraVideoTrack) {
+    if (cameraVideoTrack && cameraVideoTrack.readyState === 'live') {
       addOrUpdateTile({
         id: cameraTileId,
         title: `${participantName} (Câmera)`,
@@ -467,16 +484,31 @@ function syncRemotePeerTiles(userId) {
       cameraVideoTrack.onunmute = () => {
         console.log(`[App] Câmera de ${participantName} pronta para reprodução (unmute)`);
         const tile = activeTiles.get(cameraTileId);
-        if (tile && tile.videoEl) {
+        if (tile && tile.videoEl && tile.videoEl.paused) {
           tile.videoEl.play().catch(e => console.warn(e));
         }
       };
     } else {
-      setTimeout(() => syncRemotePeerTiles(userId), 300);
-      setTimeout(() => syncRemotePeerTiles(userId), 800);
+      pendingTrack = true;
     }
   } else {
     removeTile(cameraTileId);
+  }
+
+  if (pendingTrack) {
+    const retries = peerRetryCounts.get(userId) || 0;
+    if (retries < 6) {
+      peerRetryCounts.set(userId, retries + 1);
+      const timer = setTimeout(() => {
+        peerSyncTimers.delete(userId);
+        syncRemotePeerTiles(userId);
+      }, 500);
+      peerSyncTimers.set(userId, timer);
+    } else {
+      peerRetryCounts.delete(userId);
+    }
+  } else {
+    peerRetryCounts.delete(userId);
   }
 
   updateGridLayout();
@@ -1080,6 +1112,8 @@ function promptDesktopSourcePicker() {
 
     function cleanup() {
       desktopSourceModal.classList.add('hidden');
+      sourcesGrid.innerHTML = '';
+      cachedDesktopSources = [];
       btnCloseSourceModal?.removeEventListener('click', onCancel);
       btnCancelSourcePicker?.removeEventListener('click', onCancel);
       tabSourcesScreens?.removeEventListener('click', onTabScreens);
@@ -1393,6 +1427,8 @@ function setupSignalingEvents() {
 
   signaling.on('USER_LEFT', (msg) => {
     const { userId, username } = msg.data;
+    clearPeerSyncTimer(userId);
+    peerRetryCounts.delete(userId);
     roomState.removeParticipant(userId);
     webrtc.closePeer(userId);
 
@@ -1550,6 +1586,10 @@ function leaveCurrentRoom() {
   signaling.send('LEAVE_ROOM', {});
   signaling.disconnect();
 
+  peerSyncTimers.forEach(t => clearTimeout(t));
+  peerSyncTimers.clear();
+  peerRetryCounts.clear();
+
   removeLocalPreview('screen');
   removeLocalPreview('camera');
   localPreviews.clear();
@@ -1557,7 +1597,13 @@ function leaveCurrentRoom() {
   updateLocalDockVisibility();
 
   activeTiles.forEach(({ videoEl }) => {
-    if (videoEl) videoEl.srcObject = null;
+    if (videoEl) {
+      try {
+        videoEl.pause();
+        videoEl.srcObject = null;
+        videoEl.load();
+      } catch (_) {}
+    }
   });
   activeTiles.clear();
   videoGrid.innerHTML = '';

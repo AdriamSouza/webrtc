@@ -25,6 +25,7 @@ export class WebRTCManager {
     this.remoteStreams = new Map(); // Map<targetUserId, MediaStream>
     this.remotePeerTracks = new Map(); // Map<targetUserId, { screenVideoTrack, cameraVideoTrack, audioTracks: Set<MediaStreamTrack> }>
     this.remoteStreamByTrackId = new Map(); // Map<trackId, MediaStream>
+    this.tileStreams = new Map(); // Map<"${targetUserId}:${type}", MediaStream>
     this.localStream = null;
     this.mediaManager = null;
     this.onRemoteStream = null;
@@ -393,24 +394,53 @@ export class WebRTCManager {
   }
 
   /**
-   * Constrói MediaStream completo para um tile remoto específico
+   * Retorna MediaStream persistente para um tile remoto específico, sincronizando tracks in-place
+   * Evita a recriação excessiva de instâncias de MediaStream e vazamento de memória de decodificadores GPU
    */
   getRemoteStreamForTile(targetUserId, type = 'screen') {
-    const videoTrack = this.getRemoteVideoTrack(targetUserId, type);
-    const audioTracks = [];
+    const key = `${targetUserId}:${type}`;
+    let stream = this.tileStreams.get(key);
+    if (!stream) {
+      stream = new MediaStream();
+      this.tileStreams.set(key, stream);
+    }
 
+    const videoTrack = this.getRemoteVideoTrack(targetUserId, type);
+    const currentVideoTracks = stream.getVideoTracks();
+
+    // Sincroniza track de vídeo se mudou
+    if (videoTrack) {
+      if (!currentVideoTracks.includes(videoTrack)) {
+        currentVideoTracks.forEach(t => stream.removeTrack(t));
+        stream.addTrack(videoTrack);
+      }
+    } else {
+      currentVideoTracks.forEach(t => stream.removeTrack(t));
+    }
+
+    // Sincroniza tracks de áudio disponíveis
     const pc = this.peers.get(targetUserId);
+    const targetAudioTracks = [];
     if (pc) {
       pc.getReceivers().forEach(r => {
         if (r.track && r.track.kind === 'audio') {
-          audioTracks.push(r.track);
+          targetAudioTracks.push(r.track);
         }
       });
     }
 
-    const stream = new MediaStream();
-    if (videoTrack) stream.addTrack(videoTrack);
-    audioTracks.forEach(t => stream.addTrack(t));
+    const currentAudioTracks = stream.getAudioTracks();
+    currentAudioTracks.forEach(t => {
+      if (!targetAudioTracks.includes(t)) {
+        stream.removeTrack(t);
+      }
+    });
+    targetAudioTracks.forEach(t => {
+      if (!currentAudioTracks.includes(t)) {
+        stream.addTrack(t);
+      }
+    });
+
     return stream;
   }
 
@@ -609,6 +639,8 @@ export class WebRTCManager {
     this.peerSenders.delete(targetUserId);
     this.remotePeerTracks.delete(targetUserId);
     this.peerMediaMap.delete(targetUserId);
+    this.tileStreams.delete(`${targetUserId}:screen`);
+    this.tileStreams.delete(`${targetUserId}:camera`);
     console.log(`[WebRTC] Peer ${targetUserId} fechado e limpo.`);
   }
 
@@ -623,5 +655,6 @@ export class WebRTCManager {
     this.remotePeerTracks.clear();
     this.peerMediaMap.clear();
     this.remoteStreamByTrackId.clear();
+    this.tileStreams.clear();
   }
 }

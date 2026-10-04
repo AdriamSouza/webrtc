@@ -1,6 +1,6 @@
 {
   "name": "webrtc-signaling-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Servidor de sinalização e orquestração para plataforma de transmissão WebRTC P2P em 60 FPS",
   "main": "src/server.js",
   "type": "module",

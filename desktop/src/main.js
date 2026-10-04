@@ -7,17 +7,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ========================================================
-// FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + ZERO-COPY GPU DIRECT)
+// FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
-// Habilita captura direta via Windows Graphics Capture API (DirectX / Vulkan / Jogos em Tela Cheia Exclusiva)
-app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,ZeroCopyDxgiVideo,WebRtcHideLocalIpsWithMdns');
-// Pipeline Zero-Copy: textura de vídeo permanece na VRAM da GPU sem cópias intermediárias na CPU
+// Habilita captura direta via Windows Graphics Capture API (DirectX / Vulkan / Jogos em Tela Cheia)
+app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture');
+// Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-hardware-overlays', 'single-fullscreen,underlays');
-// Remove limites de FPS e desativa throttling quando a janela do app estiver em segundo plano durante o jogo
-app.commandLine.appendSwitch('disable-frame-rate-limit');
+// Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 // Ignora certificados autoassinados em conexões locais (HTTPS e WebSockets WSS)

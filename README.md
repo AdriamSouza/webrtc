@@ -79,8 +79,61 @@ npm run desktop
 ### 5. Acesso via Web (Navegador)
 Basta abrir o navegador e acessar:
 ```text
-https://localhost:3000
+http://localhost:3000
 ```
+
+---
+
+## 🌍 Testando com Amigos Fora da Rede Local (Internet)
+
+Para testar com amigos pela internet sem precisar abrir portas no roteador e com **HTTPS oficial** (obrigatório pelos navegadores para liberar captura de tela a 60 FPS e webcam):
+
+### 1. Criar o Túnel HTTPS com Cloudflare Tunnel (100% Gratuito)
+Em um terminal separado:
+```bash
+# Se ainda não instalou o cloudflared: winget install Cloudflare.cloudflared
+npm run tunnel
+```
+O Cloudflare Tunnel gerará uma URL pública segura (ex: `https://seu-subdominio.trycloudflare.com`).
+Envie essa URL para seus amigos. Eles não precisam instalar nada!
+
+### 2. Deploy na Nuvem no Render (24/7 Gratuito)
+Para hospedar o servidor permanentemente no [Render.com](https://render.com):
+1. Crie uma conta gratuita no Render e conecte este repositório do GitHub.
+2. Crie um novo **Web Service**.
+3. Defina as seguintes configurações (ou use o arquivo `render.yaml` já incluído):
+   - **Environment / Runtime:** `Node`
+   - **Build Command:** `npm --prefix backend install`
+   - **Start Command:** `npm run backend`
+4. Após o deploy, o Render fornecerá uma URL pública com HTTPS/WSS (ex: `https://hyperstream.onrender.com`).
+5. No App Desktop, basta inserir a URL do Render quando solicitado, ou definir no terminal:
+   ```bash
+   $env:APP_URL="https://hyperstream.onrender.com"; npm run desktop
+   ```
+
+### 3. Configurar Servidor TURN Gratuito (Para CGNAT e Redes 4G/5G)
+Algumas redes móveis ou operadoras residenciais usam CGNAT / NAT Simétrico, bloqueando o P2P UDP direto. Para garantir 100% de conexões de vídeo:
+1. Copie o arquivo de exemplo:
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
+2. Crie uma conta gratuita em [Metered.ca OpenRelay](https://www.metered.ca/tools/openrelay/) (50 GB/mês grátis de TURN).
+3. Preencha `TURN_URLS`, `TURN_USERNAME` e `TURN_PASSWORD` no `backend/.env`. O servidor carregará automaticamente na inicialização.
+
+---
+
+## 📊 Telemetria (HUD) e Perfis de Transmissão
+
+O HyperStream inclui um painel de diagnóstico em tempo real (botão **Telemetria (HUD)**):
+- **FPS Real e Resolução:** Monitoramento contínuo da taxa de quadros e tamanho do canvas.
+- **Tipo de Conexão:** Diagnóstico automático do transporte ICE:
+  - 🟢 **Direto LAN:** Computadores na mesma rede local.
+  - 🌐 **P2P Direto (STUN):** Conexão direta entre amigos pela internet via UDP (menor latência).
+  - 🔄 **Relay (TURN):** Tráfego retransmitido com segurança quando há bloqueio de firewall/CGNAT.
+- **Perfis de Transmissão Ajustáveis:**
+  - ⚡ **Ultra 60:** 1080p60 até 8 Mbps (para rede local ou conexões de fibra de alta velocidade).
+  - ⚖️ **Equilibrado:** 60 FPS até 3.5 Mbps (ideal para transmissões de jogos pela internet).
+  - 🍃 **Econômico:** 30 FPS até 1.8 Mbps (ideal para conexões instáveis ou dados móveis).
 
 ---
 

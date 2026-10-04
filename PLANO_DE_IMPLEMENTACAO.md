@@ -86,8 +86,9 @@ webrtc-platform/
 ### Fase 3: Infraestrutura de Rede, STUN/TURN e HTTPS
 - [x] Configurar STUN público (Google STUN + Cloudflare)
 - [x] Configurar `docker-compose.yml` e `coturn/turnserver.conf` para relay TURN
-- [x] Configurar HTTPS nativo com certificados SSL para desbloquear `getDisplayMedia` em todos os computadores da rede
-- [x] Suporte automático a WSS (WebSocket Seguro)
+- [x] Suporte nativo a `.env` e múltiplos servidores TURN (OpenRelay / Metered / Coturn) com portas TLS 443 para furar CGNAT e 4G/5G
+- [x] Script de túnel público HTTPS com Cloudflare Tunnel (`npm run tunnel`) para testes remotos seguros sem abertura de portas
+- [x] Suporte automático a WSS (WebSocket Seguro) e HTTPS
 - *Status:* **Concluído e Ativo**
 
 ### Fase 4: Interface do Usuário Completa, Multi-Stream e Chat
@@ -106,14 +107,19 @@ webrtc-platform/
 ### Fase 5: Sistema de Controle Adaptativo de Qualidade (Quality Controller)
 - [x] Implementar `frontend/js/qualityController.js` consultando `peerConnection.getStats()` a cada 2s
 - [x] Exibir overlay (HUD) de telemetria em tempo real (RTT, FPS real, Bitrate, Perda de pacotes, Codec)
+- [x] Diagnóstico em tempo real do tipo de conexão ICE no HUD: LAN (`host`), P2P Direto Internet (`srflx`/STUN) e Relay (`relay`/TURN)
+- [x] Seletor de Perfis de Transmissão dinâmico no HUD (Ultra 60 FPS / 8 Mbps, Equilibrado 60 FPS / 3.5 Mbps, Econômico 30 FPS / 1.8 Mbps)
 - [x] Implementar ajuste dinâmico de taxa de envio via `RTCRtpSender.setParameters`
-- [x] Degradação suave e recuperação de bitrate/FPS sob congestionamento de rede
+- [x] Degradação suave e recuperação de bitrate/FPS sob congestionamento de rede respeitando o perfil ativo
 - *Status:* **Concluído e Ativo**
 
 ### Fase 6: Aplicativo Desktop Nativo (Windows Graphics Capture)
-- [ ] Módulo Desktop para captura acelerada via Windows Graphics Capture / Desktop Duplication
-- [ ] Pipeline de textura direta na GPU (VRAM) sem cópia para a RAM
-- *Status:* **Pendente**
+- [x] Módulo Desktop Electron com flags Chromium de aceleração gráfica por GPU e WGC
+- [x] Pipeline Windows Graphics Capture + DXGI Zero-Copy direto na VRAM da GPU sem throttling em segundo plano
+- [x] Modal seletor de janelas e telas nativo com miniaturas e ícones no frontend compartilhado
+- [x] Injeção segura de `window.desktopAPI` via `preload.cjs` e tratamento de conexão com fallback
+- [x] Resolução dinâmica de URL para desenvolvimento local (`localhost:3000`) e produção no Render
+- *Status:* **Concluído e Validado**
 
 ### Fase 7: Aceleração por Hardware & Codecs Modernos
 - [ ] Camada de Abstração de Encoders (NVENC, AMF, QSV e fallback CPU x264)

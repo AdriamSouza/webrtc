@@ -5,9 +5,12 @@
   "private": true,
   "scripts": {
     "start": "node backend/src/server.js",
+    "build": "npm --prefix backend install",
     "backend": "node backend/src/server.js",
     "desktop": "npm --prefix desktop start",
-    "test:layouts": "node backend/test_layouts.cjs"
+    "install:all": "npm --prefix backend install && npm --prefix desktop install",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "tunnel:localtunnel": "npx localtunnel --port 3000"
   },
   "keywords": [
     "webrtc",

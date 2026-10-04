@@ -16,7 +16,15 @@
     <div id="lobbyScreen" class="screen active">
       <div class="lobby-card">
         <div class="lobby-header">
-          <div class="logo-icon">⚡</div>
+          <div class="logo-icon">
+            <svg class="icon-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/>
+              <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/>
+              <circle cx="12" cy="12" r="2"/>
+              <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/>
+              <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>
+            </svg>
+          </div>
           <h1>HyperStream</h1>
           <p class="subtitle">Transmissão P2P de Alta Performance a 60 FPS</p>
         </div>
@@ -24,10 +32,16 @@
         <!-- Seletor de Modo: Criar Sala vs Entrar em Sala -->
         <div class="lobby-tabs" id="lobbyTabs">
           <button type="button" class="lobby-tab-btn active" data-tab="create" id="tabBtnCreate">
-            👑 Criar Sala
+            <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/>
+            </svg>
+            <span>Criar Sala</span>
           </button>
           <button type="button" class="lobby-tab-btn" data-tab="join" id="tabBtnJoin">
-            🚪 Entrar em Sala
+            <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/>
+            </svg>
+            <span>Entrar em Sala</span>
           </button>
         </div>
 
@@ -45,14 +59,29 @@
             <label for="createRoomIdInput">Código da Sala</label>
             <div class="input-with-button">
               <input type="text" id="createRoomIdInput" placeholder="Ex: stream-gamer" required maxlength="32">
-              <button type="button" id="btnRandomRoom" class="btn btn-secondary" title="Gerar código aleatório">🎲 Gerar</button>
+              <button type="button" id="btnRandomRoom" class="btn btn-secondary btn-icon-inline" title="Gerar código aleatório">
+                <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/>
+                  <path d="m18 2 4 4-4 4"/>
+                  <path d="M2 6h1.9c1.5 0 2.8.9 3.4 2.2l.5 1"/>
+                  <path d="m18 14 4 4-4 4"/>
+                  <path d="M11.7 13.7l.6 1c.6 1.3 1.9 2.3 3.4 2.3H22"/>
+                </svg>
+                <span>Gerar</span>
+              </button>
             </div>
             <span class="help-text">Letras, números e hífens. Você será o Host desta sala.</span>
           </div>
 
           <div class="form-group">
             <label for="createPasswordInput">
-              <span>🔒 Senha / PIN de Acesso</span>
+              <span class="label-with-icon">
+                <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span>Senha / PIN de Acesso</span>
+              </span>
               <span class="label-badge-optional">Opcional</span>
             </label>
             <input type="text" id="createPasswordInput" placeholder="Ex: 1234 (deixe vazio se for pública)" maxlength="20" autocomplete="off">
@@ -60,7 +89,7 @@
           </div>
 
           <button type="submit" id="btnSubmitCreate" class="btn btn-primary btn-block">
-            🚀 Criar Sala e Iniciar
+            Criar Sala e Iniciar
           </button>
         </form>
 
@@ -78,14 +107,21 @@
 
           <div class="form-group">
             <label for="joinPasswordInput">
-              <span>🔑 Senha / PIN da Sala</span>
+              <span class="label-with-icon">
+                <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="7.5" cy="15.5" r="5.5"/>
+                  <path d="m21 2-9.6 9.6"/>
+                  <path d="m15.5 7.5 3 3L22 7l-3-3"/>
+                </svg>
+                <span>Senha / PIN da Sala</span>
+              </span>
               <span class="label-badge-optional">Se exigida</span>
             </label>
             <input type="text" id="joinPasswordInput" placeholder="Digite o PIN se a sala for protegida" maxlength="20" autocomplete="off">
           </div>
 
           <button type="submit" id="btnSubmitJoin" class="btn btn-primary btn-block">
-            🚪 Entrar na Transmissão
+            Entrar na Transmissão
           </button>
         </form>
 
@@ -105,39 +141,79 @@
       <header class="room-header">
         <div class="header-left">
           <span class="room-title">Sala: <strong id="displayRoomId">---</strong></span>
-          <button id="btnCopyLink" class="btn-icon" title="Copiar link de convite com chave de acesso">📋 Copiar Link</button>
-          <span id="roleBadge" class="badge">Espectador</span>
-          <span id="roomLockBadge" class="badge hidden">🔒 Protegida</span>
-          <span id="desktopAppBadge" class="badge badge-desktop hidden" title="Aceleração por Hardware Windows Graphics Capture (WGC) Ativa">🖥️ Desktop WGC</span>
-          <span id="connectionBadge" class="status-badge connecting">Sinalizando...</span>
+          <button id="btnCopyLink" class="btn-icon" title="Copiar link de convite com chave de acesso">
+            <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="13" height="13" x="9" y="9" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            <span id="copyLinkText">Copiar Link</span>
+          </button>
+          <span id="roleBadge" class="badge">Participante</span>
+          <span id="roomLockBadge" class="badge hidden">
+            <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span>Protegida</span>
+          </span>
+          <span id="desktopAppBadge" class="badge badge-desktop hidden" title="Aceleração por Hardware Windows Graphics Capture (WGC) Ativa">
+            <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="14" x="2" y="3" rx="2"/>
+              <line x1="8" x2="16" y1="21" y2="21"/>
+              <line x1="12" x2="12" y1="17" y2="21"/>
+            </svg>
+            <span>Desktop WGC</span>
+          </span>
+          <span id="connectionBadge" class="status-badge connecting">
+            <span class="status-dot"></span>
+            <span class="status-text">Sinalizando...</span>
+          </span>
         </div>
 
         <div class="header-right">
           <!-- Seletor Unificado de Layouts (Web & Desktop) -->
           <div class="layout-selector-group" id="layoutSelectorGroup" role="group" aria-label="Seletor de Layout">
             <button type="button" id="btnLayoutGrid" class="btn-layout active" title="Layout Mosaico (Grid)" data-layout="grid">
-              <span class="icon">🔲</span>
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>
+              </svg>
               <span class="label">Mosaico</span>
             </button>
             <button type="button" id="btnLayoutStage" class="btn-layout" title="Layout Palco (Destaque Principal)" data-layout="stage">
-              <span class="icon">🎭</span>
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="18" height="12" x="3" y="3" rx="1.5"/><rect width="5" height="4" x="3" y="17" rx="1"/><rect width="5" height="4" x="9.5" y="17" rx="1"/><rect width="5" height="4" x="16" y="17" rx="1"/>
+              </svg>
               <span class="label">Palco</span>
             </button>
             <button type="button" id="btnLayoutTheater" class="btn-layout" title="Modo Teatro (Expandido sem painel lateral)" data-layout="theater">
-              <span class="icon">🎬</span>
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="15" x="2" y="4.5" rx="2"/><line x1="2" x2="22" y1="9" y2="9"/>
+              </svg>
               <span class="label">Teatro</span>
             </button>
           </div>
 
           <!-- Botão para Recolher / Expandir Painel Lateral -->
-          <button type="button" id="btnToggleSidebar" class="btn btn-secondary btn-sm" title="Alternar Painel Lateral">
-            💬 <span id="sidebarBtnLabel">Chat</span>
+          <button type="button" id="btnToggleSidebar" class="btn btn-secondary btn-sm btn-icon-inline" title="Alternar Painel Lateral">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span id="sidebarBtnLabel">Chat</span>
           </button>
 
-          <button id="btnToggleHud" class="btn btn-secondary btn-sm" title="Alternar métricas da transmissão">
-            📊 Telemetria (HUD)
+          <button id="btnToggleHud" class="btn btn-secondary btn-sm btn-icon-inline" title="Alternar métricas da transmissão">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            <span>Telemetria</span>
           </button>
-          <span id="userCountBadge" class="user-counter">👥 1 participante</span>
+          
+          <span id="userCountBadge" class="user-counter">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span id="userCountText">1 participante</span>
+          </span>
         </div>
       </header>
 
@@ -154,15 +230,29 @@
 
             <!-- Banner para ativar áudio em caso de restrição do navegador -->
             <div id="unmuteBanner" class="unmute-banner hidden">
-              <span>🔊 O áudio da transmissão está silenciado. <strong>Clique aqui para ouvir</strong></span>
+              <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              </svg>
+              <span>Áudio silenciado pelo navegador. <strong>Clique para ouvir</strong></span>
             </div>
 
             <!-- Dock Flutuante de Prévia Local (Self-View: Câmera e Tela Local) -->
             <div id="localDock" class="local-dock hidden">
               <div class="local-dock-header">
-                <span class="dock-title">👁️ Sua Prévia</span>
+                <span class="dock-title">
+                  <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+                  </svg>
+                  <span>Sua Prévia</span>
+                </span>
                 <div class="dock-actions">
-                  <button id="btnMinimizeDock" class="dock-btn" title="Minimizar prévias">−</button>
+                  <button id="btnMinimizeDock" class="dock-btn" title="Minimizar prévias">
+                    <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="5" x2="19" y1="12" y2="12"/>
+                    </svg>
+                  </button>
                 </div>
               </div>
               <div id="localDockContent" class="local-dock-content">
@@ -172,19 +262,42 @@
 
             <!-- Pill Flutuante para reabrir a prévia quando minimizada -->
             <button id="localDockPill" class="local-dock-pill hidden" title="Clique para expandir sua prévia">
-              <span id="localDockPillLabel">📹 Sua Transmissão</span>
-              <span class="pill-expand-icon">▲</span>
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+              </svg>
+              <span id="localDockPillLabel">Sua Transmissão</span>
+              <span class="pill-expand-icon">
+                <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="18 15 12 9 6 15"/>
+                </svg>
+              </span>
             </button>
 
             <!-- Placeholder quando ninguém estiver transmitindo -->
             <div id="streamPlaceholder" class="stream-placeholder">
               <div class="placeholder-content">
-                <div class="placeholder-icon">📡</div>
+                <div class="placeholder-icon">
+                  <svg class="icon-svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="20" height="14" x="2" y="3" rx="2"/>
+                    <line x1="8" x2="16" y1="21" y2="21"/>
+                    <line x1="12" x2="12" y1="17" y2="21"/>
+                  </svg>
+                </div>
                 <h3>Nenhuma transmissão ativa</h3>
                 <p id="placeholderNotice">Inicie sua câmera ou compartilhe sua tela para começar a transmitir.</p>
                 <div class="placeholder-actions">
-                  <button id="btnPromptCamera" class="btn btn-primary btn-sm">📹 Ativar Câmera</button>
-                  <button id="btnPromptShare" class="btn btn-secondary btn-sm">🖥️ Compartilhar Tela (60 FPS)</button>
+                  <button id="btnPromptCamera" class="btn btn-primary btn-sm btn-icon-inline">
+                    <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+                    </svg>
+                    <span>Ativar Câmera</span>
+                  </button>
+                  <button id="btnPromptShare" class="btn btn-secondary btn-sm btn-icon-inline">
+                    <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>
+                    </svg>
+                    <span>Compartilhar Tela (60 FPS)</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -217,6 +330,20 @@
                   <span class="hud-label">Codec Ativo:</span>
                   <span id="hudCodec" class="hud-value">Negociando</span>
                 </div>
+                <div class="hud-item hud-item-full">
+                  <span class="hud-label">Conexão:</span>
+                  <span id="hudConnectionType" class="hud-value hud-connection-type">Detectando...</span>
+                </div>
+              </div>
+
+              <!-- Seletor de Perfil de Qualidade / Banda (Ultra, Equilibrado, Econômico) -->
+              <div class="hud-profile-section">
+                <span class="hud-profile-title">Perfil de Transmissão:</span>
+                <div class="hud-profile-chips">
+                  <button type="button" class="btn-profile active" data-profile="ultra" title="1080p60 a até 8 Mbps (Rede local ou fibra óptica rápida)">Ultra 60</button>
+                  <button type="button" class="btn-profile" data-profile="balanced" title="60 FPS a até 3.5 Mbps (Ideal para jogar pela internet com amigos)">Equilibrado</button>
+                  <button type="button" class="btn-profile" data-profile="eco" title="30 FPS a até 1.8 Mbps (Ideal para internet instável ou 4G)">Econômico</button>
+                </div>
               </div>
             </div>
           </div>
@@ -224,27 +351,53 @@
           <!-- Barra de Controles Inferior -->
           <footer class="controls-toolbar">
             <button id="btnShareScreen" class="btn-control" title="Compartilhar Tela (60 FPS)">
-              <span class="icon">🖥️</span>
-              <span class="label">Compartilhar Tela</span>
+              <span class="icon">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="20" height="14" x="2" y="3" rx="2"/>
+                  <line x1="8" x2="16" y1="21" y2="21"/>
+                  <line x1="12" x2="12" y1="17" y2="21"/>
+                </svg>
+              </span>
+              <span class="label">Tela</span>
             </button>
 
             <button id="btnToggleCamera" class="btn-control" title="Ativar/Desativar Câmera">
-              <span class="icon" id="cameraIcon">📹</span>
+              <span class="icon" id="cameraIcon">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+                </svg>
+              </span>
               <span class="label" id="cameraLabel">Câmera</span>
             </button>
 
             <button id="btnToggleAudio" class="btn-control" title="Ativar/Desativar Microfone">
-              <span class="icon" id="micIcon">🎤</span>
+              <span class="icon" id="micIcon">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" x2="12" y1="19" y2="22"/>
+                </svg>
+              </span>
               <span class="label" id="micLabel">Microfone</span>
             </button>
 
             <button id="btnFullscreen" class="btn-control" title="Tela Cheia">
-              <span class="icon">⛶</span>
+              <span class="icon" id="fullscreenIcon">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                </svg>
+              </span>
               <span class="label">Tela Cheia</span>
             </button>
 
             <button id="btnLeaveRoom" class="btn-control btn-danger" title="Sair da Sala">
-              <span class="icon">🚪</span>
+              <span class="icon">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                  <polyline points="16 17 21 12 16 7"/>
+                  <line x1="21" x2="9" y1="12" y2="12"/>
+                </svg>
+              </span>
               <span class="label">Sair</span>
             </button>
           </footer>
@@ -253,8 +406,18 @@
         <!-- Painel Lateral: Participantes e Chat -->
         <aside class="room-sidebar">
           <div class="sidebar-tabs">
-            <button class="tab-btn active" data-tab="chat">Chat</button>
-            <button class="tab-btn" data-tab="participants">Participantes (<span id="tabUserCount">1</span>)</button>
+            <button class="tab-btn active" data-tab="chat">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span>Chat</span>
+            </button>
+            <button class="tab-btn" data-tab="participants">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              <span>Participantes (<span id="tabUserCount">1</span>)</span>
+            </button>
           </div>
 
           <!-- Aba de Chat -->
@@ -265,7 +428,7 @@
               </div>
             </div>
             <form id="chatForm" class="chat-input-form">
-              <input type="text" id="chatInput" placeholder="Digite sua mensagem..." maxlength="300" autocomplete="off">
+              <input type="text" id="chatInput" placeholder="Digite uma mensagem..." maxlength="300" autocomplete="off">
               <button type="submit" class="btn btn-primary btn-sm">Enviar</button>
             </form>
           </div>
@@ -283,7 +446,58 @@
 
   </div>
 
-  <!-- Scripts Modularizados (Canal 1 e 2) -->
+  <!-- Modal Seletor de Telas e Janelas (WGC Desktop Nativo) -->
+  <div id="desktopSourceModal" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="source-picker-card">
+      <div class="source-picker-header">
+        <div class="source-picker-title">
+          <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <h3>Compartilhar Tela ou Jogo</h3>
+          <span class="badge badge-desktop">WGC 60 FPS</span>
+        </div>
+        <button id="btnCloseSourceModal" class="btn-icon-close" title="Fechar">&times;</button>
+      </div>
+
+      <div class="source-picker-tabs">
+        <button id="tabSourcesScreens" class="source-tab-btn active" data-type="screen">
+          <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <span>Monitores</span>
+        </button>
+        <button id="tabSourcesWindows" class="source-tab-btn" data-type="window">
+          <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          <span>Janelas e Jogos</span>
+        </button>
+      </div>
+
+      <div id="sourcesLoading" class="sources-loading hidden">
+        <div class="loading-spinner"></div>
+        <span>Carregando janelas e monitores com aceleração GPU...</span>
+      </div>
+
+      <div id="sourcesGrid" class="sources-grid">
+        <!-- Renderizado dinamicamente via JS com thumbnails e nomes -->
+      </div>
+
+      <div class="source-picker-footer">
+        <span class="source-picker-note">Pipeline Windows Graphics Capture + DXGI Zero-Copy direto na VRAM da GPU.</span>
+        <button id="btnCancelSourcePicker" class="btn btn-secondary btn-sm">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts Modularizados -->
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

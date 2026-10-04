@@ -6,6 +6,33 @@
  * para garantir transmissão estável de até 60 FPS.
  */
 
+export const QUALITY_PROFILES = {
+  ultra: {
+    id: 'ultra',
+    label: 'Ultra (60 FPS)',
+    maxBitrate: 8000000,
+    minBitrate: 4000000,
+    maxFps: 60,
+    description: '1080p a 60 FPS com até 8 Mbps (Rede local ou fibra óptica rápida)'
+  },
+  balanced: {
+    id: 'balanced',
+    label: 'Equilibrado (60 FPS)',
+    maxBitrate: 3500000,
+    minBitrate: 1500000,
+    maxFps: 60,
+    description: '60 FPS com até 3.5 Mbps (Ideal para jogar pela internet com amigos)'
+  },
+  eco: {
+    id: 'eco',
+    label: 'Econômico (30 FPS)',
+    maxBitrate: 1800000,
+    minBitrate: 800000,
+    maxFps: 30,
+    description: '30 FPS com até 1.8 Mbps (Ideal para conexões instáveis ou 4G)'
+  }
+};
+
 export class QualityController {
   constructor() {
     this.intervalId = null;
@@ -18,9 +45,10 @@ export class QualityController {
     this.prevBytesReceived = 0;
     this.prevTimestamp = 0;
 
-    // Estado da adaptação
-    this.currentMaxBitrate = 8000000; // 8 Mbps padrão inicial para 1080p60
-    this.currentMaxFps = 60;
+    // Perfil ativo e limites de adaptação
+    this.activeProfile = 'ultra';
+    this.currentMaxBitrate = QUALITY_PROFILES.ultra.maxBitrate;
+    this.currentMaxFps = QUALITY_PROFILES.ultra.maxFps;
   }
 
   start(webrtcManager, callback) {
@@ -40,6 +68,39 @@ export class QualityController {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+  }
+
+  /**
+   * Altera manualmente o perfil de qualidade (Ultra, Equilibrado, Econômico)
+   * Aplicado imediatamente em todos os senders de vídeo ativos
+   */
+  async setProfile(profileKey) {
+    const profile = QUALITY_PROFILES[profileKey];
+    if (!profile) return;
+
+    this.activeProfile = profileKey;
+    this.currentMaxBitrate = profile.maxBitrate;
+    this.currentMaxFps = profile.maxFps;
+
+    console.log(`[QualityController] Perfil alterado para: ${profile.label} (Max: ${(profile.maxBitrate / 1000000).toFixed(1)} Mbps, FPS: ${profile.maxFps})`);
+
+    if (this.webrtc && this.webrtc.peers) {
+      for (const [targetId, pc] of this.webrtc.peers.entries()) {
+        const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+        for (const sender of senders) {
+          try {
+            const params = sender.getParameters();
+            if (params.encodings && params.encodings.length > 0) {
+              params.encodings[0].maxBitrate = this.currentMaxBitrate;
+              params.encodings[0].maxFramerate = this.currentMaxFps;
+              await sender.setParameters(params);
+            }
+          } catch (err) {
+            console.warn(`[QualityController] Erro ao aplicar perfil no peer ${targetId}:`, err);
+          }
+        }
+      }
     }
   }
 
@@ -65,12 +126,19 @@ export class QualityController {
       let currentBitrateBps = 0;
       let activeCodec = 'H.264 / AV1';
 
+      let candidatePair = null;
+      const candidateReports = new Map();
+
       stats.forEach(report => {
-        // Métricas de RTT na conexão de transporte
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+        // Mapeia candidatos e o par ativo selecionado
+        if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
+          candidatePair = report;
           if (report.currentRoundTripTime !== undefined) {
-            rtt = Math.round(report.currentRoundTripTime * 1000); // converte para ms
+            rtt = Math.round(report.currentRoundTripTime * 1000); // ms
           }
+        }
+        if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
+          candidateReports.set(report.id, report);
         }
 
         // Métricas de vídeo de saída (Host transmissor)
@@ -119,6 +187,27 @@ export class QualityController {
         }
       });
 
+      // Identifica o Tipo de Conexão (LAN vs P2P STUN vs TURN Relay)
+      let connectionType = 'P2P Conectado';
+      if (candidatePair) {
+        const localCandidate = candidateReports.get(candidatePair.localCandidateId);
+        const remoteCandidate = candidateReports.get(candidatePair.remoteCandidateId);
+
+        const localType = localCandidate?.candidateType;
+        const remoteType = remoteCandidate?.candidateType;
+        const proto = (localCandidate?.protocol || candidatePair?.protocol || 'udp').toUpperCase();
+
+        if (localType === 'relay' || remoteType === 'relay') {
+          connectionType = `Relay (TURN/${proto})`;
+        } else if (localType === 'srflx' || remoteType === 'srflx' || localType === 'prflx' || remoteType === 'prflx') {
+          connectionType = `P2P Direto (STUN/${proto})`;
+        } else if (localType === 'host' && remoteType === 'host') {
+          connectionType = `Direto LAN (${proto})`;
+        } else if (localType) {
+          connectionType = `${localType.toUpperCase()} (${proto})`;
+        }
+      }
+
       // Cálculo da porcentagem de perda de pacotes
       const packetLossPercent = totalPackets > 0
         ? ((packetsLost / totalPackets) * 100).toFixed(1)
@@ -132,7 +221,9 @@ export class QualityController {
         rtt: rtt !== null ? rtt : '--',
         bitrateMbps: currentBitrateBps > 0 ? bitrateMbps : '--',
         packetLossPercent,
-        codec: activeCodec
+        codec: activeCodec,
+        connectionType,
+        activeProfile: this.activeProfile
       };
 
       // Dispara lógica adaptativa de bitrate se detectada instabilidade
@@ -147,7 +238,7 @@ export class QualityController {
   }
 
   /**
-   * Avalia a saúde da conexão e ajusta dinamicamente a taxa de envio
+   * Avalia a saúde da conexão e ajusta dinamicamente a taxa de envio dentro dos limites do perfil
    */
   async evaluateAdaptation(pc, rtt, packetLoss) {
     const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
@@ -157,19 +248,20 @@ export class QualityController {
     const params = sender.getParameters();
     if (!params.encodings || params.encodings.length === 0) return;
 
+    const profile = QUALITY_PROFILES[this.activeProfile] || QUALITY_PROFILES.ultra;
     let needsUpdate = false;
 
     // Regra 1: Perda de pacotes elevada (> 3%) ou RTT crítico (> 200ms)
-    if ((packetLoss > 3.0 || (rtt && rtt > 200)) && this.currentMaxBitrate > 2000000) {
-      console.warn('[QualityController] Degradação de rede detectada. Reduzindo bitrate e ajustando FPS...');
-      this.currentMaxBitrate = Math.max(1500000, this.currentMaxBitrate * 0.75); // Reduz 25%
-      this.currentMaxFps = 45;
+    if ((packetLoss > 3.0 || (rtt && rtt > 200)) && this.currentMaxBitrate > profile.minBitrate) {
+      console.warn('[QualityController] Degradação de rede detectada. Reduzindo bitrate...');
+      this.currentMaxBitrate = Math.max(profile.minBitrate, this.currentMaxBitrate * 0.75); // Reduz 25%
+      this.currentMaxFps = Math.min(this.currentMaxFps, 45);
       needsUpdate = true;
     }
     // Regra 2: Rede excelente e estável (< 0.5% loss e RTT < 60ms)
-    else if (packetLoss < 0.5 && rtt && rtt < 60 && this.currentMaxBitrate < 8000000) {
-      this.currentMaxBitrate = Math.min(8000000, this.currentMaxBitrate * 1.15); // Aumenta 15%
-      this.currentMaxFps = 60;
+    else if (packetLoss < 0.5 && rtt && rtt < 60 && this.currentMaxBitrate < profile.maxBitrate) {
+      this.currentMaxBitrate = Math.min(profile.maxBitrate, this.currentMaxBitrate * 1.15); // Aumenta 15%
+      this.currentMaxFps = profile.maxFps;
       needsUpdate = true;
     }
 

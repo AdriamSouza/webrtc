@@ -3,6 +3,7 @@ import { MediaManager } from './media.js';
 import { WebRTCManager } from './webrtc.js';
 import { QualityController } from './qualityController.js';
 import { RoomState } from './room.js';
+import { Icons } from './icons.js';
 
 // Instanciação dos Módulos Centrais
 const signaling = new SignalingClient();
@@ -11,6 +12,12 @@ const webrtc = new WebRTCManager(signaling);
 webrtc.setMediaManager(media);
 const qualityController = new QualityController();
 const roomState = new RoomState();
+
+function updateConnectionStatus(statusClass, text) {
+  if (!connectionBadge) return;
+  connectionBadge.className = `status-badge ${statusClass}`.trim();
+  connectionBadge.innerHTML = `<span class="status-dot"></span><span class="status-text">${text}</span>`;
+}
 
 // Elementos do DOM - Lobby
 const lobbyScreen = document.getElementById('lobbyScreen');
@@ -94,6 +101,7 @@ const hudRtt = document.getElementById('hudRtt');
 const hudBitrate = document.getElementById('hudBitrate');
 const hudPacketLoss = document.getElementById('hudPacketLoss');
 const hudCodec = document.getElementById('hudCodec');
+const hudConnectionType = document.getElementById('hudConnectionType');
 
 // ========================================================
 // GERENCIADOR DO GRID DINÂMICO DE TRANSMISSÕES (MULTI-STREAM)
@@ -273,7 +281,7 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
   tileEl.dataset.tileId = id;
 
   const badgeClass = type === 'screen' ? 'badge-screen' : 'badge-camera';
-  const badgeLabel = type === 'screen' ? '🖥️ Tela 60 FPS' : '📷 Câmera';
+  const badgeLabel = type === 'screen' ? 'Tela 60 FPS' : 'Câmera';
 
   const headerEl = document.createElement('div');
   headerEl.className = 'tile-header';
@@ -288,7 +296,7 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
   const btnFocus = document.createElement('button');
   btnFocus.className = 'tile-btn btn-focus';
   btnFocus.title = 'Focar transmissão (Spotlight)';
-  btnFocus.innerHTML = '📌';
+  btnFocus.innerHTML = Icons.spotlight(14);
   btnFocus.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleSpotlight(id);
@@ -297,7 +305,7 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
   const btnFull = document.createElement('button');
   btnFull.className = 'tile-btn btn-fullscreen';
   btnFull.title = 'Tela cheia deste vídeo';
-  btnFull.innerHTML = '⛶';
+  btnFull.innerHTML = Icons.maximize(14);
   btnFull.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleTileFullscreen(tileEl);
@@ -306,17 +314,17 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
   const btnMute = document.createElement('button');
   btnMute.className = 'tile-btn btn-mute';
   btnMute.title = 'Mutar / Desmutar áudio';
-  btnMute.innerHTML = isLocal ? '🔇' : '🔊';
+  btnMute.innerHTML = isLocal ? Icons.volumeX(14) : Icons.volume2(14);
   btnMute.addEventListener('click', (e) => {
     e.stopPropagation();
     videoEl.muted = !videoEl.muted;
-    btnMute.innerHTML = videoEl.muted ? '🔇' : '🔊';
+    btnMute.innerHTML = videoEl.muted ? Icons.volumeX(14) : Icons.volume2(14);
   });
 
   const btnClose = document.createElement('button');
   btnClose.className = 'tile-btn btn-close';
   btnClose.title = 'Fechar / Ocultar';
-  btnClose.innerHTML = '✕';
+  btnClose.innerHTML = Icons.x(14);
   btnClose.addEventListener('click', (e) => {
     e.stopPropagation();
     if (isLocal) {
@@ -361,7 +369,7 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
     playPromise.catch((err) => {
       console.warn('[TileManager] Autoplay com som bloqueado, mutando...', err.message);
       videoEl.muted = true;
-      btnMute.innerHTML = '🔇';
+      btnMute.innerHTML = Icons.volumeX(14);
       videoEl.play().catch(e => console.error(e));
       if (unmuteBanner) unmuteBanner.classList.remove('hidden');
     });
@@ -529,16 +537,16 @@ function addOrUpdateLocalPreview(type, stream, title) {
   cardEl.id = `local-card-${type}`;
 
   const badgeClass = type === 'screen' ? 'badge-screen' : 'badge-camera';
-  const badgeLabel = type === 'screen' ? '🖥️ Sua Tela 60 FPS' : '📷 Câmera (Você)';
+  const badgeLabel = type === 'screen' ? 'Sua Tela (60 FPS)' : 'Câmera (Você)';
 
   const headerEl = document.createElement('div');
   headerEl.className = 'local-card-header';
   headerEl.innerHTML = `
     <span class="local-card-badge ${badgeClass}">${badgeLabel}</span>
     <div class="local-card-actions">
-      <button class="local-card-btn btn-toggle-preview" title="Ocultar / Mostrar prévia">👁️</button>
-      <button class="local-card-btn btn-pin-grid" title="Fixar / Desafixar no grid principal">⊞</button>
-      <button class="local-card-btn btn-stop" title="Encerrar transmissão">✕</button>
+      <button class="local-card-btn btn-toggle-preview" title="Ocultar / Mostrar prévia">${Icons.eye(12)}</button>
+      <button class="local-card-btn btn-pin-grid" title="Fixar / Desafixar no grid principal">${Icons.layoutGrid(12)}</button>
+      <button class="local-card-btn btn-stop" title="Encerrar transmissão">${Icons.x(12)}</button>
     </div>
   `;
 
@@ -555,7 +563,7 @@ function addOrUpdateLocalPreview(type, stream, title) {
   const hiddenNotice = document.createElement('div');
   hiddenNotice.className = 'local-hidden-notice hidden';
   hiddenNotice.innerHTML = `
-    <span>${type === 'screen' ? '🖥️ Tela transmitindo (60 FPS)' : '📷 Câmera ativa'}</span>
+    <span>${type === 'screen' ? 'Tela transmitindo (60 FPS)' : 'Câmera ativa'}</span>
     <button class="btn-unhide-preview">Mostrar</button>
   `;
 
@@ -657,7 +665,7 @@ function updateLocalDockVisibility() {
     if (isDockMinimized) {
       localDock.classList.add('hidden');
       localDockPill.classList.remove('hidden');
-      const types = Array.from(localPreviews.keys()).map(t => t === 'screen' ? '🖥️ Tela 60 FPS' : '📷 Câmera').join(' + ');
+      const types = Array.from(localPreviews.keys()).map(t => t === 'screen' ? 'Tela 60 FPS' : 'Câmera').join(' + ');
       localDockPillLabel.textContent = `${types} Ativa${localPreviews.size > 1 ? 's' : ''}`;
     } else {
       localDock.classList.remove('hidden');
@@ -691,25 +699,20 @@ function updateGridLayout() {
 
     if (isSharingScreen && isSharingCamera) {
       placeholderNotice.textContent = 'Você está transmitindo sua tela (60 FPS) e sua câmera. Aguardando outros participantes.';
-      connectionBadge.textContent = '🟢 Transmitindo Tela + Câmera';
-      connectionBadge.className = 'status-badge connected';
+      updateConnectionStatus('connected', 'Transmitindo Tela + Câmera');
     } else if (isSharingScreen) {
       placeholderNotice.textContent = 'Você está transmitindo sua tela a 60 FPS. Aguardando transmissões dos outros participantes.';
-      connectionBadge.textContent = '🟢 Transmitindo Tela (60 FPS)';
-      connectionBadge.className = 'status-badge connected';
+      updateConnectionStatus('connected', 'Transmitindo Tela (60 FPS)');
     } else if (isSharingCamera) {
       placeholderNotice.textContent = 'Sua câmera está ativa. Aguardando transmissões dos outros participantes.';
-      connectionBadge.textContent = '🟢 Câmera Ativa';
-      connectionBadge.className = 'status-badge connected';
+      updateConnectionStatus('connected', 'Câmera Ativa');
     } else {
       placeholderNotice.textContent = 'Inicie sua câmera ou compartilhe sua tela para começar a transmitir.';
-      connectionBadge.textContent = '🟢 Sala Pronta';
-      connectionBadge.className = 'status-badge connected';
+      updateConnectionStatus('connected', 'Sala Pronta');
     }
   } else {
     streamPlaceholder.classList.add('hidden');
-    connectionBadge.textContent = `🟢 ${count} Transmissão${count > 1 ? 'ões' : ''} Ativa${count > 1 ? 's' : ''}`;
-    connectionBadge.className = 'status-badge connected';
+    updateConnectionStatus('connected', `${count} Transmissão${count > 1 ? 'ões' : ''} Ativa${count > 1 ? 's' : ''}`);
   }
 }
 
@@ -883,9 +886,9 @@ function setupEventListeners() {
         inviteUrl += `&pin=${encodeURIComponent(roomState.roomPin)}`;
       }
       navigator.clipboard.writeText(inviteUrl).then(() => {
-        btnCopyLink.textContent = '✅ Copiado!';
+        btnCopyLink.innerHTML = `${Icons.check(13)} <span>Copiado!</span>`;
         setTimeout(() => {
-          btnCopyLink.textContent = '📋 Copiar Link';
+          btnCopyLink.innerHTML = `${Icons.copy(13)} <span>Copiar Link</span>`;
         }, 2000);
       }).catch(() => {
         prompt('Copie o link de convite abaixo:', inviteUrl);
@@ -905,6 +908,18 @@ function setupEventListeners() {
 
   btnToggleHud.addEventListener('click', () => {
     telemetryHud.classList.toggle('hidden');
+  });
+
+  // Seletor de Perfil de Qualidade / Banda (Ultra 60, Equilibrado, Econômico)
+  const profileBtns = document.querySelectorAll('.btn-profile');
+  profileBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const profileKey = btn.getAttribute('data-profile');
+      if (!profileKey) return;
+      qualityController.setProfile(profileKey);
+      profileBtns.forEach(b => b.classList.toggle('active', b === btn));
+      appendSystemChat(`Perfil de transmissão alterado para: ${btn.textContent.trim()}`);
+    });
   });
 
   if (btnMinimizeDock) {
@@ -957,7 +972,7 @@ function setupEventListeners() {
   btnToggleAudio.addEventListener('click', async () => {
     try {
       const { muted, stream } = await media.toggleMicrophone();
-      micIcon.textContent = muted ? '🔇' : '🎤';
+      micIcon.innerHTML = muted ? Icons.micOff(18) : Icons.mic(18);
       micLabel.textContent = muted ? 'Microfone Mutado' : 'Microfone Ativo';
       btnToggleAudio.classList.toggle('active', !muted);
 
@@ -996,7 +1011,7 @@ function setupEventListeners() {
 async function handleToggleCamera() {
   try {
     const { active, stream } = await media.toggleCamera();
-    cameraIcon.textContent = active ? '📷' : '📹';
+    cameraIcon.innerHTML = active ? Icons.video(18) : Icons.videoOff(18);
     cameraLabel.textContent = active ? 'Câmera Ativa' : 'Câmera';
     btnToggleCamera.classList.toggle('active', active);
 
@@ -1035,14 +1050,156 @@ async function handleToggleCamera() {
 }
 
 // ========================================================
-// 4. FLUXO DE TELA (SCREEN SHARE - 60 FPS)
+// 4. FLUXO DE TELA (SCREEN SHARE - 60 FPS COM SUPORTE WGC DESKTOP)
 // ========================================================
+
+const desktopSourceModal = document.getElementById('desktopSourceModal');
+const btnCloseSourceModal = document.getElementById('btnCloseSourceModal');
+const btnCancelSourcePicker = document.getElementById('btnCancelSourcePicker');
+const tabSourcesScreens = document.getElementById('tabSourcesScreens');
+const tabSourcesWindows = document.getElementById('tabSourcesWindows');
+const sourcesGrid = document.getElementById('sourcesGrid');
+const sourcesLoading = document.getElementById('sourcesLoading');
+
+let cachedDesktopSources = [];
+let currentSourceFilter = 'screen';
+
+function promptDesktopSourcePicker() {
+  return new Promise(async (resolve) => {
+    if (!desktopSourceModal || !sourcesGrid) {
+      return resolve(null);
+    }
+
+    desktopSourceModal.classList.remove('hidden');
+    sourcesGrid.innerHTML = '';
+    if (sourcesLoading) sourcesLoading.classList.remove('hidden');
+
+    function cleanup() {
+      desktopSourceModal.classList.add('hidden');
+      btnCloseSourceModal?.removeEventListener('click', onCancel);
+      btnCancelSourcePicker?.removeEventListener('click', onCancel);
+      tabSourcesScreens?.removeEventListener('click', onTabScreens);
+      tabSourcesWindows?.removeEventListener('click', onTabWindows);
+    }
+
+    function onCancel() {
+      cleanup();
+      resolve(null);
+    }
+
+    function onSelect(source) {
+      cleanup();
+      resolve(source);
+    }
+
+    function onTabScreens() {
+      currentSourceFilter = 'screen';
+      tabSourcesScreens?.classList.add('active');
+      tabSourcesWindows?.classList.remove('active');
+      renderSourceItems(onSelect);
+    }
+
+    function onTabWindows() {
+      currentSourceFilter = 'window';
+      tabSourcesWindows?.classList.add('active');
+      tabSourcesScreens?.classList.remove('active');
+      renderSourceItems(onSelect);
+    }
+
+    btnCloseSourceModal?.addEventListener('click', onCancel);
+    btnCancelSourcePicker?.addEventListener('click', onCancel);
+    tabSourcesScreens?.addEventListener('click', onTabScreens);
+    tabSourcesWindows?.addEventListener('click', onTabWindows);
+
+    try {
+      cachedDesktopSources = await window.desktopAPI.getSources({ types: ['screen', 'window'] });
+    } catch (err) {
+      console.error('[Desktop] Erro ao obter fontes:', err);
+      cachedDesktopSources = [];
+    } finally {
+      if (sourcesLoading) sourcesLoading.classList.add('hidden');
+    }
+
+    renderSourceItems(onSelect);
+  });
+}
+
+function renderSourceItems(onSelect) {
+  if (!sourcesGrid) return;
+  sourcesGrid.innerHTML = '';
+
+  const filtered = cachedDesktopSources.filter(s => {
+    if (currentSourceFilter === 'screen') return s.id.startsWith('screen:');
+    return !s.id.startsWith('screen:');
+  });
+
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'sources-empty';
+    empty.textContent = currentSourceFilter === 'screen'
+      ? 'Nenhum monitor adicional detectado.'
+      : 'Nenhuma janela de jogo ou aplicativo detectada no momento.';
+    sourcesGrid.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach(source => {
+    const item = document.createElement('div');
+    item.className = 'source-item';
+    item.title = source.name;
+
+    const thumbContainer = document.createElement('div');
+    thumbContainer.className = 'source-thumb-container';
+
+    if (source.thumbnail) {
+      const img = document.createElement('img');
+      img.className = 'source-thumb';
+      img.src = source.thumbnail;
+      img.alt = source.name;
+      thumbContainer.appendChild(img);
+    }
+
+    const info = document.createElement('div');
+    info.className = 'source-info';
+
+    if (source.appIcon) {
+      const icon = document.createElement('img');
+      icon.className = 'source-app-icon';
+      icon.src = source.appIcon;
+      info.appendChild(icon);
+    }
+
+    const name = document.createElement('span');
+    name.className = 'source-name';
+    name.textContent = source.name;
+    info.appendChild(name);
+
+    item.appendChild(thumbContainer);
+    item.appendChild(info);
+
+    item.addEventListener('click', () => onSelect(source));
+    sourcesGrid.appendChild(item);
+  });
+}
+
 async function handleToggleScreenShare() {
   if (media.hasActiveScreenStream()) {
     media.stopScreenCapture();
     handleStreamEnded();
   } else {
     try {
+      // Se estiver no ambiente Desktop Electron (WGC Nativo)
+      if (window.desktopAPI && typeof window.desktopAPI.getSources === 'function') {
+        const selectedSource = await promptDesktopSourcePicker();
+        if (!selectedSource) {
+          console.log('[App] Compartilhamento de tela cancelado pelo usuário no seletor WGC.');
+          return;
+        }
+        if (typeof window.desktopAPI.setSelectedSource === 'function') {
+          await window.desktopAPI.setSelectedSource(selectedSource.id);
+        }
+      }
+
       console.log('[App] Solicitando compartilhamento de tela a 60 FPS...');
       const stream = await media.startScreenCapture();
 
@@ -1125,15 +1282,12 @@ function setupWebRTCEvents() {
   webrtc.onConnectionStateChange = (targetUserId, state) => {
     console.log(`[App] Status P2P com ${targetUserId}: ${state}`);
     if (state === 'connected') {
-      connectionBadge.textContent = '🟢 P2P Conectado (60 FPS)';
-      connectionBadge.className = 'status-badge connected';
+      updateConnectionStatus('connected', 'P2P Conectado (60 FPS)');
       syncRemotePeerTiles(targetUserId);
     } else if (state === 'connecting') {
-      connectionBadge.textContent = '🟡 Conectando P2P...';
-      connectionBadge.className = 'status-badge connecting';
+      updateConnectionStatus('connecting', 'Conectando P2P...');
     } else if (state === 'disconnected' || state === 'failed') {
-      connectionBadge.textContent = '🔴 P2P Desconectado';
-      connectionBadge.className = 'status-badge';
+      updateConnectionStatus('', 'P2P Desconectado');
     }
   };
 }
@@ -1146,11 +1300,11 @@ function setupSignalingEvents() {
     isConnecting = false;
     if (btnSubmitCreate) {
       btnSubmitCreate.disabled = false;
-      btnSubmitCreate.textContent = '🚀 Criar Sala e Iniciar';
+      btnSubmitCreate.textContent = 'Criar Sala e Iniciar';
     }
     if (btnSubmitJoin) {
       btnSubmitJoin.disabled = false;
-      btnSubmitJoin.textContent = '🚪 Entrar na Transmissão';
+      btnSubmitJoin.textContent = 'Entrar na Transmissão';
     }
 
     const roomId = msg.roomId || msg.data?.roomId || signaling.roomId;
@@ -1168,15 +1322,14 @@ function setupSignalingEvents() {
     roomScreen.classList.add('active');
 
     displayRoomId.textContent = roomId;
-    roleBadge.textContent = isHost ? '👑 Host (Criador)' : '👁️ Participante';
-    roleBadge.style.borderColor = isHost ? 'var(--warning)' : 'var(--border-color)';
+    roleBadge.textContent = isHost ? 'Host' : 'Participante';
+    roleBadge.className = isHost ? 'badge badge-host' : 'badge';
 
     if (roomLockBadge) {
       roomLockBadge.classList.toggle('hidden', !hasPassword);
     }
 
-    connectionBadge.textContent = '🟢 Sala Pronta';
-    connectionBadge.className = 'status-badge connected';
+    updateConnectionStatus('connected', 'Sala Pronta');
 
     updateParticipantsUI();
 
@@ -1206,6 +1359,16 @@ function setupSignalingEvents() {
       hudBitrate.textContent = `${metrics.bitrateMbps} Mbps`;
       hudPacketLoss.textContent = `${metrics.packetLossPercent}%`;
       hudCodec.textContent = metrics.codec;
+      if (hudConnectionType && metrics.connectionType) {
+        hudConnectionType.textContent = metrics.connectionType;
+        if (metrics.connectionType.includes('Relay')) {
+          hudConnectionType.style.color = '#f39c12';
+        } else if (metrics.connectionType.includes('STUN')) {
+          hudConnectionType.style.color = '#00d2ff';
+        } else {
+          hudConnectionType.style.color = '#38ef7d';
+        }
+      }
     });
 
     appendSystemChat(`Você entrou na sala como ${isHost ? 'Host' : 'Participante'}.`);
@@ -1304,15 +1467,15 @@ function setupSignalingEvents() {
 
     if (btnSubmitCreate) {
       btnSubmitCreate.disabled = false;
-      btnSubmitCreate.textContent = '🚀 Criar Sala e Iniciar';
+      btnSubmitCreate.textContent = 'Criar Sala e Iniciar';
     }
     if (btnSubmitJoin) {
       btnSubmitJoin.disabled = false;
-      btnSubmitJoin.textContent = '🚪 Entrar na Transmissão';
+      btnSubmitJoin.textContent = 'Entrar na Transmissão';
     }
 
     if (lobbyScreen && lobbyScreen.classList.contains('active')) {
-      showLobbyAlert(`⚠️ ${errorMsg}`, 'error');
+      showLobbyAlert(errorMsg, 'error');
     } else {
       alert(`Aviso do Servidor: ${errorMsg}`);
     }
@@ -1324,7 +1487,7 @@ function setupSignalingEvents() {
 // ========================================================
 function updateParticipantsUI() {
   const count = roomState.getParticipantCount();
-  userCountBadge.textContent = `👥 ${count} participante${count > 1 ? 's' : ''}`;
+  userCountBadge.innerHTML = `${Icons.users(14)} <span id="userCountText">${count} participante${count > 1 ? 's' : ''}</span>`;
   tabUserCount.textContent = count;
 
   participantsList.innerHTML = '';
@@ -1335,7 +1498,8 @@ function updateParticipantsUI() {
     const isSelf = user.id === roomState.myUserId;
     li.innerHTML = `
       <div class="participant-info">
-        <span>👤 ${user.name}${isSelf ? ' <em>(Você)</em>' : ''}</span>
+        <span class="user-avatar-dot"></span>
+        <span class="participant-name">${escapeHtml(user.name)}${isSelf ? ' <em>(Você)</em>' : ''}</span>
       </div>
       <div>
         ${user.isHost ? '<span class="host-tag">HOST</span>' : ''}

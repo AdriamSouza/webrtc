@@ -67,12 +67,18 @@ server.listen(config.port, config.host, () => {
   const scheme = isHttps ? 'https' : 'http';
   const wsScheme = isHttps ? 'wss' : 'ws';
 
+  const turnServers = config.iceServers.filter(s => {
+    if (Array.isArray(s.urls)) return s.urls.some(u => u.startsWith('turn'));
+    return typeof s.urls === 'string' && s.urls.startsWith('turn');
+  });
+
   console.log(`====================================================`);
   console.log(`🚀 Servidor WebRTC P2P inicializado com sucesso!`);
   console.log(`📡 URL Local:      ${scheme}://localhost:${config.port}`);
-  console.log(`🌐 Acesso na Rede: ${scheme}://192.168.0.17:${config.port}`);
   console.log(`🔒 Modo Seguro:    ${isHttps ? 'HTTPS ATIVO (Desbloqueia getDisplayMedia em todos dispositivos)' : 'HTTP'}`);
   console.log(`💬 WebSocket Path: ${wsScheme}://${config.host}:${config.port}/ws`);
+  console.log(`🛡️ ICE Servers:    ${config.iceServers.length} configurados (${turnServers.length > 0 ? `TURN Relay Ativo (${turnServers.length} server)` : 'Apenas STUN - configure TURN no .env para CGNAT/4G'})`);
+  console.log(`🌍 Teste Remoto:   Execute 'npm run tunnel' para gerar link HTTPS público com Cloudflare Tunnel`);
   console.log(`⚡ Fluidez Alvo:   60 FPS (Zero-Media Relay no Servidor)`);
   console.log(`====================================================`);
 });

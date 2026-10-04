@@ -105,10 +105,10 @@ Para hospedar o servidor permanentemente no [Render.com](https://render.com):
    - **Environment / Runtime:** `Node`
    - **Build Command:** `npm --prefix backend install`
    - **Start Command:** `npm run backend`
-4. Após o deploy, o Render fornecerá uma URL pública com HTTPS/WSS (ex: `https://hyperstream.onrender.com`).
-5. No App Desktop, basta inserir a URL do Render quando solicitado, ou definir no terminal:
+4. O servidor oficial já está no ar em: **https://hyperstream-g9gz.onrender.com**
+5. No App Desktop, ele já conecta automaticamente a essa URL na nuvem, ou você pode definir:
    ```bash
-   $env:APP_URL="https://hyperstream.onrender.com"; npm run desktop
+   $env:APP_URL="https://hyperstream-g9gz.onrender.com"; npm run desktop
    ```
 
 ### 3. Configurar Servidor TURN Gratuito (Para CGNAT e Redes 4G/5G)

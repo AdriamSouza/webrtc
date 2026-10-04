@@ -56,6 +56,8 @@ function saveServerUrl(url) {
 let mainWindow = null;
 let selectedSourceId = null;
 
+const RENDER_DEFAULT_URL = 'https://hyperstream-g9gz.onrender.com';
+
 function getInitialUrl() {
   if (process.env.APP_URL) {
     return process.env.APP_URL;
@@ -64,8 +66,8 @@ function getInitialUrl() {
   if (saved) {
     return saved;
   }
-  // Padrão de desenvolvimento local
-  return 'http://localhost:3000';
+  // Padrão oficial de produção: Render
+  return RENDER_DEFAULT_URL;
 }
 
 function getErrorPageHtml(failedUrl) {
@@ -97,18 +99,18 @@ function getErrorPageHtml(failedUrl) {
 <body>
   <div class="card">
     <h2>
-      <span>HyperStream Desktop</span>
+      <span>Hyperstream</span>
       <span class="badge">WGC 60 FPS</span>
     </h2>
     <p>Não foi possível conectar ao servidor na URL configurada:<br><strong style="color: #fff;">${failedUrl}</strong></p>
     <div class="hint">
-      Para testes locais, execute:<br>
-      <strong>npm run backend</strong><br><br>
-      Ou se já estiver no Render, insira a URL abaixo.
+      Servidor oficial na nuvem:<br>
+      <strong>https://hyperstream-g9gz.onrender.com</strong><br><br>
+      Para testes locais, execute <strong>npm run backend</strong> e use <strong>http://localhost:3000</strong>.
     </div>
     <div class="form-group">
-      <label for="serverUrlInput">URL do Servidor (Localhost ou Render):</label>
-      <input type="text" id="serverUrlInput" value="${failedUrl.startsWith('data:') ? 'http://localhost:3000' : failedUrl}">
+      <label for="serverUrlInput">URL do Servidor (Render ou Localhost):</label>
+      <input type="text" id="serverUrlInput" value="${failedUrl.startsWith('data:') ? 'https://hyperstream-g9gz.onrender.com' : failedUrl}">
     </div>
     <div class="btn-row">
       <button class="btn-secondary" onclick="window.desktopAPI.reloadApp()">Tentar Novamente</button>
@@ -134,7 +136,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#0b0e14',
-    title: 'HyperStream (Desktop - WGC 60 FPS)',
+    title: 'Hyperstream',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -147,6 +149,11 @@ function createWindow() {
   });
 
   mainWindow.setMenuBarVisibility(false);
+
+  // Mantém o título da janela fixado estritamente como "Hyperstream"
+  mainWindow.on('page-title-updated', (event) => {
+    event.preventDefault();
+  });
 
   const targetUrl = getInitialUrl();
   console.log('[Desktop Main] Janela principal iniciada apontando para:', targetUrl);

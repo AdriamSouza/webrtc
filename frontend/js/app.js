@@ -760,6 +760,10 @@ function init() {
     if (desktopAppBadge) {
       desktopAppBadge.classList.remove('hidden');
     }
+    const lobbyDownloadApp = document.getElementById('lobbyDownloadApp');
+    if (lobbyDownloadApp) {
+      lobbyDownloadApp.classList.add('hidden');
+    }
   }
 
   // Configuração Inicial de Layout e Painel Lateral

@@ -8,6 +8,7 @@
     "build": "npm --prefix backend install",
     "backend": "node backend/src/server.js",
     "desktop": "npm --prefix desktop start",
+    "desktop:build": "npx @electron/packager desktop Hyperstream --platform=win32 --arch=x64 --out=desktop/dist --overwrite",
     "install:all": "npm --prefix backend install && npm --prefix desktop install",
     "tunnel": "cloudflared tunnel --url http://localhost:3000",
     "tunnel:localtunnel": "npx localtunnel --port 3000"

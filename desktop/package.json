@@ -5,7 +5,8 @@
   "main": "src/main.js",
   "type": "module",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "package": "npx @electron/packager . Hyperstream --platform=win32 --arch=x64 --out=dist --overwrite"
   },
   "keywords": [
     "webrtc",

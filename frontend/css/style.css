@@ -311,6 +311,34 @@ body.dark-theme {
   color: var(--text-muted);
 }
 
+.lobby-download-box {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.btn-download-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.btn-download-app:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+  transform: translateY(-1px);
+}
+
 /* ========================================================
    TELA DA SALA DE TRANSMISSÃO
    ======================================================== */

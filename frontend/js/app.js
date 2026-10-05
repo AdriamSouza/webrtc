@@ -1209,7 +1209,22 @@ function promptDesktopSourcePicker() {
       switchTransPane('audio');
       loadAudioAppsInModal();
       populateModalMicrophones();
+      if (modalSettingEnableMic && modalSettingEnableMic.checked) {
+        media.startMicrophonePreview(modalSettingMicDeviceSelect?.value || null).catch(() => {});
+      }
     }
+
+    function onToggleModalMic() {
+      if (modalSettingEnableMic && modalSettingEnableMic.checked) {
+        media.startMicrophonePreview(modalSettingMicDeviceSelect?.value || null).catch(() => {});
+      }
+    }
+    modalSettingEnableMic?.addEventListener('change', onToggleModalMic);
+    modalSettingMicDeviceSelect?.addEventListener('change', () => {
+      if (modalSettingEnableMic && modalSettingEnableMic.checked) {
+        media.startMicrophonePreview(modalSettingMicDeviceSelect.value).catch(() => {});
+      }
+    });
 
     function onTabScreens() {
       currentSourceFilter = 'screen';
@@ -2006,6 +2021,14 @@ function setupSettingsModal() {
     Object.entries(settingsPanes).forEach(([k, pane]) => {
       if (pane) pane.classList.toggle('active', k === tabKey);
     });
+    if (tabKey === 'audio') {
+      refreshMicrophoneList();
+      const settingEnableMic = document.getElementById('settingEnableMic');
+      const settingMicDeviceSelect = document.getElementById('settingMicDeviceSelect');
+      if (settingEnableMic && settingEnableMic.checked) {
+        media.startMicrophonePreview(settingMicDeviceSelect?.value || null).catch(() => {});
+      }
+    }
   }
 
   settingsTabBtns.forEach(btn => {
@@ -2024,10 +2047,10 @@ function setupSettingsModal() {
       }
       const { systemLevel, micLevel } = media.getAudioMeterLevels();
       if (vuMeterSystem) {
-        vuMeterSystem.style.width = `${Math.min(100, Math.round(systemLevel * 100))}%`;
+        vuMeterSystem.style.width = `${systemLevel}%`;
       }
       if (vuMeterMic) {
-        vuMeterMic.style.width = `${Math.min(100, Math.round(micLevel * 100))}%`;
+        vuMeterMic.style.width = `${micLevel}%`;
       }
       vuMeterAnimFrame = requestAnimationFrame(updateMeters);
     }

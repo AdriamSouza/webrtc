@@ -512,16 +512,29 @@ exit
 });
 
 app.whenReady().then(() => {
+  // Permissões de mídia automáticas para áudio, microfone e captura de tela no Electron
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'display-capture', 'audio-capture', 'notifications', 'fullscreen', 'pointerLock'];
+    if (allowed.includes(permission)) {
+      return callback(true);
+    }
+    callback(true);
+  });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    return true;
+  });
+
   // Manipulador nativo de captura para getDisplayMedia no Electron
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
-        thumbnailSize: { width: 0, height: 0 }
+        thumbnailSize: { width: 150, height: 150 }
       });
 
       let chosen = null;
-      if (selectedSourceId) {
+      if (selectedSourceId && selectedSourceId !== 'default') {
         chosen = sources.find(s => s.id === selectedSourceId);
         if (chosen) {
           console.log('[Desktop Main] Usando fonte selecionada pelo usuário:', chosen.name);

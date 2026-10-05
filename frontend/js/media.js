@@ -94,7 +94,7 @@ export class MediaManager {
 
     let stream = null;
 
-    // Chamada primária com vídeo em 60 FPS e áudio do sistema (loopback/PC) se habilitado
+    // Tentativa 1: Captura com qualidade selecionada e áudio do sistema (se habilitado)
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: videoConstraints,
@@ -102,18 +102,27 @@ export class MediaManager {
       });
       console.log(`[MediaManager] Tela capturada com sucesso a ${fps} FPS (Áudio do PC: ${this.captureSystemAudio ? 'Sim' : 'Não'}).`);
     } catch (err) {
-      if (err.name === 'NotAllowedError') {
-        // Usuário cancelou ou fechou o diálogo nativo
-        throw err;
-      }
-      console.warn('[MediaManager] Falha na captura principal, tentando fallback básico:', err.message);
+      console.warn('[MediaManager] Falha na captura principal, tentando fallback sem áudio do sistema:', err.message);
+      // Tentativa 2: Sem áudio de loopback (resolve falha de WASAPI ou exclusividade de dispositivo no Windows)
       try {
         stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
+          video: videoConstraints,
           audio: false
         });
-      } catch (fallbackErr) {
-        throw err;
+        console.log(`[MediaManager] Tela capturada (sem áudio do PC) a ${fps} FPS.`);
+      } catch (err2) {
+        console.warn('[MediaManager] Falha com constraints de FPS/Resolução, tentando fallback irrestrito:', err2.message);
+        // Tentativa 3: Fallback padrão irrestrito
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false
+          });
+          console.log('[MediaManager] Tela capturada via fallback padrão.');
+        } catch (finalErr) {
+          console.error('[MediaManager] Todas as tentativas de captura de tela falharam:', finalErr);
+          throw finalErr;
+        }
       }
     }
 
@@ -157,7 +166,9 @@ export class MediaManager {
       }
     }
 
-    return this.buildCombinedStream();
+    // Constrói e sincroniza stream combinado
+    this.buildCombinedStream();
+    return this.screenStream;
   }
 
   /**
@@ -495,9 +506,16 @@ export class MediaManager {
       const stream = new MediaStream([track]);
       const source = ctx.createMediaStreamSource(stream);
       this.systemAnalyser = ctx.createAnalyser();
-      this.systemAnalyser.fftSize = 64;
+      this.systemAnalyser.fftSize = 256;
+      this.systemAnalyser.smoothingTimeConstant = 0.3;
       this.systemDataArray = new Uint8Array(this.systemAnalyser.frequencyBinCount);
       source.connect(this.systemAnalyser);
+
+      // Conexão com destino via ganho silencioso (0) para forçar o processamento de buffers no Chromium
+      const dummyGain = ctx.createGain();
+      dummyGain.gain.value = 0;
+      this.systemAnalyser.connect(dummyGain);
+      dummyGain.connect(ctx.destination);
     } catch (e) {
       console.warn('[MediaManager] Falha ao configurar analisador de áudio do sistema:', e);
     }
@@ -521,12 +539,28 @@ export class MediaManager {
       const stream = new MediaStream([track]);
       const source = ctx.createMediaStreamSource(stream);
       this.micAnalyser = ctx.createAnalyser();
-      this.micAnalyser.fftSize = 64;
+      this.micAnalyser.fftSize = 256;
+      this.micAnalyser.smoothingTimeConstant = 0.3;
       this.micDataArray = new Uint8Array(this.micAnalyser.frequencyBinCount);
       source.connect(this.micAnalyser);
+
+      // Conexão com destino via ganho silencioso (0) para forçar o processamento contínuo de buffers
+      const dummyGain = ctx.createGain();
+      dummyGain.gain.value = 0;
+      this.micAnalyser.connect(dummyGain);
+      dummyGain.connect(ctx.destination);
     } catch (e) {
       console.warn('[MediaManager] Falha ao configurar analisador de microfone:', e);
     }
+  }
+
+  async startMicrophonePreview(deviceId = null) {
+    if (!this.micStream) {
+      await this.startMicrophone(deviceId || this.selectedMicDeviceId);
+    } else {
+      this.setupMicAudioAnalyser();
+    }
+    return this.micStream;
   }
 
   /**
@@ -536,22 +570,28 @@ export class MediaManager {
     let systemLevel = 0;
     let micLevel = 0;
 
-    if (this.systemAnalyser && this.systemDataArray && !this.systemAudioMuted && this.getScreenAudioTrack()?.enabled) {
-      this.systemAnalyser.getByteFrequencyData(this.systemDataArray);
-      let sum = 0;
-      for (let i = 0; i < this.systemDataArray.length; i++) {
-        sum += this.systemDataArray[i];
-      }
-      systemLevel = Math.min(100, Math.round((sum / (this.systemDataArray.length * 255)) * 140));
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch(() => {});
     }
 
-    if (this.micAnalyser && this.micDataArray && !this.micMuted && !this.isMuted && this.getMicAudioTrack()?.enabled) {
-      this.micAnalyser.getByteFrequencyData(this.micDataArray);
-      let sum = 0;
-      for (let i = 0; i < this.micDataArray.length; i++) {
-        sum += this.micDataArray[i];
+    if (this.systemAnalyser && this.systemDataArray && !this.systemAudioMuted) {
+      this.systemAnalyser.getByteTimeDomainData(this.systemDataArray);
+      let maxDev = 0;
+      for (let i = 0; i < this.systemDataArray.length; i++) {
+        const dev = Math.abs(this.systemDataArray[i] - 128);
+        if (dev > maxDev) maxDev = dev;
       }
-      micLevel = Math.min(100, Math.round((sum / (this.micDataArray.length * 255)) * 140));
+      systemLevel = Math.min(100, Math.round((maxDev / 128) * 150));
+    }
+
+    if (this.micAnalyser && this.micDataArray && !this.micMuted && !this.isMuted) {
+      this.micAnalyser.getByteTimeDomainData(this.micDataArray);
+      let maxDev = 0;
+      for (let i = 0; i < this.micDataArray.length; i++) {
+        const dev = Math.abs(this.micDataArray[i] - 128);
+        if (dev > maxDev) maxDev = dev;
+      }
+      micLevel = Math.min(100, Math.round((maxDev / 128) * 150));
     }
 
     return { systemLevel, micLevel };

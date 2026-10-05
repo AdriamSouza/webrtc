@@ -2337,4 +2337,407 @@ body.dark-theme {
   background: var(--bg-secondary);
 }
 
+/* ==========================================================================
+   MODAL UNIFICADO DE TRANSMISSÃO, ABAS E MIXER DE ÁUDIO
+   ========================================================================== */
+
+.transmission-modal-card {
+  max-width: 860px;
+  max-height: 90vh;
+}
+
+.source-header-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 210, 255, 0.12);
+  border: 1px solid rgba(0, 210, 255, 0.25);
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.source-picker-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 2px;
+}
+
+.transmission-modal-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.trans-nav-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.trans-nav-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.trans-nav-tab.active {
+  background: var(--bg-secondary);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tab-badge-pill {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.tab-badge-pill.active {
+  background: rgba(56, 239, 125, 0.15);
+  color: var(--status-connected);
+  border: 1px solid rgba(56, 239, 125, 0.3);
+}
+
+.transmission-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 380px;
+  background: var(--bg-primary);
+}
+
+.trans-pane {
+  display: none;
+  padding: 18px 20px;
+}
+
+.trans-pane.active {
+  display: block;
+}
+
+.sources-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.sources-filter-bar .source-picker-tabs {
+  padding: 0;
+  background: transparent;
+  border-bottom: none;
+}
+
+.sources-search-box input {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  outline: none;
+  width: 220px;
+  transition: border-color 0.15s;
+}
+
+.sources-search-box input:focus {
+  border-color: var(--accent-primary);
+}
+
+.source-item {
+  position: relative;
+}
+
+.source-item.selected {
+  border-color: var(--accent-primary);
+  background: rgba(0, 210, 255, 0.08);
+  box-shadow: 0 0 0 2px var(--accent-primary), 0 8px 24px rgba(0, 210, 255, 0.2);
+}
+
+.source-item.selected::after {
+  content: '✓ Selecionado';
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--accent-primary);
+  color: #0b0e14;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.sources-browser-notice {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  align-items: flex-start;
+  margin-top: 12px;
+}
+
+.sources-browser-notice strong {
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.modal-preset-grid {
+  margin-top: 8px;
+}
+
+.preset-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.trans-quick-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.audio-mixer-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.audio-apps-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.audio-apps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.audio-apps-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.audio-apps-mode-selector {
+  display: flex;
+  gap: 14px;
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.audio-apps-description {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.audio-apps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.audio-app-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.audio-app-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-color);
+}
+
+.audio-app-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.audio-app-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.audio-app-title {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-app-pill {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 210, 255, 0.12);
+  color: var(--accent-primary);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.transmission-modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-secondary);
+}
+
+.transmission-selection-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.summary-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.summary-pill {
+  font-size: 0.76rem;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-divider {
+  color: var(--text-muted);
+}
+
+.transmission-footer-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Banner Flutuante de Atualização */
+.update-floating-banner {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #12151f;
+  border: 1px solid #00d2ff;
+  border-radius: var(--radius-md);
+  padding: 12px 18px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 210, 255, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 10000;
+  animation: slideInUp 0.25s ease-out;
+}
+
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.update-floating-banner.hidden {
+  display: none !important;
+}
+
+.update-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-banner-icon {
+  color: var(--accent-primary);
+}
+
+.update-banner-text strong {
+  color: #fff;
+  font-size: 0.85rem;
+  margin-right: 4px;
+}
+
+.update-banner-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 

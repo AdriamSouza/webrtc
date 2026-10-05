@@ -1087,38 +1087,104 @@ async function handleToggleCamera() {
 }
 
 // ========================================================
-// 4. FLUXO DE TELA (SCREEN SHARE - 60 FPS COM SUPORTE WGC DESKTOP)
+// ========================================================
+// 4. FLUXO DE TELA (MODAL UNIFICADO: FONTE, PERFIL & MIXER DE ÁUDIO)
 // ========================================================
 
 const desktopSourceModal = document.getElementById('desktopSourceModal');
 const btnCloseSourceModal = document.getElementById('btnCloseSourceModal');
 const btnCancelSourcePicker = document.getElementById('btnCancelSourcePicker');
+const btnStartTransmissionModal = document.getElementById('btnStartTransmissionModal');
+const btnStartTransmissionText = document.getElementById('btnStartTransmissionText');
+
+// Abas de navegação do modal
+const tabNavSources = document.getElementById('tabNavSources');
+const tabNavProfile = document.getElementById('tabNavProfile');
+const tabNavAudio = document.getElementById('tabNavAudio');
+const transPaneSources = document.getElementById('transPaneSources');
+const transPaneProfile = document.getElementById('transPaneProfile');
+const transPaneAudio = document.getElementById('transPaneAudio');
+
+// Subfiltros de fontes
 const tabSourcesScreens = document.getElementById('tabSourcesScreens');
 const tabSourcesWindows = document.getElementById('tabSourcesWindows');
+const sourceSearchInput = document.getElementById('sourceSearchInput');
 const sourcesGrid = document.getElementById('sourcesGrid');
 const sourcesLoading = document.getElementById('sourcesLoading');
+const webBrowserNotice = document.getElementById('webBrowserNotice');
+
+// Controles do perfil no modal
+const modalPresetCards = desktopSourceModal?.querySelectorAll('.modal-preset-grid .preset-card') || [];
+const modalSettingResSelect = document.getElementById('modalSettingResSelect');
+const modalSettingFpsSelect = document.getElementById('modalSettingFpsSelect');
+const modalSettingContentHint = document.getElementById('modalSettingContentHint');
+const modalSettingCodecSelect = document.getElementById('modalSettingCodecSelect');
+const modalActiveProfileBadge = document.getElementById('modalActiveProfileBadge');
+const modalAudioActiveBadge = document.getElementById('modalAudioActiveBadge');
+
+// Controles de áudio no modal
+const modalSettingCaptureSystemAudio = document.getElementById('modalSettingCaptureSystemAudio');
+const modalSettingEnableMic = document.getElementById('modalSettingEnableMic');
+const modalSettingMicDeviceSelect = document.getElementById('modalSettingMicDeviceSelect');
+const modalAudioAppsList = document.getElementById('modalAudioAppsList');
+const modalVuMeterSystem = document.getElementById('modalVuMeterSystem');
+const modalVuMeterMic = document.getElementById('modalVuMeterMic');
+const audioModeAll = document.getElementById('audioModeAll');
+const audioModeFocused = document.getElementById('audioModeFocused');
+
+// Resumo no rodapé do modal
+const summarySourceName = document.getElementById('summarySourceName');
+const summaryProfile = document.getElementById('summaryProfile');
+const summaryAudio = document.getElementById('summaryAudio');
 
 let cachedDesktopSources = [];
 let currentSourceFilter = 'screen';
+let selectedModalSource = null;
+let modalMeterRafId = null;
 
 function promptDesktopSourcePicker() {
   return new Promise(async (resolve) => {
-    if (!desktopSourceModal || !sourcesGrid) {
-      return resolve(null);
+    if (!desktopSourceModal) {
+      return resolve({ source: null, confirmed: true });
     }
 
     desktopSourceModal.classList.remove('hidden');
-    sourcesGrid.innerHTML = '';
+    if (sourcesGrid) sourcesGrid.innerHTML = '';
     if (sourcesLoading) sourcesLoading.classList.remove('hidden');
+    if (sourceSearchInput) sourceSearchInput.value = '';
+
+    // Seleciona a primeira aba (Fontes)
+    switchTransPane('sources');
+
+    // Inicializa controles do modal com os valores atuais da sessão
+    syncModalControlsWithCurrentState();
+
+    let vuMeterActive = true;
+    function modalVuLoop() {
+      if (!vuMeterActive) return;
+      const { systemLevel, micLevel } = media.getAudioMeterLevels();
+      if (modalVuMeterSystem) modalVuMeterSystem.style.width = `${systemLevel}%`;
+      if (modalVuMeterMic) modalVuMeterMic.style.width = `${micLevel}%`;
+      modalMeterRafId = requestAnimationFrame(modalVuLoop);
+    }
+    modalVuLoop();
 
     function cleanup() {
+      vuMeterActive = false;
+      if (modalMeterRafId) {
+        cancelAnimationFrame(modalMeterRafId);
+        modalMeterRafId = null;
+      }
       desktopSourceModal.classList.add('hidden');
-      sourcesGrid.innerHTML = '';
-      cachedDesktopSources = [];
       btnCloseSourceModal?.removeEventListener('click', onCancel);
       btnCancelSourcePicker?.removeEventListener('click', onCancel);
+      btnStartTransmissionModal?.removeEventListener('click', onConfirm);
+      tabNavSources?.removeEventListener('click', onTabNavSources);
+      tabNavProfile?.removeEventListener('click', onTabNavProfile);
+      tabNavAudio?.removeEventListener('click', onTabNavAudio);
       tabSourcesScreens?.removeEventListener('click', onTabScreens);
       tabSourcesWindows?.removeEventListener('click', onTabWindows);
+      sourceSearchInput?.removeEventListener('input', onSearchInput);
     }
 
     function onCancel() {
@@ -1126,58 +1192,133 @@ function promptDesktopSourcePicker() {
       resolve(null);
     }
 
-    function onSelect(source) {
+    function onConfirm() {
+      // Aplica configurações escolhidas antes de iniciar a captura
+      applyModalSettingsToMedia();
       cleanup();
-      resolve(source);
+      resolve({ source: selectedModalSource, confirmed: true });
+    }
+
+    function onTabNavSources() { switchTransPane('sources'); }
+    function onTabNavProfile() { switchTransPane('profile'); }
+    function onTabNavAudio() {
+      switchTransPane('audio');
+      loadAudioAppsInModal();
+      populateModalMicrophones();
     }
 
     function onTabScreens() {
       currentSourceFilter = 'screen';
       tabSourcesScreens?.classList.add('active');
       tabSourcesWindows?.classList.remove('active');
-      renderSourceItems(onSelect);
+      renderSourceItems(onSourceItemClicked, onSourceItemDblClicked);
     }
 
     function onTabWindows() {
       currentSourceFilter = 'window';
       tabSourcesWindows?.classList.add('active');
       tabSourcesScreens?.classList.remove('active');
-      renderSourceItems(onSelect);
+      renderSourceItems(onSourceItemClicked, onSourceItemDblClicked);
     }
 
+    function onSearchInput() {
+      renderSourceItems(onSourceItemClicked, onSourceItemDblClicked);
+    }
+
+    function onSourceItemClicked(source, element) {
+      selectedModalSource = source;
+      sourcesGrid?.querySelectorAll('.source-item').forEach(el => el.classList.remove('selected'));
+      element.classList.add('selected');
+      updateModalSummaryPill();
+      if (btnStartTransmissionModal) btnStartTransmissionModal.disabled = false;
+    }
+
+    function onSourceItemDblClicked(source, element) {
+      onSourceItemClicked(source, element);
+      onConfirm();
+    }
+
+    // Registra listeners
     btnCloseSourceModal?.addEventListener('click', onCancel);
     btnCancelSourcePicker?.addEventListener('click', onCancel);
+    btnStartTransmissionModal?.addEventListener('click', onConfirm);
+    tabNavSources?.addEventListener('click', onTabNavSources);
+    tabNavProfile?.addEventListener('click', onTabNavProfile);
+    tabNavAudio?.addEventListener('click', onTabNavAudio);
     tabSourcesScreens?.addEventListener('click', onTabScreens);
     tabSourcesWindows?.addEventListener('click', onTabWindows);
+    sourceSearchInput?.addEventListener('input', onSearchInput);
 
-    try {
-      cachedDesktopSources = await window.desktopAPI.getSources({ types: ['screen', 'window'] });
-    } catch (err) {
-      console.error('[Desktop] Erro ao obter fontes:', err);
-      cachedDesktopSources = [];
-    } finally {
+    // Carrega fontes se em ambiente Desktop
+    if (window.desktopAPI && typeof window.desktopAPI.getSources === 'function') {
+      if (webBrowserNotice) webBrowserNotice.classList.add('hidden');
+      try {
+        cachedDesktopSources = await window.desktopAPI.getSources({ types: ['screen', 'window'] });
+      } catch (err) {
+        console.error('[Desktop] Erro ao obter fontes:', err);
+        cachedDesktopSources = [];
+      } finally {
+        if (sourcesLoading) sourcesLoading.classList.add('hidden');
+      }
+
+      // Por padrão, pré-seleciona a tela principal (Monitor 1) se existir
+      if (cachedDesktopSources.length > 0) {
+        const defaultScreen = cachedDesktopSources.find(s => s.id.startsWith('screen:')) || cachedDesktopSources[0];
+        selectedModalSource = defaultScreen;
+        if (btnStartTransmissionModal) btnStartTransmissionModal.disabled = false;
+      }
+      renderSourceItems(onSourceItemClicked, onSourceItemDblClicked);
+    } else {
+      // Modo Navegador Web
       if (sourcesLoading) sourcesLoading.classList.add('hidden');
+      if (webBrowserNotice) webBrowserNotice.classList.remove('hidden');
+      selectedModalSource = { id: 'browser-display', name: 'Tela do Navegador' };
+      if (btnStartTransmissionModal) btnStartTransmissionModal.disabled = false;
     }
 
-    renderSourceItems(onSelect);
+    updateModalSummaryPill();
+    loadAudioAppsInModal();
   });
 }
 
-function renderSourceItems(onSelect) {
+function switchTransPane(paneName) {
+  const tabs = [
+    { name: 'sources', tab: tabNavSources, pane: transPaneSources },
+    { name: 'profile', tab: tabNavProfile, pane: transPaneProfile },
+    { name: 'audio', tab: tabNavAudio, pane: transPaneAudio }
+  ];
+
+  tabs.forEach(t => {
+    if (t.name === paneName) {
+      t.tab?.classList.add('active');
+      t.pane?.classList.add('active');
+    } else {
+      t.tab?.classList.remove('active');
+      t.pane?.classList.remove('active');
+    }
+  });
+}
+
+function renderSourceItems(onClick, onDblClick) {
   if (!sourcesGrid) return;
   sourcesGrid.innerHTML = '';
 
+  const search = sourceSearchInput ? sourceSearchInput.value.trim().toLowerCase() : '';
+
   const filtered = cachedDesktopSources.filter(s => {
-    if (currentSourceFilter === 'screen') return s.id.startsWith('screen:');
-    return !s.id.startsWith('screen:');
+    const isScreen = s.id.startsWith('screen:');
+    if (currentSourceFilter === 'screen' && !isScreen) return false;
+    if (currentSourceFilter === 'window' && isScreen) return false;
+    if (search && !s.name.toLowerCase().includes(search)) return false;
+    return true;
   });
 
   if (filtered.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'sources-empty';
-    empty.textContent = currentSourceFilter === 'screen'
-      ? 'Nenhum monitor adicional detectado.'
-      : 'Nenhuma janela de jogo ou aplicativo detectada no momento.';
+    empty.textContent = search
+      ? 'Nenhum resultado encontrado para a busca.'
+      : (currentSourceFilter === 'screen' ? 'Nenhum monitor adicional detectado.' : 'Nenhuma janela detectada.');
     sourcesGrid.appendChild(empty);
     return;
   }
@@ -1185,6 +1326,9 @@ function renderSourceItems(onSelect) {
   filtered.forEach(source => {
     const item = document.createElement('div');
     item.className = 'source-item';
+    if (selectedModalSource && selectedModalSource.id === source.id) {
+      item.classList.add('selected');
+    }
     item.title = source.name;
 
     const thumbContainer = document.createElement('div');
@@ -1216,8 +1360,213 @@ function renderSourceItems(onSelect) {
     item.appendChild(thumbContainer);
     item.appendChild(info);
 
-    item.addEventListener('click', () => onSelect(source));
+    item.addEventListener('click', () => onClick(source, item));
+    item.addEventListener('dblclick', () => onDblClick(source, item));
     sourcesGrid.appendChild(item);
+  });
+}
+
+function syncModalControlsWithCurrentState() {
+  // Sincroniza cards de perfil no modal
+  const curProfile = qualityController.activeProfile || 'ultra';
+  modalPresetCards.forEach(card => {
+    const p = card.dataset.profile;
+    card.classList.toggle('active', p === curProfile);
+  });
+  if (modalActiveProfileBadge) {
+    modalActiveProfileBadge.textContent = curProfile.toUpperCase() === 'ULTRA' ? 'Ultra 60' : (curProfile === 'balanced' ? 'Equilibrado' : (curProfile === 'eco' ? 'Econômico' : 'Custom'));
+  }
+
+  if (modalSettingResSelect) modalSettingResSelect.value = media.targetResolution || 'native';
+  if (modalSettingFpsSelect) modalSettingFpsSelect.value = String(media.targetFps || 60);
+  if (modalSettingContentHint) modalSettingContentHint.value = media.contentHint || 'motion';
+  if (modalSettingCodecSelect) modalSettingCodecSelect.value = webrtc.getPreferredCodec();
+  if (modalSettingCaptureSystemAudio) modalSettingCaptureSystemAudio.checked = media.captureSystemAudio;
+  if (modalSettingEnableMic) modalSettingEnableMic.checked = media.hasActiveMic();
+
+  updateModalSummaryPill();
+}
+
+function applyModalSettingsToMedia() {
+  const fps = modalSettingFpsSelect ? parseInt(modalSettingFpsSelect.value, 10) : 60;
+  const res = modalSettingResSelect ? modalSettingResSelect.value : 'native';
+  const hint = modalSettingContentHint ? modalSettingContentHint.value : 'motion';
+  const codec = modalSettingCodecSelect ? modalSettingCodecSelect.value : 'auto';
+  const captureAudio = modalSettingCaptureSystemAudio ? modalSettingCaptureSystemAudio.checked : true;
+
+  media.setFpsPreference(fps);
+  media.setResolutionPreference(res);
+  media.setContentHint(hint);
+  media.setCaptureSystemAudio(captureAudio);
+  webrtc.setPreferredCodec(codec);
+
+  if (window.desktopAPI && window.desktopAPI.setCaptureAudio) {
+    window.desktopAPI.setCaptureAudio(captureAudio);
+  }
+
+  // Sincroniza selects da aba de configurações geral
+  const settingFpsSelect = document.getElementById('settingFpsSelect');
+  const settingResSelect = document.getElementById('settingResSelect');
+  const settingContentHint = document.getElementById('settingContentHint');
+  const settingPreferredCodec = document.getElementById('settingPreferredCodec');
+  const settingCaptureSystemAudio = document.getElementById('settingCaptureSystemAudio');
+
+  if (settingFpsSelect) settingFpsSelect.value = String(fps);
+  if (settingResSelect) settingResSelect.value = res;
+  if (settingContentHint) settingContentHint.value = hint;
+  if (settingPreferredCodec) settingPreferredCodec.value = codec;
+  if (settingCaptureSystemAudio) settingCaptureSystemAudio.checked = captureAudio;
+
+  saveSettingsState();
+}
+
+function updateModalSummaryPill() {
+  if (summarySourceName) {
+    summarySourceName.textContent = selectedModalSource ? selectedModalSource.name : 'Nenhuma fonte selecionada';
+  }
+
+  const pKey = qualityController.activeProfile || 'ultra';
+  const fpsVal = modalSettingFpsSelect ? modalSettingFpsSelect.value : '60';
+  if (summaryProfile) {
+    summaryProfile.textContent = `${pKey.toUpperCase() === 'ULTRA' ? 'Ultra' : (pKey === 'balanced' ? 'Equilibrado' : (pKey === 'eco' ? 'Econômico' : 'Custom'))} (${fpsVal} FPS)`;
+  }
+
+  const audioOn = modalSettingCaptureSystemAudio ? modalSettingCaptureSystemAudio.checked : true;
+  if (summaryAudio) {
+    summaryAudio.textContent = audioOn ? 'Som do PC Ativo' : 'Sem Áudio do PC';
+  }
+  if (modalAudioActiveBadge) {
+    modalAudioActiveBadge.textContent = audioOn ? 'Áudio Ativo' : 'Áudio Mudo';
+    modalAudioActiveBadge.classList.toggle('active', audioOn);
+  }
+}
+
+// Configura listeners de alteração nos controles do modal
+modalPresetCards.forEach(card => {
+  card.addEventListener('click', () => {
+    const profile = card.dataset.profile;
+    modalPresetCards.forEach(c => c.classList.toggle('active', c === card));
+    qualityController.setProfile(profile);
+
+    if (profile === 'ultra') {
+      if (modalSettingFpsSelect) modalSettingFpsSelect.value = '60';
+    } else if (profile === 'balanced') {
+      if (modalSettingFpsSelect) modalSettingFpsSelect.value = '60';
+    } else if (profile === 'eco') {
+      if (modalSettingFpsSelect) modalSettingFpsSelect.value = '30';
+    }
+    if (modalActiveProfileBadge) {
+      modalActiveProfileBadge.textContent = profile === 'ultra' ? 'Ultra 60' : (profile === 'balanced' ? 'Equilibrado' : (profile === 'eco' ? 'Econômico' : 'Custom'));
+    }
+    updateModalSummaryPill();
+  });
+});
+
+[modalSettingResSelect, modalSettingFpsSelect, modalSettingContentHint, modalSettingCodecSelect, modalSettingCaptureSystemAudio].forEach(el => {
+  el?.addEventListener('change', updateModalSummaryPill);
+});
+
+async function populateModalMicrophones() {
+  if (!modalSettingMicDeviceSelect) return;
+  try {
+    const mics = await media.enumerateMicrophones();
+    modalSettingMicDeviceSelect.innerHTML = '<option value="">Padrão do Sistema</option>';
+    mics.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.deviceId;
+      opt.textContent = m.label;
+      if (m.deviceId === media.selectedMicDeviceId) opt.selected = true;
+      modalSettingMicDeviceSelect.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+async function loadAudioAppsInModal() {
+  if (!modalAudioAppsList) return;
+  modalAudioAppsList.innerHTML = '';
+
+  let apps = [];
+  if (window.desktopAPI && typeof window.desktopAPI.getAudioApplications === 'function') {
+    try {
+      apps = await window.desktopAPI.getAudioApplications();
+    } catch (e) {
+      console.warn('[Desktop] Erro ao carregar apps de áudio:', e);
+    }
+  }
+
+  // Se não há aplicativos retornados pelo Desktop (ou em modo Web), extrai das janelas detectadas ou padrão
+  if (apps.length === 0) {
+    if (cachedDesktopSources.length > 0) {
+      apps = cachedDesktopSources
+        .filter(s => !s.id.startsWith('screen:'))
+        .map(s => ({
+          id: s.id,
+          name: s.name,
+          appIcon: s.appIcon,
+          hasAudio: true
+        }));
+    }
+  }
+
+  if (apps.length === 0) {
+    const item = document.createElement('div');
+    item.className = 'audio-app-item';
+    item.innerHTML = `
+      <div class="audio-app-info">
+        <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+        </svg>
+        <span class="audio-app-title">Áudio Global do Sistema (Jogos, Navegadores, Discord)</span>
+      </div>
+      <span class="audio-app-pill">Loopback Ativo</span>
+    `;
+    modalAudioAppsList.appendChild(item);
+    return;
+  }
+
+  apps.forEach(app => {
+    const item = document.createElement('div');
+    item.className = 'audio-app-item';
+
+    const info = document.createElement('div');
+    info.className = 'audio-app-info';
+
+    if (app.appIcon) {
+      const img = document.createElement('img');
+      img.className = 'audio-app-icon';
+      img.src = app.appIcon;
+      info.appendChild(img);
+    } else {
+      const iconSpan = document.createElement('span');
+      iconSpan.innerHTML = `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`;
+      info.appendChild(iconSpan);
+    }
+
+    const title = document.createElement('span');
+    title.className = 'audio-app-title';
+    title.textContent = app.name;
+    info.appendChild(title);
+
+    const pill = document.createElement('span');
+    pill.className = 'audio-app-pill';
+    pill.textContent = 'Ativo';
+    info.appendChild(pill);
+
+    const label = document.createElement('label');
+    label.className = 'toggle-switch';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = true;
+    input.dataset.appId = app.id;
+    const slider = document.createElement('span');
+    slider.className = 'toggle-slider';
+    label.appendChild(input);
+    label.appendChild(slider);
+
+    item.appendChild(info);
+    item.appendChild(label);
+    modalAudioAppsList.appendChild(item);
   });
 }
 
@@ -1227,19 +1576,18 @@ async function handleToggleScreenShare() {
     handleStreamEnded();
   } else {
     try {
-      // Se estiver no ambiente Desktop Electron (WGC Nativo)
-      if (window.desktopAPI && typeof window.desktopAPI.getSources === 'function') {
-        const selectedSource = await promptDesktopSourcePicker();
-        if (!selectedSource) {
-          console.log('[App] Compartilhamento de tela cancelado pelo usuário no seletor WGC.');
-          return;
-        }
-        if (typeof window.desktopAPI.setSelectedSource === 'function') {
-          await window.desktopAPI.setSelectedSource(selectedSource.id);
-        }
+      // Abre o modal de transmissão unificado (Fonte, Perfil e Áudio)
+      const result = await promptDesktopSourcePicker();
+      if (!result || !result.confirmed) {
+        console.log('[App] Transmissão cancelada pelo usuário no modal de seleção.');
+        return;
       }
 
-      console.log('[App] Solicitando compartilhamento de tela a 60 FPS...');
+      if (result.source && window.desktopAPI && typeof window.desktopAPI.setSelectedSource === 'function') {
+        await window.desktopAPI.setSelectedSource(result.source.id);
+      }
+
+      console.log(`[App] Iniciando transmissão em 60 FPS com perfil ${qualityController.activeProfile}...`);
       const stream = await media.startScreenCapture();
 
       addOrUpdateLocalPreview('screen', media.screenStream, 'Sua Tela (60 FPS)');
@@ -1249,6 +1597,7 @@ async function handleToggleScreenShare() {
 
       const otherIds = roomState.getOtherParticipantIds();
       await webrtc.syncLocalMedia(media, otherIds);
+      await qualityController.applyProfileToPeers();
       await webrtc.renegotiateAllPeers(otherIds);
 
       const hasAudio = media.getScreenAudioTrack() !== null;
@@ -1258,7 +1607,7 @@ async function handleToggleScreenShare() {
       signaling.send('START_STREAM', { hasVideo: true, hasAudio, trackId, streamId });
       signaling.send('MEDIA_STATE', { type: 'screen', active: true, trackId, streamId });
 
-      appendSystemChat('Você iniciou o compartilhamento de tela.');
+      appendSystemChat(`Você iniciou a transmissão com perfil ${qualityController.activeProfile.toUpperCase()} (60 FPS).`);
       updateGridLayout();
     } catch (err) {
       console.error('[App] Falha ao compartilhar tela:', err);
@@ -2012,6 +2361,14 @@ function setupSettingsModal() {
         latestUpdateInfo = res;
         if (updateAvailableBadge) updateAvailableBadge.classList.remove('hidden');
 
+        // Exibe o banner flutuante no canto da tela
+        const updateFloatingBanner = document.getElementById('updateFloatingBanner');
+        const updateBannerVersion = document.getElementById('updateBannerVersion');
+        if (updateFloatingBanner && updateBannerVersion) {
+          updateBannerVersion.textContent = `v${res.latestVersion}`;
+          updateFloatingBanner.classList.remove('hidden');
+        }
+
         if (updateStatusTitle) updateStatusTitle.textContent = `Nova versão disponível: v${res.latestVersion}`;
         if (updateStatusDesc) updateStatusDesc.textContent = 'Uma atualização com melhorias de desempenho e correções está pronta para instalação.';
         if (updateStatusIcon) updateStatusIcon.className = 'update-status-icon has-update';
@@ -2024,6 +2381,8 @@ function setupSettingsModal() {
           }
         }
       } else {
+        const updateFloatingBanner = document.getElementById('updateFloatingBanner');
+        if (updateFloatingBanner) updateFloatingBanner.classList.add('hidden');
         if (updateAvailableBadge) updateAvailableBadge.classList.add('hidden');
         if (updateActionPanel) updateActionPanel.classList.add('hidden');
         if (updateStatusTitle) updateStatusTitle.textContent = 'HyperStream está atualizado';
@@ -2040,6 +2399,27 @@ function setupSettingsModal() {
       if (btnCheckUpdatesManual) btnCheckUpdatesManual.disabled = false;
       if (btnCheckUpdatesText) btnCheckUpdatesText.textContent = 'Verificar Atualizações';
     }
+  }
+
+  // Banner flutuante de atualização
+  const btnUpdateBannerInstall = document.getElementById('btnUpdateBannerInstall');
+  const btnUpdateBannerDismiss = document.getElementById('btnUpdateBannerDismiss');
+  const updateFloatingBanner = document.getElementById('updateFloatingBanner');
+
+  if (btnUpdateBannerInstall) {
+    btnUpdateBannerInstall.addEventListener('click', () => {
+      openSettings('updates');
+      updateFloatingBanner?.classList.add('hidden');
+      if (btnInstallUpdateNow && !btnInstallUpdateNow.disabled) {
+        btnInstallUpdateNow.click();
+      }
+    });
+  }
+
+  if (btnUpdateBannerDismiss) {
+    btnUpdateBannerDismiss.addEventListener('click', () => {
+      updateFloatingBanner?.classList.add('hidden');
+    });
   }
 
   if (btnCheckUpdatesManual) {
@@ -2088,9 +2468,10 @@ function setupSettingsModal() {
   function saveSettingsState() {
     try {
       const state = {
+        profile: qualityController ? qualityController.activeProfile : 'ultra',
         fps: settingFpsSelect ? settingFpsSelect.value : '60',
         res: settingResSelect ? settingResSelect.value : 'native',
-        hint: settingContentHint ? settingContentHint.value : 'detail',
+        hint: settingContentHint ? settingContentHint.value : 'motion',
         maxBitrate: settingMaxBitrate ? settingMaxBitrate.value : '8000000',
         minBitrate: settingMinBitrate ? settingMinBitrate.value : '4000000',
         codec: settingPreferredCodec ? settingPreferredCodec.value : 'auto',
@@ -2110,6 +2491,10 @@ function setupSettingsModal() {
       if (!raw) return;
       const s = JSON.parse(raw);
 
+      if (s.profile) {
+        qualityController.setProfile(s.profile);
+        presetCards.forEach(c => c.classList.toggle('active', c.dataset.profile === s.profile));
+      }
       if (s.fps && settingFpsSelect) {
         settingFpsSelect.value = s.fps;
         media.setFpsPreference(Number(s.fps));
@@ -2142,7 +2527,9 @@ function setupSettingsModal() {
 
       updateBitrateBadges();
       updateAudioFilters();
-    } catch (_) {}
+    } catch (e) {
+      console.warn('[Settings] Erro ao restaurar configurações:', e);
+    }
   }
 
   loadSettingsState();

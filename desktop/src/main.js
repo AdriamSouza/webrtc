@@ -259,6 +259,26 @@ ipcMain.handle('desktop:get-capture-audio', () => {
   return captureAudioEnabled;
 });
 
+// IPC: Obter aplicativos e janelas abertas no sistema para seleção no mixer de áudio
+ipcMain.handle('desktop:get-audio-apps', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['window'],
+      fetchWindowIcons: true,
+      thumbnailSize: { width: 64, height: 64 }
+    });
+    return sources.map(s => ({
+      id: s.id,
+      name: s.name,
+      appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
+      hasAudio: true
+    }));
+  } catch (err) {
+    console.warn('[Desktop Main] Erro ao obter lista de aplicativos de áudio:', err.message);
+    return [];
+  }
+});
+
 // ========================================================
 // SISTEMA DE ATUALIZAÇÕES AUTOMÁTICAS IN-APP (GITHUB RELEASES)
 // ========================================================

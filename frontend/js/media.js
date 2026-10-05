@@ -42,7 +42,7 @@ export class MediaManager {
       try { return localStorage.getItem('hyperstream_target_res') || 'native'; } catch (_) { return 'native'; }
     })();
     this.contentHint = (() => {
-      try { return localStorage.getItem('hyperstream_content_hint') || 'detail'; } catch (_) { return 'detail'; }
+      try { return localStorage.getItem('hyperstream_content_hint') || 'motion'; } catch (_) { return 'motion'; }
     })();
 
     // Analisadores Web Audio para VU Meter em tempo real
@@ -74,8 +74,9 @@ export class MediaManager {
       }
     }
 
+    const minFps = Math.min(30, this.targetFps);
     const videoConstraints = {
-      frameRate: { ideal: this.targetFps, max: this.targetFps }
+      frameRate: { ideal: this.targetFps, min: minFps, max: this.targetFps }
     };
 
     // Aplica limites de resolução se configurado
@@ -88,6 +89,10 @@ export class MediaManager {
     } else if (this.targetResolution === '480p') {
       videoConstraints.width = { ideal: 854, max: 854 };
       videoConstraints.height = { ideal: 480, max: 480 };
+    } else {
+      // Nativa: suporta até 4K a 60 FPS sem redimensionamento forçado pelo Chromium
+      videoConstraints.width = { ideal: 2560, max: 3840 };
+      videoConstraints.height = { ideal: 1440, max: 2160 };
     }
 
     let stream = null;
@@ -114,20 +119,27 @@ export class MediaManager {
         });
         console.log(`[MediaManager] Tela capturada (apenas vídeo a ${this.targetFps} FPS).`);
       } catch (errVideo) {
-        console.warn('[MediaManager] Tentando fallback padrão do navegador:', errVideo.message);
+        console.warn('[MediaManager] Tentando fallback padrão com 60 FPS:', errVideo.message);
         stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true
+          video: { frameRate: { ideal: this.targetFps, max: this.targetFps } }
         });
       }
     }
 
     this.screenStream = stream;
 
-    // Marca o track como tela com contentHint configurável
+    // Marca o track como tela com contentHint 'motion' prioritário para jogos a 60 FPS
     const videoTracks = this.screenStream.getVideoTracks();
     if (videoTracks.length > 0) {
       const videoTrack = videoTracks[0];
-      videoTrack.contentHint = this.contentHint;
+      videoTrack.contentHint = this.contentHint || 'motion';
+
+      // Força a taxa de quadros e resolução nos constraints do track
+      videoTrack.applyConstraints({
+        frameRate: { ideal: this.targetFps, min: minFps, max: this.targetFps }
+      }).catch(err => {
+        console.warn('[MediaManager] Aviso ao aplicar constraints no track:', err.message);
+      });
 
       videoTrack.onended = () => {
         console.log('[MediaManager] Compartilhamento de tela encerrado pelo navegador.');
@@ -400,6 +412,43 @@ export class MediaManager {
       const track = this.getScreenVideoTrack();
       if (track) track.contentHint = this.contentHint;
     }
+  }
+
+  setFpsPreference(fps) {
+    this.targetFps = parseInt(fps, 10) || 60;
+    try { localStorage.setItem('hyperstream_target_fps', this.targetFps); } catch (_) {}
+    const track = this.getScreenVideoTrack();
+    if (track && track.readyState === 'live') {
+      const minFps = Math.min(30, this.targetFps);
+      track.applyConstraints({ frameRate: { ideal: this.targetFps, min: minFps, max: this.targetFps } }).catch(() => {});
+    }
+  }
+
+  setResolutionPreference(res) {
+    this.targetResolution = res || 'native';
+    try { localStorage.setItem('hyperstream_target_res', this.targetResolution); } catch (_) {}
+  }
+
+  setContentHint(hint) {
+    this.contentHint = hint || 'motion';
+    try { localStorage.setItem('hyperstream_content_hint', this.contentHint); } catch (_) {}
+    const track = this.getScreenVideoTrack();
+    if (track) {
+      track.contentHint = this.contentHint;
+    }
+  }
+
+  stopMicrophone() {
+    if (this.micStream) {
+      this.micStream.getTracks().forEach(t => t.stop());
+      this.micStream = null;
+    }
+    this.teardownMicAudioAnalyser?.();
+    this.buildCombinedStream();
+  }
+
+  setAudioFilters(filters) {
+    return this.setAudioProcessing(filters);
   }
 
   /**

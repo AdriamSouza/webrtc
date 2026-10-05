@@ -18,24 +18,24 @@ export const QUALITY_PROFILES = {
   balanced: {
     id: 'balanced',
     label: 'Equilibrado (60 FPS)',
-    maxBitrate: 3500000,
-    minBitrate: 1500000,
+    maxBitrate: 5000000,
+    minBitrate: 2500000,
     maxFps: 60,
-    description: '60 FPS com até 3.5 Mbps (Ideal para jogar pela internet com amigos)'
+    description: '60 FPS com até 5.0 Mbps (Ideal para jogar pela internet com amigos)'
   },
   eco: {
     id: 'eco',
     label: 'Econômico (30 FPS)',
-    maxBitrate: 1800000,
-    minBitrate: 800000,
+    maxBitrate: 2000000,
+    minBitrate: 1000000,
     maxFps: 30,
-    description: '30 FPS com até 1.8 Mbps (Ideal para conexões instáveis ou 4G)'
+    description: '30 FPS com até 2.0 Mbps (Ideal para conexões instáveis ou 4G)'
   },
   custom: {
     id: 'custom',
     label: 'Personalizado',
-    maxBitrate: 6000000,
-    minBitrate: 2000000,
+    maxBitrate: 8000000,
+    minBitrate: 2500000,
     maxFps: 60,
     description: 'Configuração manual definida pelo usuário'
   }
@@ -49,26 +49,38 @@ export class QualityController {
     this.webrtc = null;
 
     // Histórico individual por ID de relatório RTP para cálculo exato de deltas sem colisões
-    // Map<reportId, { bytes: number, timestamp: number, frames: number }>
     this.streamStatsHistory = new Map();
 
-    // Perfil ativo e limites de adaptação
-    this.activeProfile = 'ultra';
-    this.currentMaxBitrate = QUALITY_PROFILES.ultra.maxBitrate;
-    this.currentMaxFps = QUALITY_PROFILES.ultra.maxFps;
+    // Perfil ativo persistente (Ultra por padrão)
+    const saved = (() => {
+      try { return localStorage.getItem('hyperstream_active_profile') || 'ultra'; } catch (_) { return 'ultra'; }
+    })();
+    const profile = QUALITY_PROFILES[saved] || QUALITY_PROFILES.ultra;
+
+    this.activeProfile = profile.id;
+    this.currentMaxBitrate = profile.maxBitrate;
+    this.currentMaxFps = profile.maxFps;
   }
 
   start(webrtcManager, callback) {
     this.webrtc = webrtcManager;
     this.onStatsUpdate = callback;
 
+    if (this.webrtc) {
+      this.webrtc.targetMaxBitrate = this.currentMaxBitrate;
+      this.webrtc.targetMaxFps = this.currentMaxFps;
+    }
+
     this.stop(); // Garante que nenhum timer anterior continue rodando
+
+    // Aplica imediatamente nos senders já existentes
+    this.applyProfileToPeers();
 
     this.intervalId = setInterval(() => {
       this.collectMetrics();
     }, this.pollIntervalMs);
 
-    console.log('[QualityController] Monitoramento adaptativo multi-peer ativado.');
+    console.log(`[QualityController] Monitoramento ativado. Perfil inicial: ${this.activeProfile} (${(this.currentMaxBitrate / 1000000).toFixed(1)} Mbps @ ${this.currentMaxFps} FPS)`);
   }
 
   stop() {
@@ -80,7 +92,7 @@ export class QualityController {
   }
 
   /**
-   * Altera manualmente o perfil de qualidade (Ultra, Equilibrado, Econômico)
+   * Altera manualmente o perfil de qualidade (Ultra, Equilibrado, Econômico, Personalizado)
    * Aplicado imediatamente em todos os senders de vídeo ativos em todas as conexões
    */
   async setProfile(profileKey) {
@@ -91,22 +103,41 @@ export class QualityController {
     this.currentMaxBitrate = profile.maxBitrate;
     this.currentMaxFps = profile.maxFps;
 
-    console.log(`[QualityController] Perfil alterado para: ${profile.label} (Max: ${(profile.maxBitrate / 1000000).toFixed(1)} Mbps, FPS: ${profile.maxFps})`);
+    try { localStorage.setItem('hyperstream_active_profile', profileKey); } catch (_) {}
 
-    if (this.webrtc && this.webrtc.peers) {
-      for (const [targetId, pc] of this.webrtc.peers.entries()) {
-        const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
-        for (const sender of senders) {
-          try {
-            const params = sender.getParameters();
-            if (params.encodings && params.encodings.length > 0) {
-              params.encodings[0].maxBitrate = this.currentMaxBitrate;
-              params.encodings[0].maxFramerate = this.currentMaxFps;
-              await sender.setParameters(params);
-            }
-          } catch (err) {
-            console.warn(`[QualityController] Erro ao aplicar perfil no peer ${targetId}:`, err);
+    if (this.webrtc) {
+      this.webrtc.targetMaxBitrate = this.currentMaxBitrate;
+      this.webrtc.targetMaxFps = this.currentMaxFps;
+    }
+
+    console.log(`[QualityController] Perfil alterado para: ${profile.label} (Max: ${(profile.maxBitrate / 1000000).toFixed(1)} Mbps, FPS: ${profile.maxFps})`);
+    await this.applyProfileToPeers();
+  }
+
+  /**
+   * Aplica parâmetros do perfil ativo a todos os senders de vídeo de todos os peers
+   */
+  async applyProfileToPeers() {
+    if (!this.webrtc || !this.webrtc.peers) return;
+
+    for (const [targetId, pc] of this.webrtc.peers.entries()) {
+      const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+      for (const sender of senders) {
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
           }
+          params.encodings[0].maxBitrate = this.currentMaxBitrate;
+          params.encodings[0].maxFramerate = this.currentMaxFps;
+          params.encodings[0].scaleResolutionDownBy = 1.0;
+          params.encodings[0].priority = 'high';
+          params.encodings[0].networkPriority = 'high';
+          params.degradationPreference = 'maintain-framerate';
+
+          await sender.setParameters(params);
+        } catch (err) {
+          console.warn(`[QualityController] Erro ao aplicar perfil no peer ${targetId}:`, err.message);
         }
       }
     }

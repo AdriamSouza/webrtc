@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   // Configuração de áudio do sistema (loopback) durante a captura
   setCaptureAudio: (enabled) => ipcRenderer.invoke('desktop:set-capture-audio', enabled),
   getCaptureAudio: () => ipcRenderer.invoke('desktop:get-capture-audio'),
+  getAudioApplications: () => ipcRenderer.invoke('desktop:get-audio-apps'),
 
   // Sistema de Atualizações Automáticas no App
   checkForUpdates: () => ipcRenderer.invoke('desktop:check-for-updates'),

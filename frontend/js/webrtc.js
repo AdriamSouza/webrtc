@@ -36,6 +36,8 @@ export class WebRTCManager {
     this.preferredCodec = (() => {
       try { return localStorage.getItem('hyperstream_preferred_codec') || 'auto'; } catch (_) { return 'auto'; }
     })();
+    this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
+    this.targetMaxFps = 60; // 60 FPS padrão
   }
 
   setIceServers(servers) {
@@ -131,6 +133,9 @@ export class WebRTCManager {
           try {
             console.log(`[WebRTC] Atualizando sender (${key}) com novo track para ${targetUserId}`);
             await existingSender.replaceTrack(track);
+            if (isVideo) {
+              await this.applyVideoSenderLimits(existingSender);
+            }
           } catch (err) {
             console.warn(`[WebRTC] Erro ao substituir track no sender ${key}:`, err.message);
           }
@@ -150,6 +155,7 @@ export class WebRTCManager {
           const transceivers = pc.getTransceivers();
           const vt = transceivers.find(t => t.sender === sender);
           if (vt) this.configureCodecPreferences(vt);
+          await this.applyVideoSenderLimits(sender);
         }
       }
     };
@@ -159,6 +165,106 @@ export class WebRTCManager {
     await updateSender('cameraVideo', cameraVideo, mediaManager.cameraStream, true);
     await updateSender('cameraAudio', cameraAudio, mediaManager.cameraStream, false);
     await updateSender('micAudio', micAudio, mediaManager.micStream, false);
+  }
+
+  /**
+   * Aplica configurações de codificação de alto desempenho no RTCRtpSender
+   * Remove o limite padrão de 2.5 Mbps do Chromium e prioriza 60 FPS ininterruptos
+   */
+  async applyVideoSenderLimits(sender) {
+    if (!sender || !sender.track || sender.track.kind !== 'video') return;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+      params.encodings[0].maxBitrate = this.targetMaxBitrate || 8000000;
+      params.encodings[0].maxFramerate = this.targetMaxFps || 60;
+      params.encodings[0].scaleResolutionDownBy = 1.0;
+      params.encodings[0].priority = 'high';
+      params.encodings[0].networkPriority = 'high';
+      params.degradationPreference = 'maintain-framerate'; // Garante 60 FPS contínuo sem queda de quadros
+
+      await sender.setParameters(params);
+      console.log(`[WebRTC] Limites de vídeo aplicados no sender: ${(this.targetMaxBitrate / 1000000).toFixed(1)} Mbps @ ${this.targetMaxFps} FPS`);
+    } catch (err) {
+      console.warn('[WebRTC] Aviso ao aplicar parâmetros no sender:', err.message);
+    }
+  }
+
+  /**
+   * Altera bitrate e taxa de quadros e propaga para todos os peers conectados
+   */
+  async setBitrateAndFps(maxBitrate, maxFps) {
+    if (maxBitrate) this.targetMaxBitrate = Number(maxBitrate);
+    if (maxFps) this.targetMaxFps = Number(maxFps);
+
+    for (const [targetId, pc] of this.peers.entries()) {
+      const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+      for (const sender of senders) {
+        await this.applyVideoSenderLimits(sender);
+      }
+    }
+  }
+
+  /**
+   * Munging de SDP para sinalizar banda máxima suportada ao BWE (Bandwidth Estimator)
+   * Garante que conexões locais e via internet não fiquem presas aos 2.5 Mbps padrão
+   */
+  mungeSdpBandwidth(sdp, bitrateBps = this.targetMaxBitrate) {
+    if (!sdp) return sdp;
+    const bps = bitrateBps || 8000000;
+    const bitrateKbps = Math.round(bps / 1000);
+
+    let lines = sdp.split('\r\n');
+    let inVideo = false;
+    let hasAS = false;
+    let hasTIAS = false;
+    let newLines = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith('m=video')) {
+        inVideo = true;
+        hasAS = false;
+        hasTIAS = false;
+        newLines.push(line);
+        continue;
+      }
+      if (line.startsWith('m=') && !line.startsWith('m=video')) {
+        inVideo = false;
+      }
+
+      if (inVideo) {
+        if (line.startsWith('b=AS:')) {
+          newLines.push(`b=AS:${bitrateKbps}`);
+          hasAS = true;
+          continue;
+        }
+        if (line.startsWith('b=TIAS:')) {
+          newLines.push(`b=TIAS:${bps}`);
+          hasTIAS = true;
+          continue;
+        }
+        if (line.startsWith('a=') && !hasAS) {
+          newLines.push(`b=AS:${bitrateKbps}`);
+          newLines.push(`b=TIAS:${bps}`);
+          hasAS = true;
+          hasTIAS = true;
+        }
+      }
+      newLines.push(line);
+    }
+
+    let modified = newLines.join('\r\n');
+    modified = modified.replace(/(a=fmtp:\d+ .*)([\r\n]+)/g, (match, p1, p2) => {
+      if (!p1.includes('x-google-max-bitrate')) {
+        return `${p1};x-google-min-bitrate=2000;x-google-start-bitrate=4000;x-google-max-bitrate=${bitrateKbps}${p2}`;
+      }
+      return match;
+    });
+
+    return modified;
   }
 
   setLocalStream(stream) {
@@ -588,7 +694,8 @@ export class WebRTCManager {
 
       if (pc.signalingState === 'closed') return;
 
-      await pc.setLocalDescription(offer);
+      const mungedOfferSdp = this.mungeSdpBandwidth(offer.sdp, this.targetMaxBitrate);
+      await pc.setLocalDescription(new RTCSessionDescription({ type: offer.type, sdp: mungedOfferSdp }));
 
       const mediaMids = this.getMediaMids(targetUserId);
       const streamIds = {
@@ -650,7 +757,8 @@ export class WebRTCManager {
       await this.drainCandidateQueue(fromUserId, pc);
 
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      const mungedAnswerSdp = this.mungeSdpBandwidth(answer.sdp, this.targetMaxBitrate);
+      await pc.setLocalDescription(new RTCSessionDescription({ type: answer.type, sdp: mungedAnswerSdp }));
 
       console.log(`[WebRTC] SDP Answer gerada para ${fromUserId}. Enviando de volta...`);
       this.signaling.send('ANSWER', {

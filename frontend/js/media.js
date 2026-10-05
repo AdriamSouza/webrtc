@@ -74,12 +74,12 @@ export class MediaManager {
       }
     }
 
-    const minFps = Math.min(30, this.targetFps);
+    const fps = this.targetFps || 60;
     const videoConstraints = {
-      frameRate: { ideal: this.targetFps, min: minFps, max: this.targetFps }
+      frameRate: { ideal: fps, max: fps }
     };
 
-    // Aplica limites de resolução se configurado
+    // Aplica limites de resolução se configurado especificamente
     if (this.targetResolution === '1080p') {
       videoConstraints.width = { ideal: 1920, max: 1920 };
       videoConstraints.height = { ideal: 1080, max: 1080 };
@@ -89,41 +89,36 @@ export class MediaManager {
     } else if (this.targetResolution === '480p') {
       videoConstraints.width = { ideal: 854, max: 854 };
       videoConstraints.height = { ideal: 480, max: 480 };
-    } else {
-      // Nativa: suporta até 4K a 60 FPS sem redimensionamento forçado pelo Chromium
-      videoConstraints.width = { ideal: 2560, max: 3840 };
-      videoConstraints.height = { ideal: 1440, max: 2160 };
     }
+    // Para 'native', não define width/height permitindo resolução total 100% nativa sem distorção
 
     let stream = null;
 
-    // Tentativa 1: Captura com vídeo configurado + áudio (se habilitado nas configurações)
-    if (this.captureSystemAudio) {
+    // Chamada primária com vídeo em 60 FPS e áudio do sistema (loopback/PC) se habilitado
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: videoConstraints,
+        audio: Boolean(this.captureSystemAudio)
+      });
+      console.log(`[MediaManager] Tela capturada com sucesso a ${fps} FPS (Áudio do PC: ${this.captureSystemAudio ? 'Sim' : 'Não'}).`);
+    } catch (err) {
+      if (err.name === 'NotAllowedError') {
+        // Usuário cancelou ou fechou o diálogo nativo
+        throw err;
+      }
+      console.warn('[MediaManager] Falha na captura principal, tentando fallback básico:', err.message);
       try {
         stream = await navigator.mediaDevices.getDisplayMedia({
-          video: videoConstraints,
-          audio: true
+          video: true,
+          audio: false
         });
-        console.log('[MediaManager] Tela capturada com áudio do sistema.');
-      } catch (errAudio) {
-        console.warn('[MediaManager] Falha na captura com áudio, tentando apenas vídeo:', errAudio.message);
+      } catch (fallbackErr) {
+        throw err;
       }
     }
 
-    // Tentativa 2: Fallback vídeo com parâmetros desejados
     if (!stream) {
-      try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: videoConstraints,
-          audio: false
-        });
-        console.log(`[MediaManager] Tela capturada (apenas vídeo a ${this.targetFps} FPS).`);
-      } catch (errVideo) {
-        console.warn('[MediaManager] Tentando fallback padrão com 60 FPS:', errVideo.message);
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: { ideal: this.targetFps, max: this.targetFps } }
-        });
-      }
+      throw new Error('Nenhuma transmissão de tela foi capturada.');
     }
 
     this.screenStream = stream;
@@ -134,9 +129,9 @@ export class MediaManager {
       const videoTrack = videoTracks[0];
       videoTrack.contentHint = this.contentHint || 'motion';
 
-      // Força a taxa de quadros e resolução nos constraints do track
+      // Aplica taxa de quadros desejada sem cláusula 'min' para evitar OverconstrainedError
       videoTrack.applyConstraints({
-        frameRate: { ideal: this.targetFps, min: minFps, max: this.targetFps }
+        frameRate: { ideal: fps, max: fps }
       }).catch(err => {
         console.warn('[MediaManager] Aviso ao aplicar constraints no track:', err.message);
       });
@@ -419,8 +414,7 @@ export class MediaManager {
     try { localStorage.setItem('hyperstream_target_fps', this.targetFps); } catch (_) {}
     const track = this.getScreenVideoTrack();
     if (track && track.readyState === 'live') {
-      const minFps = Math.min(30, this.targetFps);
-      track.applyConstraints({ frameRate: { ideal: this.targetFps, min: minFps, max: this.targetFps } }).catch(() => {});
+      track.applyConstraints({ frameRate: { ideal: this.targetFps, max: this.targetFps } }).catch(() => {});
     }
   }
 

@@ -486,28 +486,37 @@ app.whenReady().then(() => {
   // Manipulador nativo de captura para getDisplayMedia no Electron
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      let chosen = sources[0];
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 0, height: 0 }
+      });
 
+      let chosen = null;
       if (selectedSourceId) {
-        const found = sources.find(s => s.id === selectedSourceId);
-        if (found) {
-          chosen = found;
+        chosen = sources.find(s => s.id === selectedSourceId);
+        if (chosen) {
           console.log('[Desktop Main] Usando fonte selecionada pelo usuário:', chosen.name);
         }
-        selectedSourceId = null; // Limpa após uso
-      } else {
-        console.log('[Desktop Main] Nenhuma fonte pré-selecionada, usando padrão:', chosen?.name);
+      }
+
+      if (!chosen) {
+        chosen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
+        console.log('[Desktop Main] Usando fonte padrão de tela:', chosen?.name);
       }
 
       if (chosen) {
-        callback({ video: chosen, audio: captureAudioEnabled ? 'loopback' : false });
+        const streamOpts = { video: chosen };
+        if (captureAudioEnabled && request.audioRequested) {
+          streamOpts.audio = 'loopback';
+          console.log('[Desktop Main] Loopback de áudio do sistema ativado na captura.');
+        }
+        callback(streamOpts);
       } else {
-        callback(null);
+        callback({});
       }
     } catch (err) {
       console.error('[Desktop Main] Erro ao selecionar fonte de captura:', err);
-      callback(null);
+      callback({});
     }
   });
 

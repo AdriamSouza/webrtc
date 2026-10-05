@@ -1153,6 +1153,10 @@ function promptDesktopSourcePicker() {
     if (sourcesLoading) sourcesLoading.classList.remove('hidden');
     if (sourceSearchInput) sourceSearchInput.value = '';
 
+    // Sempre habilita o botão de iniciar imediatamente com fallback seguro para monitor principal
+    selectedModalSource = { id: 'default', name: 'Monitor Principal' };
+    if (btnStartTransmissionModal) btnStartTransmissionModal.disabled = false;
+
     // Seleciona a primeira aba (Fontes)
     switchTransPane('sources');
 
@@ -1583,7 +1587,7 @@ async function handleToggleScreenShare() {
         return;
       }
 
-      if (result.source && window.desktopAPI && typeof window.desktopAPI.setSelectedSource === 'function') {
+      if (result.source && result.source.id && !result.source.id.startsWith('browser-') && result.source.id !== 'default' && window.desktopAPI && typeof window.desktopAPI.setSelectedSource === 'function') {
         await window.desktopAPI.setSelectedSource(result.source.id);
       }
 
@@ -1610,6 +1614,10 @@ async function handleToggleScreenShare() {
       appendSystemChat(`Você iniciou a transmissão com perfil ${qualityController.activeProfile.toUpperCase()} (60 FPS).`);
       updateGridLayout();
     } catch (err) {
+      if (err.name === 'NotAllowedError') {
+        console.log('[App] Transmissão de tela cancelada pelo usuário.');
+        return;
+      }
       console.error('[App] Falha ao compartilhar tela:', err);
       alert('Não foi possível iniciar o compartilhamento de tela:\n' + err.message);
     }

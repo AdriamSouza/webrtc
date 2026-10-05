@@ -1,6 +1,6 @@
 {
   "name": "hyperstream-desktop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "HyperStream — Cliente Desktop Nativo com aceleração Windows Graphics Capture (WGC) a 60 FPS",
   "main": "src/main.js",
   "type": "module",

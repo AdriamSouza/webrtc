@@ -400,8 +400,9 @@ ipcMain.handle('desktop:download-and-install-update', async () => {
     }
 
     const tempDir = app.getPath('temp');
-    const zipPath = path.join(tempDir, 'hyperstream-update.zip');
-    const extractDir = path.join(tempDir, 'hyperstream-update-extracted');
+    const updateId = Date.now();
+    const zipPath = path.join(tempDir, `hyperstream-update-${updateId}.zip`);
+    const extractDir = path.join(tempDir, `hyperstream-update-${updateId}`);
 
     console.log('[Desktop Updater] Baixando atualização de:', asset.browser_download_url);
     await downloadFile(asset.browser_download_url, zipPath, (progress) => {
@@ -415,11 +416,16 @@ ipcMain.handle('desktop:download-and-install-update', async () => {
       mainWindow.webContents.send('desktop:update-progress', { percent: 100, status: 'extracting' });
     }
 
-    // Limpa pasta temporária anterior se existir
-    if (fs.existsSync(extractDir)) {
-      fs.rmSync(extractDir, { recursive: true, force: true });
-    }
+    // Cria diretório temporário exclusivo para esta tentativa de update (evita colisões e erros de ENOTEMPTY)
     fs.mkdirSync(extractDir, { recursive: true });
+
+    // Tenta limpar diretórios de updates antigos de forma tolerante a falhas (não bloqueante)
+    try {
+      const oldStatic = path.join(tempDir, 'hyperstream-update-extracted');
+      if (fs.existsSync(oldStatic)) {
+        fs.rmSync(oldStatic, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+      }
+    } catch (_) {}
 
     // Extrai usando PowerShell Expand-Archive nativo do Windows
     await new Promise((resolve, reject) => {
@@ -453,13 +459,36 @@ ipcMain.handle('desktop:download-and-install-update', async () => {
       };
     }
 
-    // Cria script batch para substituir os binários após o fechamento do app e reiniciar
-    const batPath = path.join(tempDir, 'apply_hyperstream_update.bat');
+    // Cria script batch para aguardar encerramento do processo, substituir os binários e reiniciar
+    const batPath = path.join(tempDir, `apply_hyperstream_update_${updateId}.bat`);
     const batContent = `@echo off
 chcp 65001 > nul
-timeout /t 2 /nobreak > nul
-xcopy /s /y /e /h "${sourceFolder}\\*" "${currentAppDir}\\"
-start "" "${path.join(currentAppDir, 'Hyperstream.exe')}"
+set "PID=${process.pid}"
+set "TARGET_DIR=${currentAppDir}"
+set "SOURCE_DIR=${sourceFolder}"
+set "EXE_PATH=${path.join(currentAppDir, 'Hyperstream.exe')}"
+
+:: Aguarda até que o processo do Hyperstream seja totalmente encerrado pelo Windows
+:wait_loop
+tasklist /fi "PID eq %PID%" 2>nul | find "%PID%" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait_loop
+)
+
+:: Pausa extra para garantir a liberação total de todos os arquivos (.dll, .asar)
+timeout /t 1 /nobreak >nul
+
+:: Copia todos os arquivos novos com robocopy tolerante a tentativas
+robocopy "%SOURCE_DIR%" "%TARGET_DIR%" /E /IS /IT /NP /R:3 /W:1 >nul
+
+:: Fallback com xcopy caso robocopy retorne erro fatal
+if errorlevel 8 (
+    xcopy /s /y /e /h "%SOURCE_DIR%\\*" "%TARGET_DIR%\\" >nul
+)
+
+:: Inicia o executável atualizado
+start "" "%EXE_PATH%"
 exit
 `;
     fs.writeFileSync(batPath, batContent, 'utf8');

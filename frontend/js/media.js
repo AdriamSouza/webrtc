@@ -65,66 +65,18 @@ export class MediaManager {
 
     console.log('[MediaManager] Solicitando captura de tela via getDisplayMedia...');
 
-    // Comunica a preferência de áudio para o processo principal do Electron (WGC)
-    if (window.desktopAPI && typeof window.desktopAPI.setCaptureAudio === 'function') {
-      try {
-        await window.desktopAPI.setCaptureAudio(this.captureSystemAudio);
-      } catch (err) {
-        console.warn('[MediaManager] Falha ao configurar captura de áudio no Electron:', err);
-      }
-    }
-
     const fps = this.targetFps || 60;
-    const videoConstraints = {
-      frameRate: { ideal: fps, max: fps }
+    
+    // Constraints limpos para getDisplayMedia (sem 'max' restritivo que causa OverconstrainedError)
+    const displayConstraints = {
+      video: {
+        frameRate: { ideal: fps }
+      },
+      audio: Boolean(this.captureSystemAudio)
     };
 
-    // Aplica limites de resolução se configurado especificamente
-    if (this.targetResolution === '1080p') {
-      videoConstraints.width = { ideal: 1920, max: 1920 };
-      videoConstraints.height = { ideal: 1080, max: 1080 };
-    } else if (this.targetResolution === '720p') {
-      videoConstraints.width = { ideal: 1280, max: 1280 };
-      videoConstraints.height = { ideal: 720, max: 720 };
-    } else if (this.targetResolution === '480p') {
-      videoConstraints.width = { ideal: 854, max: 854 };
-      videoConstraints.height = { ideal: 480, max: 480 };
-    }
-    // Para 'native', não define width/height permitindo resolução total 100% nativa sem distorção
-
-    let stream = null;
-
-    // Tentativa 1: Captura com qualidade selecionada e áudio do sistema (se habilitado)
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: videoConstraints,
-        audio: Boolean(this.captureSystemAudio)
-      });
-      console.log(`[MediaManager] Tela capturada com sucesso a ${fps} FPS (Áudio do PC: ${this.captureSystemAudio ? 'Sim' : 'Não'}).`);
-    } catch (err) {
-      console.warn('[MediaManager] Falha na captura principal, tentando fallback sem áudio do sistema:', err.message);
-      // Tentativa 2: Sem áudio de loopback (resolve falha de WASAPI ou exclusividade de dispositivo no Windows)
-      try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: videoConstraints,
-          audio: false
-        });
-        console.log(`[MediaManager] Tela capturada (sem áudio do PC) a ${fps} FPS.`);
-      } catch (err2) {
-        console.warn('[MediaManager] Falha com constraints de FPS/Resolução, tentando fallback irrestrito:', err2.message);
-        // Tentativa 3: Fallback padrão irrestrito
-        try {
-          stream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: false
-          });
-          console.log('[MediaManager] Tela capturada via fallback padrão.');
-        } catch (finalErr) {
-          console.error('[MediaManager] Todas as tentativas de captura de tela falharam:', finalErr);
-          throw finalErr;
-        }
-      }
-    }
+    // Chamada direta para preservar a ativação transitória do gesto de clique do usuário
+    const stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
 
     if (!stream) {
       throw new Error('Nenhuma transmissão de tela foi capturada.');
@@ -132,16 +84,28 @@ export class MediaManager {
 
     this.screenStream = stream;
 
-    // Marca o track como tela com contentHint 'motion' prioritário para jogos a 60 FPS
+    // Configura track de vídeo com taxa de quadros e resolução ajustadas downstream
     const videoTracks = this.screenStream.getVideoTracks();
     if (videoTracks.length > 0) {
       const videoTrack = videoTracks[0];
       videoTrack.contentHint = this.contentHint || 'motion';
 
-      // Aplica taxa de quadros desejada sem cláusula 'min' para evitar OverconstrainedError
-      videoTrack.applyConstraints({
-        frameRate: { ideal: fps, max: fps }
-      }).catch(err => {
+      const trackConstraints = {
+        frameRate: { ideal: fps }
+      };
+
+      if (this.targetResolution === '1080p') {
+        trackConstraints.width = { ideal: 1920 };
+        trackConstraints.height = { ideal: 1080 };
+      } else if (this.targetResolution === '720p') {
+        trackConstraints.width = { ideal: 1280 };
+        trackConstraints.height = { ideal: 720 };
+      } else if (this.targetResolution === '480p') {
+        trackConstraints.width = { ideal: 854 };
+        trackConstraints.height = { ideal: 480 };
+      }
+
+      videoTrack.applyConstraints(trackConstraints).catch(err => {
         console.warn('[MediaManager] Aviso ao aplicar constraints no track:', err.message);
       });
 
@@ -156,15 +120,6 @@ export class MediaManager {
 
     // Configura analisador de áudio do sistema se houver áudio
     this.setupSystemAudioAnalyser();
-
-    // Tenta capturar microfone se ainda não ativo
-    if (!this.micStream && !this.cameraStream) {
-      try {
-        await this.startMicrophone(this.selectedMicDeviceId);
-      } catch (micErr) {
-        console.warn('[MediaManager] Microfone inicial não disponível:', micErr.message);
-      }
-    }
 
     // Constrói e sincroniza stream combinado
     this.buildCombinedStream();
@@ -503,19 +458,29 @@ export class MediaManager {
     try {
       const ctx = this.ensureAudioContext();
       if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      this.teardownSystemAudioAnalyser();
+
       const stream = new MediaStream([track]);
       const source = ctx.createMediaStreamSource(stream);
       this.systemAnalyser = ctx.createAnalyser();
-      this.systemAnalyser.fftSize = 256;
-      this.systemAnalyser.smoothingTimeConstant = 0.3;
+      this.systemAnalyser.fftSize = 128;
+      this.systemAnalyser.smoothingTimeConstant = 0.2;
       this.systemDataArray = new Uint8Array(this.systemAnalyser.frequencyBinCount);
       source.connect(this.systemAnalyser);
 
-      // Conexão com destino via ganho silencioso (0) para forçar o processamento de buffers no Chromium
+      // Conexão inaudível (0.00001) para forçar o Chromium a processar continuamente os buffers sem eco
       const dummyGain = ctx.createGain();
-      dummyGain.gain.value = 0;
+      dummyGain.gain.setValueAtTime(0.00001, ctx.currentTime);
       this.systemAnalyser.connect(dummyGain);
       dummyGain.connect(ctx.destination);
+
+      track.onunmute = () => {
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      };
     } catch (e) {
       console.warn('[MediaManager] Falha ao configurar analisador de áudio do sistema:', e);
     }
@@ -529,29 +494,43 @@ export class MediaManager {
   setupMicAudioAnalyser() {
     const track = this.getMicAudioTrack();
     if (!track) {
-      this.micAnalyser = null;
-      this.micDataArray = null;
+      this.teardownMicAudioAnalyser();
       return;
     }
     try {
       const ctx = this.ensureAudioContext();
       if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      this.teardownMicAudioAnalyser();
+
       const stream = new MediaStream([track]);
       const source = ctx.createMediaStreamSource(stream);
       this.micAnalyser = ctx.createAnalyser();
-      this.micAnalyser.fftSize = 256;
-      this.micAnalyser.smoothingTimeConstant = 0.3;
+      this.micAnalyser.fftSize = 128;
+      this.micAnalyser.smoothingTimeConstant = 0.2;
       this.micDataArray = new Uint8Array(this.micAnalyser.frequencyBinCount);
       source.connect(this.micAnalyser);
 
-      // Conexão com destino via ganho silencioso (0) para forçar o processamento contínuo de buffers
+      // Conexão inaudível (0.00001) para forçar processamento contínuo
       const dummyGain = ctx.createGain();
-      dummyGain.gain.value = 0;
+      dummyGain.gain.setValueAtTime(0.00001, ctx.currentTime);
       this.micAnalyser.connect(dummyGain);
       dummyGain.connect(ctx.destination);
+
+      track.onunmute = () => {
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      };
     } catch (e) {
       console.warn('[MediaManager] Falha ao configurar analisador de microfone:', e);
     }
+  }
+
+  teardownMicAudioAnalyser() {
+    this.micAnalyser = null;
+    this.micDataArray = null;
   }
 
   async startMicrophonePreview(deviceId = null) {
@@ -575,23 +554,31 @@ export class MediaManager {
     }
 
     if (this.systemAnalyser && this.systemDataArray && !this.systemAudioMuted) {
-      this.systemAnalyser.getByteTimeDomainData(this.systemDataArray);
-      let maxDev = 0;
-      for (let i = 0; i < this.systemDataArray.length; i++) {
-        const dev = Math.abs(this.systemDataArray[i] - 128);
-        if (dev > maxDev) maxDev = dev;
+      this.systemAnalyser.getByteFrequencyData(this.systemDataArray);
+      let max = 0;
+      let sum = 0;
+      const len = this.systemDataArray.length;
+      for (let i = 0; i < len; i++) {
+        const val = this.systemDataArray[i];
+        if (val > max) max = val;
+        sum += val;
       }
-      systemLevel = Math.min(100, Math.round((maxDev / 128) * 150));
+      const avg = sum / len;
+      systemLevel = Math.min(100, Math.round(((max * 0.75) + (avg * 1.5)) / 255 * 100));
     }
 
     if (this.micAnalyser && this.micDataArray && !this.micMuted && !this.isMuted) {
-      this.micAnalyser.getByteTimeDomainData(this.micDataArray);
-      let maxDev = 0;
-      for (let i = 0; i < this.micDataArray.length; i++) {
-        const dev = Math.abs(this.micDataArray[i] - 128);
-        if (dev > maxDev) maxDev = dev;
+      this.micAnalyser.getByteFrequencyData(this.micDataArray);
+      let max = 0;
+      let sum = 0;
+      const len = this.micDataArray.length;
+      for (let i = 0; i < len; i++) {
+        const val = this.micDataArray[i];
+        if (val > max) max = val;
+        sum += val;
       }
-      micLevel = Math.min(100, Math.round((maxDev / 128) * 150));
+      const avg = sum / len;
+      micLevel = Math.min(100, Math.round(((max * 0.75) + (avg * 1.5)) / 255 * 100));
     }
 
     return { systemLevel, micLevel };

@@ -204,8 +204,8 @@ ipcMain.handle('desktop:get-sources', async (event, opts = {}) => {
 
 // IPC: Define a fonte selecionada antes da captura ser iniciada
 ipcMain.handle('desktop:set-selected-source', async (event, sourceId) => {
-  selectedSourceId = sourceId;
-  console.log('[Desktop Main] Fonte de captura definida para:', sourceId);
+  selectedSourceId = (sourceId && sourceId !== 'default') ? sourceId : null;
+  console.log('[Desktop Main] Fonte de captura definida para:', selectedSourceId);
   return true;
 });
 
@@ -528,9 +528,10 @@ app.whenReady().then(() => {
   // Manipulador nativo de captura para getDisplayMedia no Electron
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
+      // thumbnailSize 1x1 torna a detecção das janelas instantânea (evita expirar o evento de gesto do usuário)
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
-        thumbnailSize: { width: 150, height: 150 }
+        thumbnailSize: { width: 1, height: 1 }
       });
 
       let chosen = null;
@@ -546,6 +547,9 @@ app.whenReady().then(() => {
         console.log('[Desktop Main] Usando fonte padrão de tela:', chosen?.name);
       }
 
+      // Limpa a seleção para que próximas transmissões não fiquem presas em janelas fechadas
+      selectedSourceId = null;
+
       if (chosen) {
         const streamOpts = { video: chosen };
         if (captureAudioEnabled && request.audioRequested) {
@@ -554,11 +558,12 @@ app.whenReady().then(() => {
         }
         callback(streamOpts);
       } else {
-        callback({});
+        console.warn('[Desktop Main] Nenhuma fonte disponível para captura de tela.');
+        callback(null);
       }
     } catch (err) {
       console.error('[Desktop Main] Erro ao selecionar fonte de captura:', err);
-      callback({});
+      callback(null);
     }
   });
 

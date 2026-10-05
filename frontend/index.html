@@ -575,7 +575,11 @@
         <!-- ABA 2: PERFIL DE TRANSMISSÃO, RESOLUÇÃO & FPS -->
         <div id="transPaneProfile" class="trans-pane">
           <div class="profile-config-container">
-            <label class="settings-label">Perfil de Desempenho & Qualidade</label>
+            <div class="profile-header-meta">
+              <label class="settings-label">Perfil de Transmissão</label>
+              <span class="profile-hint-meta">Predefinição de fluidez e qualidade</span>
+            </div>
+
             <div class="preset-cards-grid modal-preset-grid">
               <button type="button" class="preset-card active" data-profile="ultra">
                 <div class="preset-header-row">
@@ -583,72 +587,71 @@
                   <span class="badge badge-success">Recomendado</span>
                 </div>
                 <div class="preset-detail">60 FPS • até 8.0 Mbps</div>
-                <div class="preset-desc">Alta fluidez contínua para jogos competitivos e conexões rápidas</div>
+                <div class="preset-desc">Máxima fluidez contínua para jogos competitivos</div>
               </button>
               <button type="button" class="preset-card" data-profile="balanced">
                 <div class="preset-header-row">
-                  <div class="preset-name">Equilibrado 60 FPS</div>
+                  <div class="preset-name">Equilibrado</div>
+                  <span class="badge badge-desktop">60 FPS</span>
                 </div>
                 <div class="preset-detail">60 FPS • até 5.0 Mbps</div>
-                <div class="preset-desc">Estabilidade e 60 FPS consistentes para jogar online com amigos</div>
+                <div class="preset-desc">Excelente estabilidade para transmissões gerais</div>
               </button>
               <button type="button" class="preset-card" data-profile="eco">
                 <div class="preset-header-row">
-                  <div class="preset-name">Econômico 30 FPS</div>
+                  <div class="preset-name">Econômico</div>
+                  <span class="badge badge-host">30 FPS</span>
                 </div>
                 <div class="preset-detail">30 FPS • até 2.0 Mbps</div>
-                <div class="preset-desc">Baixo consumo de banda para internet instável, Wi-Fi distante ou 4G</div>
+                <div class="preset-desc">Baixo consumo para internet oscilante ou 4G</div>
               </button>
               <button type="button" class="preset-card" data-profile="custom">
                 <div class="preset-header-row">
                   <div class="preset-name">Personalizado</div>
+                  <span class="badge">Manual</span>
                 </div>
-                <div class="preset-detail">Ajuste Manual Livre</div>
-                <div class="preset-desc">Configure bitrate, limites e prioridades manualmente</div>
+                <div class="preset-detail">Ajuste Livre</div>
+                <div class="preset-desc">Controle manual dos parâmetros abaixo</div>
               </button>
             </div>
 
             <!-- Controles Rápidos de Resolução e Taxa de Quadros -->
             <div class="trans-quick-options-grid">
               <div class="form-group">
-                <label for="modalSettingResSelect">Resolução da Transmissão</label>
+                <label for="modalSettingResSelect">Resolução</label>
                 <select id="modalSettingResSelect" class="form-select">
-                  <option value="native" selected>Nativa (100% da Resolução do Monitor / Jogo)</option>
-                  <option value="1080p">1080p Full HD (1920x1080)</option>
-                  <option value="720p">720p HD (1280x720)</option>
-                  <option value="480p">480p SD (854x480)</option>
+                  <option value="native" selected>Nativa (Original da Tela)</option>
+                  <option value="1080p">1080p (Full HD)</option>
+                  <option value="720p">720p (HD)</option>
+                  <option value="480p">480p (SD)</option>
                 </select>
-                <span class="form-hint">Nativa preserva a nitidez máxima sem redimensionamento forçado.</span>
               </div>
 
               <div class="form-group">
-                <label for="modalSettingFpsSelect">Taxa de Quadros Alvo (FPS)</label>
+                <label for="modalSettingFpsSelect">Taxa de Quadros (FPS)</label>
                 <select id="modalSettingFpsSelect" class="form-select">
-                  <option value="60" selected>60 FPS (Ultra Fluidez — Ideal para Jogos)</option>
-                  <option value="30">30 FPS (Padrão — Menor uso de CPU)</option>
+                  <option value="60" selected>60 FPS (Ultra Fluidez)</option>
+                  <option value="30">30 FPS (Padrão)</option>
                 </select>
-                <span class="form-hint">O modo WGC DXGI Zero-Copy garante 60 FPS reais direto da VRAM.</span>
               </div>
 
               <div class="form-group">
-                <label for="modalSettingContentHint">Otimização de Codificação</label>
+                <label for="modalSettingContentHint">Otimização</label>
                 <select id="modalSettingContentHint" class="form-select">
-                  <option value="motion" selected>Jogo & Movimento Contínuo (Prioriza 60 FPS)</option>
-                  <option value="detail">Texto & Apresentação (Prioriza nitidez estática)</option>
+                  <option value="motion" selected>Jogos & Vídeos (Fluidez)</option>
+                  <option value="detail">Texto & Leitura (Nitidez)</option>
                 </select>
-                <span class="form-hint">"Jogo & Movimento" impede que o WebRTC reduza a taxa de FPS.</span>
               </div>
 
               <div class="form-group">
-                <label for="modalSettingCodecSelect">Codec de Vídeo WebRTC</label>
+                <label for="modalSettingCodecSelect">Codec de Vídeo</label>
                 <select id="modalSettingCodecSelect" class="form-select">
-                  <option value="auto" selected>Automático (Melhor entre AV1 e H.264 por Hardware)</option>
-                  <option value="H264">H.264 / AVC (Aceleração Nativa NVidia / AMD / Intel)</option>
-                  <option value="AV1">AV1 (Ultra Eficiente / Next-Gen)</option>
+                  <option value="auto" selected>Automático (GPU / Mais Rápido)</option>
+                  <option value="H264">H.264 (NVIDIA / AMD / Intel)</option>
+                  <option value="AV1">AV1 (Ultra Eficiente)</option>
                   <option value="VP9">VP9 (Google HD)</option>
-                  <option value="VP8">VP8 (Universal)</option>
+                  <option value="VP8">VP8 (Básico)</option>
                 </select>
-                <span class="form-hint">Acelerado diretamente por hardware GPU da máquina.</span>
               </div>
             </div>
           </div>
@@ -671,7 +674,7 @@
                     <span>Som do Computador & Jogos</span>
                     <span class="badge badge-success">WASAPI Loopback</span>
                   </div>
-                  <span class="audio-source-help">Captura o áudio reproduzido pelas janelas, jogos e navegadores abertos no PC.</span>
+                  <span class="audio-source-help">Captura o áudio emitido pelas janelas, jogos e navegadores abertos no PC.</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="modalSettingCaptureSystemAudio" checked>
@@ -681,7 +684,10 @@
 
               <div class="audio-controls-row">
                 <div class="vu-meter-container" style="flex: 1;">
-                  <span class="vu-label">Nível de Áudio do PC:</span>
+                  <div class="vu-meter-header-row">
+                    <span class="vu-label">Nível de Áudio do PC:</span>
+                    <span id="modalSystemAudioStatusText" class="vu-status-badge">Pronto para capturar</span>
+                  </div>
                   <div class="vu-meter-track">
                     <div id="modalVuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
                   </div>
@@ -906,29 +912,29 @@
 
           <div class="settings-grid-2col">
             <div class="form-group">
-              <label for="settingFpsSelect">Taxa de Quadros (FPS Alvo)</label>
+              <label for="settingFpsSelect">Taxa de Quadros (FPS)</label>
               <select id="settingFpsSelect" class="form-select">
-                <option value="60" selected>60 FPS (Recomendado para jogos e desktop fluido)</option>
-                <option value="30">30 FPS (Mais leve, menor uso de GPU e banda)</option>
+                <option value="60" selected>60 FPS (Ultra Fluidez)</option>
+                <option value="30">30 FPS (Padrão)</option>
               </select>
             </div>
 
             <div class="form-group">
               <label for="settingResSelect">Resolução da Transmissão</label>
               <select id="settingResSelect" class="form-select">
-                <option value="native" selected>Nativa da Tela / Janela (Original)</option>
-                <option value="1080p">1080p Full HD (1920x1080)</option>
-                <option value="720p">720p HD (1280x720)</option>
-                <option value="480p">480p SD (854x480)</option>
+                <option value="native" selected>Nativa (Original da Tela)</option>
+                <option value="1080p">1080p (Full HD)</option>
+                <option value="720p">720p (HD)</option>
+                <option value="480p">480p (SD)</option>
               </select>
             </div>
           </div>
 
           <div class="form-group">
-            <label for="settingContentHint">Modo de Otimização (Content Hint)</label>
+            <label for="settingContentHint">Modo de Otimização</label>
             <select id="settingContentHint" class="form-select">
-              <option value="motion" selected>Movimento Contínuo (Prioriza 60 FPS contínuo em jogos e vídeos)</option>
-              <option value="detail">Detalhe e Texto (Prioriza nitidez estática em códigos e leitura)</option>
+              <option value="motion" selected>Jogos & Vídeos (Fluidez)</option>
+              <option value="detail">Texto & Leitura (Nitidez)</option>
             </select>
           </div>
 
@@ -975,11 +981,11 @@
           <div class="form-group">
             <label for="settingPreferredCodec">Codec Preferencial</label>
             <select id="settingPreferredCodec" class="form-select">
-              <option value="auto">Automático (Padrão do Navegador / WebRTC)</option>
-              <option value="AV1">AV1 (Melhor compressão, altíssima nitidez e eficiência)</option>
-              <option value="H264">H.264 (Maior compatibilidade, acelerado por GPU NVENC/AMD/Intel)</option>
-              <option value="VP9">VP9 (Alta eficiência WebM em resoluções altas)</option>
-              <option value="VP8">VP8 (Universalmente compatível e leve)</option>
+              <option value="auto">Automático (GPU / Mais Rápido)</option>
+              <option value="H264">H.264 (NVIDIA / AMD / Intel)</option>
+              <option value="AV1">AV1 (Ultra Eficiente)</option>
+              <option value="VP9">VP9 (Google HD)</option>
+              <option value="VP8">VP8 (Básico)</option>
             </select>
           </div>
 
@@ -1128,7 +1134,7 @@
             <div class="update-card-header">
               <div class="app-version-badge">
                 <span class="version-label">Versão Instalada:</span>
-                <strong id="currentAppVersionDisplay">v1.0.6</strong>
+                <strong id="currentAppVersionDisplay">v1.0.7</strong>
               </div>
               <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
                 <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -1169,6 +1169,15 @@ function promptDesktopSourcePicker() {
       const { systemLevel, micLevel } = media.getAudioMeterLevels();
       if (modalVuMeterSystem) modalVuMeterSystem.style.width = `${systemLevel}%`;
       if (modalVuMeterMic) modalVuMeterMic.style.width = `${micLevel}%`;
+
+      const statusEl = document.getElementById('modalSystemAudioStatusText');
+      if (statusEl) {
+        if (media.hasActiveScreenAudio()) {
+          statusEl.textContent = systemLevel > 2 ? 'Transmitindo som do PC' : 'Áudio do PC ativo (Silêncio)';
+        } else {
+          statusEl.textContent = 'Pronto para capturar (Inicia com a tela)';
+        }
+      }
       modalMeterRafId = requestAnimationFrame(modalVuLoop);
     }
     modalVuLoop();
@@ -1250,6 +1259,12 @@ function promptDesktopSourcePicker() {
       element.classList.add('selected');
       updateModalSummaryPill();
       if (btnStartTransmissionModal) btnStartTransmissionModal.disabled = false;
+
+      // Comunica fonte selecionada imediatamente para o Electron em segundo plano
+      if (window.desktopAPI && typeof window.desktopAPI.setSelectedSource === 'function') {
+        const sId = (source && source.id && !source.id.startsWith('browser-') && source.id !== 'default') ? source.id : null;
+        window.desktopAPI.setSelectedSource(sId).catch(err => console.warn('[Desktop] setSelectedSource:', err));
+      }
     }
 
     function onSourceItemDblClicked(source, element) {
@@ -1285,6 +1300,9 @@ function promptDesktopSourcePicker() {
         const defaultScreen = cachedDesktopSources.find(s => s.id.startsWith('screen:')) || cachedDesktopSources[0];
         selectedModalSource = defaultScreen;
         if (btnStartTransmissionModal) btnStartTransmissionModal.disabled = false;
+        if (window.desktopAPI && typeof window.desktopAPI.setSelectedSource === 'function') {
+          window.desktopAPI.setSelectedSource(defaultScreen.id).catch(() => {});
+        }
       }
       renderSourceItems(onSourceItemClicked, onSourceItemDblClicked);
     } else {
@@ -1602,12 +1620,21 @@ async function handleToggleScreenShare() {
         return;
       }
 
-      if (result.source && result.source.id && !result.source.id.startsWith('browser-') && result.source.id !== 'default' && window.desktopAPI && typeof window.desktopAPI.setSelectedSource === 'function') {
-        await window.desktopAPI.setSelectedSource(result.source.id);
-      }
-
       console.log(`[App] Iniciando transmissão em 60 FPS com perfil ${qualityController.activeProfile}...`);
       const stream = await media.startScreenCapture();
+
+      // Se o usuário solicitou microfone junto na aba de áudio, ativa com segurança após a tela iniciar
+      if (modalSettingEnableMic && modalSettingEnableMic.checked && !media.hasActiveMic()) {
+        try {
+          const micDev = modalSettingMicDeviceSelect?.value || null;
+          await media.startMicrophone(micDev);
+          btnToggleAudio?.classList.add('active');
+          if (micLabel) micLabel.textContent = 'Microfone Ativo';
+          if (micIcon) micIcon.innerHTML = Icons.mic(18);
+        } catch (micErr) {
+          console.warn('[App] Não foi possível ativar o microfone automaticamente:', micErr.message);
+        }
+      }
 
       addOrUpdateLocalPreview('screen', media.screenStream, 'Sua Tela (60 FPS)');
 
@@ -1630,7 +1657,7 @@ async function handleToggleScreenShare() {
       updateGridLayout();
     } catch (err) {
       if (err.name === 'NotAllowedError') {
-        console.log('[App] Transmissão de tela cancelada pelo usuário.');
+        console.log('[App] Transmissão de tela cancelada pelo usuário ou permissão negada:', err.message);
         return;
       }
       console.error('[App] Falha ao compartilhar tela:', err);

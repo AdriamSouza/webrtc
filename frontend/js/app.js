@@ -785,6 +785,7 @@ function init() {
   setupEventListeners();
   setupSignalingEvents();
   setupWebRTCEvents();
+  setupSettingsModal();
 
   // Detecção de Ambiente Desktop (Electron com WGC)
   if (window.desktopAPI) {
@@ -1617,6 +1618,544 @@ function leaveCurrentRoom() {
   lobbyScreen.classList.add('active');
 }
 
+// ========================================================
+// 8. CONFIGURAÇÕES DA TRANSMISSÃO E ATUALIZADOR IN-APP
+// ========================================================
+let vuMeterAnimFrame = null;
+let latestUpdateInfo = null;
+
+function setupSettingsModal() {
+  const btnOpenSettings = document.getElementById('btnOpenSettings');
+  const btnOpenSettingsLobby = document.getElementById('btnOpenSettingsLobby');
+  const settingsModal = document.getElementById('settingsModal');
+  const btnCloseSettingsModal = document.getElementById('btnCloseSettingsModal');
+  const btnSaveCloseSettings = document.getElementById('btnSaveCloseSettings');
+
+  if (!settingsModal) return;
+
+  // Abas de Configurações
+  const settingsTabBtns = settingsModal.querySelectorAll('.settings-tab-btn');
+  const settingsPanes = {
+    video: document.getElementById('settingsTabVideo'),
+    codecs: document.getElementById('settingsTabCodecs'),
+    audio: document.getElementById('settingsTabAudio'),
+    updates: document.getElementById('settingsTabUpdates')
+  };
+
+  function switchSettingsTab(tabKey) {
+    settingsTabBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tabKey);
+    });
+    Object.entries(settingsPanes).forEach(([k, pane]) => {
+      if (pane) pane.classList.toggle('active', k === tabKey);
+    });
+  }
+
+  settingsTabBtns.forEach(btn => {
+    btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab));
+  });
+
+  // Loop de Medição de Nível de Áudio (VU Meter)
+  function startVuMeterLoop() {
+    stopVuMeterLoop();
+    const vuMeterSystem = document.getElementById('vuMeterSystem');
+    const vuMeterMic = document.getElementById('vuMeterMic');
+
+    function updateMeters() {
+      if (settingsModal.classList.contains('hidden')) {
+        return;
+      }
+      const { systemLevel, micLevel } = media.getAudioMeterLevels();
+      if (vuMeterSystem) {
+        vuMeterSystem.style.width = `${Math.min(100, Math.round(systemLevel * 100))}%`;
+      }
+      if (vuMeterMic) {
+        vuMeterMic.style.width = `${Math.min(100, Math.round(micLevel * 100))}%`;
+      }
+      vuMeterAnimFrame = requestAnimationFrame(updateMeters);
+    }
+    vuMeterAnimFrame = requestAnimationFrame(updateMeters);
+  }
+
+  function stopVuMeterLoop() {
+    if (vuMeterAnimFrame) {
+      cancelAnimationFrame(vuMeterAnimFrame);
+      vuMeterAnimFrame = null;
+    }
+    const vuMeterSystem = document.getElementById('vuMeterSystem');
+    const vuMeterMic = document.getElementById('vuMeterMic');
+    if (vuMeterSystem) vuMeterSystem.style.width = '0%';
+    if (vuMeterMic) vuMeterMic.style.width = '0%';
+  }
+
+  // Lista de Dispositivos de Microfone
+  async function refreshMicrophoneList() {
+    const select = document.getElementById('settingMicDeviceSelect');
+    if (!select) return;
+    try {
+      const mics = await media.enumerateMicrophones();
+      const currentVal = select.value;
+      select.innerHTML = '<option value="">Padrão do Sistema</option>';
+      mics.forEach(mic => {
+        const opt = document.createElement('option');
+        opt.value = mic.deviceId;
+        opt.textContent = mic.label || `Microfone (${mic.deviceId.substring(0, 6)}...)`;
+        if (mic.deviceId === currentVal || mic.deviceId === media.selectedMicDeviceId) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    } catch (err) {
+      console.warn('[Settings] Erro ao listar microfones:', err);
+    }
+  }
+
+  // Verificação de Codecs Disponíveis
+  async function refreshCodecsList() {
+    try {
+      const codecs = await WebRTCManager.getAvailableCodecs();
+      const badgeAv1 = document.getElementById('badgeAv1Status');
+      if (badgeAv1) {
+        const hasAv1 = codecs.some(c => c.name === 'AV1');
+        badgeAv1.textContent = hasAv1 ? 'Disponível' : 'Não Suportado';
+        badgeAv1.className = `badge ${hasAv1 ? 'badge-success' : 'badge-secondary'}`;
+      }
+    } catch (err) {
+      console.warn('[Settings] Erro ao verificar codecs:', err);
+    }
+  }
+
+  // Versão Instalada
+  function checkAppVersion() {
+    const versionDisplay = document.getElementById('currentAppVersionDisplay');
+    if (versionDisplay) {
+      if (window.desktopAPI && window.desktopAPI.getVersion) {
+        window.desktopAPI.getVersion().then(ver => {
+          versionDisplay.textContent = ver ? `v${ver}` : 'v1.0.1';
+        }).catch(() => {
+          versionDisplay.textContent = 'v1.0.1 (Desktop)';
+        });
+      } else {
+        versionDisplay.textContent = 'Versão Web (Navegador)';
+      }
+    }
+  }
+
+  function openSettings(initialTab = 'video') {
+    switchSettingsTab(initialTab);
+    settingsModal.classList.remove('hidden');
+    refreshMicrophoneList();
+    refreshCodecsList();
+    checkAppVersion();
+    startVuMeterLoop();
+  }
+
+  function closeSettings() {
+    settingsModal.classList.add('hidden');
+    stopVuMeterLoop();
+  }
+
+  if (btnOpenSettings) btnOpenSettings.addEventListener('click', () => openSettings('video'));
+  if (btnOpenSettingsLobby) btnOpenSettingsLobby.addEventListener('click', () => openSettings('video'));
+  if (btnCloseSettingsModal) btnCloseSettingsModal.addEventListener('click', closeSettings);
+  if (btnSaveCloseSettings) btnSaveCloseSettings.addEventListener('click', closeSettings);
+
+  // Fecha clicando no backdrop
+  settingsModal.addEventListener('click', (e) => {
+    if (e.target === settingsModal) {
+      closeSettings();
+    }
+  });
+
+  // --- CONTROLES DE VÍDEO & QUALIDADE ---
+  const presetCards = settingsModal.querySelectorAll('.preset-card');
+  const settingFpsSelect = document.getElementById('settingFpsSelect');
+  const settingResSelect = document.getElementById('settingResSelect');
+  const settingContentHint = document.getElementById('settingContentHint');
+  const settingMaxBitrate = document.getElementById('settingMaxBitrate');
+  const settingMinBitrate = document.getElementById('settingMinBitrate');
+  const maxBitrateValueBadge = document.getElementById('maxBitrateValueBadge');
+  const minBitrateValueBadge = document.getElementById('minBitrateValueBadge');
+
+  function updateBitrateBadges() {
+    if (settingMaxBitrate && maxBitrateValueBadge) {
+      const mbps = (settingMaxBitrate.value / 1000000).toFixed(1);
+      maxBitrateValueBadge.textContent = `${mbps} Mbps`;
+    }
+    if (settingMinBitrate && minBitrateValueBadge) {
+      const mbps = (settingMinBitrate.value / 1000000).toFixed(1);
+      minBitrateValueBadge.textContent = `${mbps} Mbps`;
+    }
+  }
+
+  presetCards.forEach(card => {
+    card.addEventListener('click', () => {
+      const profile = card.dataset.profile;
+      presetCards.forEach(c => c.classList.toggle('active', c === card));
+
+      if (profile === 'ultra') {
+        settingMaxBitrate.value = 8000000;
+        settingMinBitrate.value = 4000000;
+        settingFpsSelect.value = '60';
+        qualityController.setProfile('ultra');
+      } else if (profile === 'balanced') {
+        settingMaxBitrate.value = 3500000;
+        settingMinBitrate.value = 1500000;
+        settingFpsSelect.value = '60';
+        qualityController.setProfile('balanced');
+      } else if (profile === 'eco') {
+        settingMaxBitrate.value = 1800000;
+        settingMinBitrate.value = 800000;
+        settingFpsSelect.value = '30';
+        qualityController.setProfile('eco');
+      }
+      updateBitrateBadges();
+      saveSettingsState();
+    });
+  });
+
+  if (settingFpsSelect) {
+    settingFpsSelect.addEventListener('change', () => {
+      const fps = parseInt(settingFpsSelect.value, 10);
+      media.setFpsPreference(fps);
+      saveSettingsState();
+    });
+  }
+
+  if (settingResSelect) {
+    settingResSelect.addEventListener('change', () => {
+      media.setResolutionPreference(settingResSelect.value);
+      saveSettingsState();
+    });
+  }
+
+  if (settingContentHint) {
+    settingContentHint.addEventListener('change', () => {
+      media.setContentHint(settingContentHint.value);
+      saveSettingsState();
+    });
+  }
+
+  if (settingMaxBitrate) {
+    settingMaxBitrate.addEventListener('input', () => {
+      updateBitrateBadges();
+      presetCards.forEach(c => c.classList.toggle('active', c.dataset.profile === 'custom'));
+      qualityController.setCustomQuality({
+        maxBitrate: Number(settingMaxBitrate.value),
+        minBitrate: Number(settingMinBitrate.value),
+        maxFps: Number(settingFpsSelect.value)
+      });
+      saveSettingsState();
+    });
+  }
+
+  if (settingMinBitrate) {
+    settingMinBitrate.addEventListener('input', () => {
+      updateBitrateBadges();
+      presetCards.forEach(c => c.classList.toggle('active', c.dataset.profile === 'custom'));
+      qualityController.setCustomQuality({
+        maxBitrate: Number(settingMaxBitrate.value),
+        minBitrate: Number(settingMinBitrate.value),
+        maxFps: Number(settingFpsSelect.value)
+      });
+      saveSettingsState();
+    });
+  }
+
+  // --- CONTROLES DE CODECS ---
+  const settingPreferredCodec = document.getElementById('settingPreferredCodec');
+  if (settingPreferredCodec) {
+    settingPreferredCodec.addEventListener('change', async () => {
+      const chosen = settingPreferredCodec.value;
+      console.log(`[Settings] Codec preferencial selecionado: ${chosen}`);
+      webrtc.setPreferredCodec(chosen);
+      await webrtc.applyCodecPreferencesToAllPeers();
+      saveSettingsState();
+      appendSystemChat(`Codec de vídeo preferido alterado para: ${chosen.toUpperCase()}`);
+    });
+  }
+
+  // --- CONTROLES DE ÁUDIO ---
+  const settingCaptureSystemAudio = document.getElementById('settingCaptureSystemAudio');
+  const btnMuteSystemAudio = document.getElementById('btnMuteSystemAudio');
+  const btnMuteSystemAudioText = document.getElementById('btnMuteSystemAudioText');
+  let isSystemAudioMuted = false;
+
+  if (settingCaptureSystemAudio) {
+    settingCaptureSystemAudio.addEventListener('change', () => {
+      const enabled = settingCaptureSystemAudio.checked;
+      media.setCaptureSystemAudio(enabled);
+      if (window.desktopAPI && window.desktopAPI.setCaptureAudio) {
+        window.desktopAPI.setCaptureAudio(enabled);
+      }
+      saveSettingsState();
+    });
+  }
+
+  if (btnMuteSystemAudio) {
+    btnMuteSystemAudio.addEventListener('click', () => {
+      isSystemAudioMuted = !isSystemAudioMuted;
+      media.setSystemAudioMuted(isSystemAudioMuted);
+      btnMuteSystemAudio.classList.toggle('btn-danger', isSystemAudioMuted);
+      if (btnMuteSystemAudioText) {
+        btnMuteSystemAudioText.textContent = isSystemAudioMuted ? 'Desmutar Som do Sistema' : 'Mutar Som do Sistema';
+      }
+    });
+  }
+
+  const settingEnableMic = document.getElementById('settingEnableMic');
+  const settingMicDeviceSelect = document.getElementById('settingMicDeviceSelect');
+  const btnMuteMicAudio = document.getElementById('btnMuteMicAudio');
+  const btnMuteMicAudioText = document.getElementById('btnMuteMicAudioText');
+  let isMicAudioMuted = false;
+
+  if (settingEnableMic) {
+    settingEnableMic.addEventListener('change', async () => {
+      if (settingEnableMic.checked) {
+        const deviceId = settingMicDeviceSelect ? settingMicDeviceSelect.value : null;
+        try {
+          await media.startMicrophone(deviceId);
+          const otherIds = roomState.getOtherParticipantIds();
+          await webrtc.syncLocalMedia(media, otherIds);
+          await webrtc.renegotiateAllPeers(otherIds);
+          btnToggleAudio.classList.add('active');
+          micIcon.innerHTML = Icons.mic(18);
+          micLabel.textContent = 'Microfone Ativo';
+        } catch (err) {
+          alert('Erro ao ativar microfone: ' + err.message);
+          settingEnableMic.checked = false;
+        }
+      } else {
+        media.stopMicrophone();
+        const otherIds = roomState.getOtherParticipantIds();
+        await webrtc.syncLocalMedia(media, otherIds);
+        await webrtc.renegotiateAllPeers(otherIds);
+        btnToggleAudio.classList.remove('active');
+        micIcon.innerHTML = Icons.micOff(18);
+        micLabel.textContent = 'Microfone';
+      }
+      saveSettingsState();
+    });
+  }
+
+  if (settingMicDeviceSelect) {
+    settingMicDeviceSelect.addEventListener('change', async () => {
+      const deviceId = settingMicDeviceSelect.value;
+      await media.setMicrophoneDevice(deviceId);
+      saveSettingsState();
+    });
+  }
+
+  if (btnMuteMicAudio) {
+    btnMuteMicAudio.addEventListener('click', () => {
+      isMicAudioMuted = !isMicAudioMuted;
+      media.setMicMuted(isMicAudioMuted);
+      btnMuteMicAudio.classList.toggle('btn-danger', isMicAudioMuted);
+      if (btnMuteMicAudioText) {
+        btnMuteMicAudioText.textContent = isMicAudioMuted ? 'Desmutar Microfone' : 'Mutar Microfone';
+      }
+    });
+  }
+
+  const filterEcho = document.getElementById('filterEchoCancellation');
+  const filterNoise = document.getElementById('filterNoiseSuppression');
+  const filterAutoGain = document.getElementById('filterAutoGain');
+
+  function updateAudioFilters() {
+    media.setAudioFilters({
+      echoCancellation: filterEcho ? filterEcho.checked : true,
+      noiseSuppression: filterNoise ? filterNoise.checked : true,
+      autoGainControl: filterAutoGain ? filterAutoGain.checked : true
+    });
+    saveSettingsState();
+  }
+
+  if (filterEcho) filterEcho.addEventListener('change', updateAudioFilters);
+  if (filterNoise) filterNoise.addEventListener('change', updateAudioFilters);
+  if (filterAutoGain) filterAutoGain.addEventListener('change', updateAudioFilters);
+
+  // --- SISTEMA DE ATUALIZAÇÕES AUTOMÁTICAS IN-APP ---
+  const btnCheckUpdatesManual = document.getElementById('btnCheckUpdatesManual');
+  const btnCheckUpdatesText = document.getElementById('btnCheckUpdatesText');
+  const updateStatusBox = document.getElementById('updateStatusBox');
+  const updateStatusIcon = document.getElementById('updateStatusIcon');
+  const updateStatusTitle = document.getElementById('updateStatusTitle');
+  const updateStatusDesc = document.getElementById('updateStatusDesc');
+  const updateActionPanel = document.getElementById('updateActionPanel');
+  const newVersionTag = document.getElementById('newVersionTag');
+  const newVersionChangelog = document.getElementById('newVersionChangelog');
+  const btnInstallUpdateNow = document.getElementById('btnInstallUpdateNow');
+  const updateProgressContainer = document.getElementById('updateProgressContainer');
+  const updateProgressLabel = document.getElementById('updateProgressLabel');
+  const updateProgressPercent = document.getElementById('updateProgressPercent');
+  const updateProgressBarFill = document.getElementById('updateProgressBarFill');
+  const updateAvailableBadge = document.getElementById('updateAvailableBadge');
+
+  async function checkForUpdates(isAuto = false) {
+    if (!window.desktopAPI || !window.desktopAPI.checkForUpdates) {
+      if (!isAuto) {
+        if (updateStatusTitle) updateStatusTitle.textContent = 'Versão Web';
+        if (updateStatusDesc) updateStatusDesc.textContent = 'O instalador nativo para Windows está disponível em GitHub Releases.';
+      }
+      return;
+    }
+
+    if (btnCheckUpdatesManual) btnCheckUpdatesManual.disabled = true;
+    if (btnCheckUpdatesText) btnCheckUpdatesText.textContent = 'Verificando...';
+    if (updateStatusIcon) updateStatusIcon.className = 'update-status-icon loading';
+
+    try {
+      const res = await window.desktopAPI.checkForUpdates();
+      console.log('[Updater] Resultado da verificação:', res);
+
+      if (res && res.hasUpdate) {
+        latestUpdateInfo = res;
+        if (updateAvailableBadge) updateAvailableBadge.classList.remove('hidden');
+
+        if (updateStatusTitle) updateStatusTitle.textContent = `Nova versão disponível: v${res.latestVersion}`;
+        if (updateStatusDesc) updateStatusDesc.textContent = 'Uma atualização com melhorias de desempenho e correções está pronta para instalação.';
+        if (updateStatusIcon) updateStatusIcon.className = 'update-status-icon has-update';
+
+        if (updateActionPanel) {
+          updateActionPanel.classList.remove('hidden');
+          if (newVersionTag) newVersionTag.textContent = `v${res.latestVersion}`;
+          if (newVersionChangelog) {
+            newVersionChangelog.textContent = res.releaseNotes || 'Melhorias de estabilidade, gerenciamento de memória e novos recursos.';
+          }
+        }
+      } else {
+        if (updateAvailableBadge) updateAvailableBadge.classList.add('hidden');
+        if (updateActionPanel) updateActionPanel.classList.add('hidden');
+        if (updateStatusTitle) updateStatusTitle.textContent = 'HyperStream está atualizado';
+        if (updateStatusDesc) updateStatusDesc.textContent = `Você está na versão v${res?.currentVersion || '1.0.1'}, a mais recente e otimizada.`;
+        if (updateStatusIcon) updateStatusIcon.className = 'update-status-icon success';
+      }
+    } catch (err) {
+      console.warn('[Updater] Erro ao verificar atualizações:', err);
+      if (!isAuto) {
+        if (updateStatusTitle) updateStatusTitle.textContent = 'Não foi possível verificar atualizações';
+        if (updateStatusDesc) updateStatusDesc.textContent = 'Verifique sua conexão com a internet ou o repositório no GitHub.';
+      }
+    } finally {
+      if (btnCheckUpdatesManual) btnCheckUpdatesManual.disabled = false;
+      if (btnCheckUpdatesText) btnCheckUpdatesText.textContent = 'Verificar Atualizações';
+    }
+  }
+
+  if (btnCheckUpdatesManual) {
+    btnCheckUpdatesManual.addEventListener('click', () => checkForUpdates(false));
+  }
+
+  if (btnInstallUpdateNow) {
+    btnInstallUpdateNow.addEventListener('click', async () => {
+      if (!latestUpdateInfo || !latestUpdateInfo.downloadUrl) {
+        alert('Nenhum link de download disponível para esta atualização.');
+        return;
+      }
+
+      btnInstallUpdateNow.disabled = true;
+      if (updateProgressContainer) updateProgressContainer.classList.remove('hidden');
+
+      if (window.desktopAPI.onUpdateProgress) {
+        window.desktopAPI.onUpdateProgress((data) => {
+          if (data.status === 'downloading') {
+            if (updateProgressLabel) updateProgressLabel.textContent = `Baixando atualização (${data.percent}%)...`;
+            if (updateProgressPercent) updateProgressPercent.textContent = `${data.percent}%`;
+            if (updateProgressBarFill) updateProgressBarFill.style.width = `${data.percent}%`;
+          } else if (data.status === 'extracting') {
+            if (updateProgressLabel) updateProgressLabel.textContent = 'Extraindo arquivos da atualização...';
+            if (updateProgressBarFill) updateProgressBarFill.style.width = '100%';
+          } else if (data.status === 'installing') {
+            if (updateProgressLabel) updateProgressLabel.textContent = 'Reiniciando HyperStream para aplicar...';
+          }
+        });
+      }
+
+      try {
+        const installResult = await window.desktopAPI.downloadAndInstallUpdate(latestUpdateInfo.downloadUrl);
+        if (!installResult.success) {
+          alert('Falha ao instalar atualização:\n' + (installResult.error || 'Erro desconhecido'));
+          btnInstallUpdateNow.disabled = false;
+        }
+      } catch (err) {
+        alert('Erro durante atualização:\n' + err.message);
+        btnInstallUpdateNow.disabled = false;
+      }
+    });
+  }
+
+  // Persistência das Configurações no localStorage
+  function saveSettingsState() {
+    try {
+      const state = {
+        fps: settingFpsSelect ? settingFpsSelect.value : '60',
+        res: settingResSelect ? settingResSelect.value : 'native',
+        hint: settingContentHint ? settingContentHint.value : 'detail',
+        maxBitrate: settingMaxBitrate ? settingMaxBitrate.value : '8000000',
+        minBitrate: settingMinBitrate ? settingMinBitrate.value : '4000000',
+        codec: settingPreferredCodec ? settingPreferredCodec.value : 'auto',
+        captureSystemAudio: settingCaptureSystemAudio ? settingCaptureSystemAudio.checked : true,
+        micDeviceId: settingMicDeviceSelect ? settingMicDeviceSelect.value : '',
+        echo: filterEcho ? filterEcho.checked : true,
+        noise: filterNoise ? filterNoise.checked : true,
+        gain: filterAutoGain ? filterAutoGain.checked : true
+      };
+      localStorage.setItem('webrtc_stream_settings', JSON.stringify(state));
+    } catch (_) {}
+  }
+
+  function loadSettingsState() {
+    try {
+      const raw = localStorage.getItem('webrtc_stream_settings');
+      if (!raw) return;
+      const s = JSON.parse(raw);
+
+      if (s.fps && settingFpsSelect) {
+        settingFpsSelect.value = s.fps;
+        media.setFpsPreference(Number(s.fps));
+      }
+      if (s.res && settingResSelect) {
+        settingResSelect.value = s.res;
+        media.setResolutionPreference(s.res);
+      }
+      if (s.hint && settingContentHint) {
+        settingContentHint.value = s.hint;
+        media.setContentHint(s.hint);
+      }
+      if (s.maxBitrate && settingMaxBitrate) {
+        settingMaxBitrate.value = s.maxBitrate;
+      }
+      if (s.minBitrate && settingMinBitrate) {
+        settingMinBitrate.value = s.minBitrate;
+      }
+      if (s.codec && settingPreferredCodec) {
+        settingPreferredCodec.value = s.codec;
+        webrtc.setPreferredCodec(s.codec);
+      }
+      if (s.captureSystemAudio !== undefined && settingCaptureSystemAudio) {
+        settingCaptureSystemAudio.checked = s.captureSystemAudio;
+        media.setCaptureSystemAudio(s.captureSystemAudio);
+      }
+      if (s.echo !== undefined && filterEcho) filterEcho.checked = s.echo;
+      if (s.noise !== undefined && filterNoise) filterNoise.checked = s.noise;
+      if (s.gain !== undefined && filterAutoGain) filterAutoGain.checked = s.gain;
+
+      updateBitrateBadges();
+      updateAudioFilters();
+    } catch (_) {}
+  }
+
+  loadSettingsState();
+
+  // Verificação silenciosa de atualização ao abrir em desktop
+  if (window.desktopAPI) {
+    setTimeout(() => {
+      checkForUpdates(true);
+    }, 2500);
+  }
+}
+
 // Inicialização imediata
 init();
+
 

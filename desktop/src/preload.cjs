@@ -6,11 +6,27 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   platform: process.platform,
   wgcEnabled: true,
 
+  // Versão do aplicativo
+  getVersion: () => ipcRenderer.invoke('desktop:get-version'),
+
   // Captura de fontes nativas (janelas de jogos ou telas inteiras com thumbnails)
   getSources: (opts) => ipcRenderer.invoke('desktop:get-sources', opts),
 
   // Seleciona a fonte específica que o usuário escolheu no modal
   setSelectedSource: (sourceId) => ipcRenderer.invoke('desktop:set-selected-source', sourceId),
+
+  // Configuração de áudio do sistema (loopback) durante a captura
+  setCaptureAudio: (enabled) => ipcRenderer.invoke('desktop:set-capture-audio', enabled),
+  getCaptureAudio: () => ipcRenderer.invoke('desktop:get-capture-audio'),
+
+  // Sistema de Atualizações Automáticas no App
+  checkForUpdates: () => ipcRenderer.invoke('desktop:check-for-updates'),
+  downloadAndInstallUpdate: () => ipcRenderer.invoke('desktop:download-and-install-update'),
+  onUpdateProgress: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('desktop:update-progress', listener);
+    return () => ipcRenderer.removeListener('desktop:update-progress', listener);
+  },
 
   // Obter ou alterar a URL do servidor (Localhost ou Render)
   getServerUrl: () => ipcRenderer.invoke('desktop:get-server-url'),
@@ -21,4 +37,4 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   openExternal: (url) => ipcRenderer.invoke('desktop:open-external', url)
 });
 
-console.log('[Desktop Preload] desktopAPI estendida com suporte WGC injetada no renderer.');
+console.log('[Desktop Preload] desktopAPI estendida com suporte a atualizações e controle de áudio.');

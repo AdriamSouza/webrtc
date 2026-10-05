@@ -27,6 +27,15 @@
           </div>
           <h1>HyperStream</h1>
           <p class="subtitle">Transmissão P2P de Alta Performance a 60 FPS</p>
+          <div class="lobby-header-actions">
+            <button type="button" id="btnOpenSettingsLobby" class="btn btn-secondary btn-sm btn-icon-inline" title="Configurações e Atualizações">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <span>Configurações & Atualizações</span>
+            </button>
+          </div>
         </div>
 
         <!-- Seletor de Modo: Criar Sala vs Entrar em Sala -->
@@ -217,6 +226,14 @@
               <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
             </svg>
             <span>Telemetria</span>
+          </button>
+
+          <button id="btnOpenSettings" class="btn btn-secondary btn-sm btn-icon-inline" title="Configurações da Transmissão">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <span>Configurações</span>
           </button>
           
           <span id="userCountBadge" class="user-counter">
@@ -504,6 +521,388 @@
       <div class="source-picker-footer">
         <span class="source-picker-note">Pipeline Windows Graphics Capture + DXGI Zero-Copy direto na VRAM da GPU.</span>
         <button id="btnCancelSourcePicker" class="btn btn-secondary btn-sm">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Configurações da Transmissão e Atualizações -->
+  <div id="settingsModal" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="settings-modal-card">
+      <div class="settings-modal-header">
+        <div class="settings-title-group">
+          <div class="settings-header-icon">
+            <svg class="icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Configurações da Transmissão</h3>
+            <span class="settings-subtitle">Controle de qualidade, codecs de vídeo, captura de áudio e atualizações</span>
+          </div>
+        </div>
+        <button id="btnCloseSettingsModal" class="btn-icon-close" title="Fechar">&times;</button>
+      </div>
+
+      <!-- Abas de Navegação -->
+      <div class="settings-nav-tabs">
+        <button type="button" class="settings-tab-btn active" data-tab="video">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect width="20" height="14" x="2" y="3" rx="2"/>
+            <line x1="8" x2="16" y1="21" y2="21"/>
+            <line x1="12" x2="12" y1="17" y2="21"/>
+          </svg>
+          <span>Vídeo & Qualidade</span>
+        </button>
+        <button type="button" class="settings-tab-btn" data-tab="codecs">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <rect x="9" y="9" width="6" height="6"/>
+            <line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/>
+            <line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/>
+            <line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="15" x2="23" y2="15"/>
+            <line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="15" x2="4" y2="15"/>
+          </svg>
+          <span>Codecs de Vídeo</span>
+        </button>
+        <button type="button" class="settings-tab-btn" data-tab="audio">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" x2="12" y1="19" y2="22"/>
+          </svg>
+          <span>Áudio & Captura</span>
+        </button>
+        <button type="button" class="settings-tab-btn" data-tab="updates">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span>Atualizações</span>
+          <span id="updateAvailableBadge" class="tab-badge-counter hidden">Novo</span>
+        </button>
+      </div>
+
+      <!-- Conteúdo das Abas -->
+      <div class="settings-tab-content">
+        
+        <!-- ABA 1: VÍDEO & QUALIDADE -->
+        <div id="settingsTabVideo" class="settings-pane active">
+          <div class="settings-section">
+            <label class="settings-label">Perfil de Qualidade</label>
+            <div class="preset-cards-grid">
+              <button type="button" class="preset-card active" data-profile="ultra">
+                <div class="preset-name">Ultra</div>
+                <div class="preset-detail">60 FPS • até 8 Mbps</div>
+                <div class="preset-desc">Máxima fluidez para jogos e desktop em conexões rápidas</div>
+              </button>
+              <button type="button" class="preset-card" data-profile="balanced">
+                <div class="preset-name">Equilibrado</div>
+                <div class="preset-detail">60 FPS • até 3.5 Mbps</div>
+                <div class="preset-desc">Ótimo balanço entre qualidade e economia de banda</div>
+              </button>
+              <button type="button" class="preset-card" data-profile="eco">
+                <div class="preset-name">Econômico</div>
+                <div class="preset-detail">30 FPS • até 1.8 Mbps</div>
+                <div class="preset-desc">Reduz consumo em redes instáveis ou com limite</div>
+              </button>
+              <button type="button" class="preset-card" data-profile="custom">
+                <div class="preset-name">Personalizado</div>
+                <div class="preset-detail">Ajuste Manual</div>
+                <div class="preset-desc">Defina bitrate, resolução e taxa de quadros livremente</div>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-grid-2col">
+            <div class="form-group">
+              <label for="settingFpsSelect">Taxa de Quadros (FPS Alvo)</label>
+              <select id="settingFpsSelect" class="form-select">
+                <option value="60">60 FPS (Recomendado para jogos e desktop fluido)</option>
+                <option value="30">30 FPS (Mais leve, menor uso de GPU e banda)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="settingResSelect">Resolução da Transmissão</label>
+              <select id="settingResSelect" class="form-select">
+                <option value="native">Nativa da Tela / Janela (Original)</option>
+                <option value="1080p">1080p Full HD (1920x1080)</option>
+                <option value="720p">720p HD (1280x720)</option>
+                <option value="480p">480p SD (854x480)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="settingContentHint">Modo de Otimização (Content Hint)</label>
+            <select id="settingContentHint" class="form-select">
+              <option value="detail">Detalhe e Texto (Ideal para códigos, navegadores e leitura nítida)</option>
+              <option value="motion">Movimento Contínuo (Ideal para jogos de ação e vídeos fluidos)</option>
+            </select>
+          </div>
+
+          <div class="settings-section">
+            <div class="slider-header">
+              <label for="settingMaxBitrate">Bitrate Máximo de Vídeo</label>
+              <span id="maxBitrateValueBadge" class="value-badge">8.0 Mbps</span>
+            </div>
+            <input type="range" id="settingMaxBitrate" class="form-range" min="500000" max="20000000" step="250000" value="8000000">
+            <div class="range-marks">
+              <span>500 Kbps</span>
+              <span>4 Mbps</span>
+              <span>8 Mbps</span>
+              <span>15 Mbps</span>
+              <span>20 Mbps</span>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="slider-header">
+              <label for="settingMinBitrate">Bitrate Mínimo de Vídeo</label>
+              <span id="minBitrateValueBadge" class="value-badge">4.0 Mbps</span>
+            </div>
+            <input type="range" id="settingMinBitrate" class="form-range" min="200000" max="10000000" step="200000" value="4000000">
+            <div class="range-marks">
+              <span>200 Kbps</span>
+              <span>1.5 Mbps</span>
+              <span>4 Mbps</span>
+              <span>8 Mbps</span>
+              <span>10 Mbps</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA 2: CODECS DE VÍDEO -->
+        <div id="settingsTabCodecs" class="settings-pane">
+          <div class="settings-info-box">
+            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <p>Selecione o codec preferencial para a codificação de vídeo. O codec selecionado é priorizado imediatamente via <code>setCodecPreferences()</code> em todas as conexões WebRTC ativas.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="settingPreferredCodec">Codec Preferencial</label>
+            <select id="settingPreferredCodec" class="form-select">
+              <option value="auto">Automático (Padrão do Navegador / WebRTC)</option>
+              <option value="AV1">AV1 (Melhor compressão, altíssima nitidez e eficiência)</option>
+              <option value="H264">H.264 (Maior compatibilidade, acelerado por GPU NVENC/AMD/Intel)</option>
+              <option value="VP9">VP9 (Alta eficiência WebM em resoluções altas)</option>
+              <option value="VP8">VP8 (Universalmente compatível e leve)</option>
+            </select>
+          </div>
+
+          <div class="settings-section">
+            <label class="settings-label">Codecs Detectados neste Dispositivo</label>
+            <div id="codecCapabilitiesList" class="codecs-list">
+              <div class="codec-item" id="codecCardH264">
+                <div class="codec-header">
+                  <span class="codec-name">H.264 / AVC</span>
+                  <span class="badge badge-success">Disponível</span>
+                </div>
+                <div class="codec-desc">Aceleração de hardware total na GPU (NVIDIA NVENC, AMD AMF, Intel QuickSync). Latência ultra-baixa.</div>
+              </div>
+              <div class="codec-item" id="codecCardAV1">
+                <div class="codec-header">
+                  <span class="codec-name">AV1</span>
+                  <span class="badge" id="badgeAv1Status">Verificando...</span>
+                </div>
+                <div class="codec-desc">Formato de última geração livre de royalties. Máxima qualidade por megabit trafegado.</div>
+              </div>
+              <div class="codec-item" id="codecCardVP9">
+                <div class="codec-header">
+                  <span class="codec-name">VP9</span>
+                  <span class="badge badge-success">Disponível</span>
+                </div>
+                <div class="codec-desc">Compressão avançada do Google com ampla compatibilidade em todos os navegadores modernos.</div>
+              </div>
+              <div class="codec-item" id="codecCardVP8">
+                <div class="codec-header">
+                  <span class="codec-name">VP8</span>
+                  <span class="badge badge-success">Disponível</span>
+                </div>
+                <div class="codec-desc">Padrão histórico WebRTC, excelente para máquinas sem placas de vídeo dedicadas.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA 3: ÁUDIO & CAPTURA -->
+        <div id="settingsTabAudio" class="settings-pane">
+          
+          <!-- Seção de Áudio do Sistema / Janelas -->
+          <div class="audio-source-card">
+            <div class="audio-source-header">
+              <div class="audio-source-info">
+                <div class="audio-source-title">
+                  <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  </svg>
+                  <span>Áudio do Sistema e Janelas de Jogos</span>
+                </div>
+                <span class="audio-source-help">Captura o áudio emitido por janelas, jogos e navegadores no dispositivo padrão do Windows via loopback.</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="settingCaptureSystemAudio" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="audio-controls-row">
+              <button type="button" id="btnMuteSystemAudio" class="btn btn-secondary btn-sm btn-icon-inline">
+                <span id="btnMuteSystemAudioText">Mutar Som do Sistema</span>
+              </button>
+              <div class="vu-meter-container">
+                <span class="vu-label">Nível de Saída:</span>
+                <div class="vu-meter-track">
+                  <div id="vuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="audio-note-box">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+              </svg>
+              <span>No Windows (WGC/Electron), o áudio loopback captura os sons reproduzidos pelas janelas e jogos ativos com mixagem automática.</span>
+            </div>
+          </div>
+
+          <!-- Seção de Microfone / Voz -->
+          <div class="audio-source-card">
+            <div class="audio-source-header">
+              <div class="audio-source-info">
+                <div class="audio-source-title">
+                  <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" x2="12" y1="19" y2="22"/>
+                  </svg>
+                  <span>Microfone / Dispositivo de Entrada</span>
+                </div>
+                <span class="audio-source-help">Transmite sua voz simultaneamente com o áudio do jogo para os participantes da sala.</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="settingEnableMic">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+              <label for="settingMicDeviceSelect">Dispositivo de Microfone</label>
+              <select id="settingMicDeviceSelect" class="form-select">
+                <option value="">Padrão do Sistema</option>
+              </select>
+            </div>
+
+            <div class="audio-controls-row">
+              <button type="button" id="btnMuteMicAudio" class="btn btn-secondary btn-sm btn-icon-inline">
+                <span id="btnMuteMicAudioText">Mutar Microfone</span>
+              </button>
+              <div class="vu-meter-container">
+                <span class="vu-label">Nível de Voz:</span>
+                <div class="vu-meter-track">
+                  <div id="vuMeterMic" class="vu-meter-bar" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Filtros de Processamento de Áudio -->
+            <div class="settings-section" style="margin-top: 14px;">
+              <label class="settings-label">Filtros de Áudio em Tempo Real</label>
+              <div class="audio-filters-grid">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="filterEchoCancellation" checked>
+                  <span>Cancelamento de Eco</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="filterNoiseSuppression" checked>
+                  <span>Supressão de Ruído de Fundo</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="filterAutoGain" checked>
+                  <span>Controle Automático de Ganho</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ABA 4: ATUALIZAÇÕES DO APP -->
+        <div id="settingsTabUpdates" class="settings-pane">
+          <div class="update-card-container">
+            <div class="update-card-header">
+              <div class="app-version-badge">
+                <span class="version-label">Versão Instalada:</span>
+                <strong id="currentAppVersionDisplay">v1.0.1</strong>
+              </div>
+              <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
+                <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 4 23 10 17 10"/>
+                  <polyline points="1 20 1 14 7 14"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                <span id="btnCheckUpdatesText">Verificar Atualizações</span>
+              </button>
+            </div>
+
+            <div id="updateStatusBox" class="update-status-box">
+              <div class="update-status-icon success" id="updateStatusIcon">
+                <svg class="icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+              </div>
+              <div class="update-status-content">
+                <h4 id="updateStatusTitle">HyperStream está atualizado</h4>
+                <p id="updateStatusDesc">Você está na versão estável com otimizações de memória e aceleração GPU.</p>
+              </div>
+            </div>
+
+            <div id="updateActionPanel" class="update-action-panel hidden">
+              <div class="update-release-info">
+                <span class="badge badge-success">Nova Versão Disponível</span>
+                <span id="newVersionTag" class="new-version-text">v1.0.2</span>
+              </div>
+              <div id="newVersionChangelog" class="new-version-changelog">
+                <!-- Notas da nova versão injetadas aqui -->
+              </div>
+              <button type="button" id="btnInstallUpdateNow" class="btn btn-primary btn-block btn-lg btn-icon-inline">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>Baixar e Atualizar Automaticamente</span>
+              </button>
+            </div>
+
+            <div id="updateProgressContainer" class="update-progress-container hidden">
+              <div class="update-progress-info">
+                <span id="updateProgressLabel">Baixando atualização...</span>
+                <strong id="updateProgressPercent">0%</strong>
+              </div>
+              <div class="progress-bar-track">
+                <div id="updateProgressBarFill" class="progress-bar-fill" style="width: 0%"></div>
+              </div>
+              <span class="progress-subtext">Não feche o aplicativo. O HyperStream substituirá os arquivos e reiniciará sozinho.</span>
+            </div>
+
+            <div class="update-channel-info">
+              <span>Distribuição: <strong>GitHub Releases (AdriamSouza/webrtc)</strong></span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="settings-modal-footer">
+        <button type="button" id="btnSaveCloseSettings" class="btn btn-primary">Salvar e Fechar</button>
       </div>
     </div>
   </div>

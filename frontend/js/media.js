@@ -1,6 +1,7 @@
 /**
  * Gerenciador de Mídia Local (Screen Capture API, Câmera e Microfone)
- * Documentação Arquitetural: Seção 3.A, Seção 5 e Seção 10
+ * Suporte a controle seletivo de áudio (Sistema/Jogo vs Microfone), seletor de dispositivos,
+ * VU meter em tempo real e configurações adaptativas de resolução/FPS.
  */
 
 export class MediaManager {
@@ -11,10 +12,49 @@ export class MediaManager {
     this.combinedStream = null;
     this.isMuted = false;
     this.onStreamEnded = null;
+
+    // Configurações persistentes de áudio
+    this.captureSystemAudio = (() => {
+      try { return localStorage.getItem('hyperstream_capture_system_audio') !== 'false'; } catch (_) { return true; }
+    })();
+    this.selectedMicDeviceId = (() => {
+      try { return localStorage.getItem('hyperstream_mic_device') || 'default'; } catch (_) { return 'default'; }
+    })();
+    this.echoCancellation = (() => {
+      try { return localStorage.getItem('hyperstream_echo_cancel') !== 'false'; } catch (_) { return true; }
+    })();
+    this.noiseSuppression = (() => {
+      try { return localStorage.getItem('hyperstream_noise_suppress') !== 'false'; } catch (_) { return true; }
+    })();
+    this.autoGainControl = (() => {
+      try { return localStorage.getItem('hyperstream_auto_gain') !== 'false'; } catch (_) { return true; }
+    })();
+
+    // Estados de mudo específicos
+    this.systemAudioMuted = false;
+    this.micMuted = false;
+
+    // Configurações de qualidade de vídeo
+    this.targetFps = (() => {
+      try { return parseInt(localStorage.getItem('hyperstream_target_fps'), 10) || 60; } catch (_) { return 60; }
+    })();
+    this.targetResolution = (() => {
+      try { return localStorage.getItem('hyperstream_target_res') || 'native'; } catch (_) { return 'native'; }
+    })();
+    this.contentHint = (() => {
+      try { return localStorage.getItem('hyperstream_content_hint') || 'detail'; } catch (_) { return 'detail'; }
+    })();
+
+    // Analisadores Web Audio para VU Meter em tempo real
+    this.audioContext = null;
+    this.systemAnalyser = null;
+    this.micAnalyser = null;
+    this.systemDataArray = null;
+    this.micDataArray = null;
   }
 
   /**
-   * Solicita captura da tela com fallbacks robustos para garantir fluidez a 60 FPS
+   * Solicita captura da tela com suporte a resolução, FPS e áudio configuráveis
    */
   async startScreenCapture() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
@@ -25,33 +65,56 @@ export class MediaManager {
 
     console.log('[MediaManager] Solicitando captura de tela via getDisplayMedia...');
 
+    // Comunica a preferência de áudio para o processo principal do Electron (WGC)
+    if (window.desktopAPI && typeof window.desktopAPI.setCaptureAudio === 'function') {
+      try {
+        await window.desktopAPI.setCaptureAudio(this.captureSystemAudio);
+      } catch (err) {
+        console.warn('[MediaManager] Falha ao configurar captura de áudio no Electron:', err);
+      }
+    }
+
+    const videoConstraints = {
+      frameRate: { ideal: this.targetFps, max: this.targetFps }
+    };
+
+    // Aplica limites de resolução se configurado
+    if (this.targetResolution === '1080p') {
+      videoConstraints.width = { ideal: 1920, max: 1920 };
+      videoConstraints.height = { ideal: 1080, max: 1080 };
+    } else if (this.targetResolution === '720p') {
+      videoConstraints.width = { ideal: 1280, max: 1280 };
+      videoConstraints.height = { ideal: 720, max: 720 };
+    } else if (this.targetResolution === '480p') {
+      videoConstraints.width = { ideal: 854, max: 854 };
+      videoConstraints.height = { ideal: 480, max: 480 };
+    }
+
     let stream = null;
 
-    // Tentativa 1: Captura com vídeo a 60 FPS + áudio do sistema
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: 60, max: 60 }
-        },
-        audio: true
-      });
-      console.log('[MediaManager] Tela capturada com áudio do sistema.');
-    } catch (errAudio) {
-      console.warn('[MediaManager] Falha na captura com áudio, tentando apenas vídeo:', errAudio.message);
-
-      // Tentativa 2: Fallback apenas vídeo a 60 FPS
+    // Tentativa 1: Captura com vídeo configurado + áudio (se habilitado nas configurações)
+    if (this.captureSystemAudio) {
       try {
         stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            frameRate: { ideal: 60, max: 60 }
-          },
+          video: videoConstraints,
+          audio: true
+        });
+        console.log('[MediaManager] Tela capturada com áudio do sistema.');
+      } catch (errAudio) {
+        console.warn('[MediaManager] Falha na captura com áudio, tentando apenas vídeo:', errAudio.message);
+      }
+    }
+
+    // Tentativa 2: Fallback vídeo com parâmetros desejados
+    if (!stream) {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: videoConstraints,
           audio: false
         });
-        console.log('[MediaManager] Tela capturada (apenas vídeo a 60 FPS).');
-      } catch (errVideo60) {
-        console.warn('[MediaManager] Tentando fallback padrão do navegador:', errVideo60.message);
-
-        // Tentativa 3: Parâmetros padrão do navegador
+        console.log(`[MediaManager] Tela capturada (apenas vídeo a ${this.targetFps} FPS).`);
+      } catch (errVideo) {
+        console.warn('[MediaManager] Tentando fallback padrão do navegador:', errVideo.message);
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: true
         });
@@ -60,11 +123,11 @@ export class MediaManager {
 
     this.screenStream = stream;
 
-    // Marca o track como tela para identificação precisa
+    // Marca o track como tela com contentHint configurável
     const videoTracks = this.screenStream.getVideoTracks();
     if (videoTracks.length > 0) {
       const videoTrack = videoTracks[0];
-      videoTrack.contentHint = 'detail'; // Otimização de renderização de tela
+      videoTrack.contentHint = this.contentHint;
 
       videoTrack.onended = () => {
         console.log('[MediaManager] Compartilhamento de tela encerrado pelo navegador.');
@@ -75,17 +138,92 @@ export class MediaManager {
       };
     }
 
-    // Tenta capturar microfone silenciosamente em background se ainda não ativo
+    // Configura analisador de áudio do sistema se houver áudio
+    this.setupSystemAudioAnalyser();
+
+    // Tenta capturar microfone se ainda não ativo
     if (!this.micStream && !this.cameraStream) {
       try {
-        this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log('[MediaManager] Microfone local capturado com sucesso.');
+        await this.startMicrophone(this.selectedMicDeviceId);
       } catch (micErr) {
-        console.warn('[MediaManager] Microfone não disponível ou recusado:', micErr.message);
+        console.warn('[MediaManager] Microfone inicial não disponível:', micErr.message);
       }
     }
 
     return this.buildCombinedStream();
+  }
+
+  /**
+   * Inicia ou reconfigura a captura de microfone com cancelamento de ruído e seleção de dispositivo
+   */
+  async startMicrophone(deviceId = null) {
+    if (deviceId) {
+      this.selectedMicDeviceId = deviceId;
+      try { localStorage.setItem('hyperstream_mic_device', deviceId); } catch (_) {}
+    }
+
+    const audioConstraints = {
+      echoCancellation: this.echoCancellation,
+      noiseSuppression: this.noiseSuppression,
+      autoGainControl: this.autoGainControl
+    };
+
+    if (this.selectedMicDeviceId && this.selectedMicDeviceId !== 'default') {
+      audioConstraints.deviceId = { exact: this.selectedMicDeviceId };
+    }
+
+    // Encerra stream anterior de mic se houver
+    if (this.micStream) {
+      this.micStream.getTracks().forEach(t => t.stop());
+      this.micStream = null;
+    }
+
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      const micTrack = this.getMicAudioTrack();
+      if (micTrack) {
+        micTrack.enabled = !this.micMuted && !this.isMuted;
+      }
+      this.setupMicAudioAnalyser();
+      console.log(`[MediaManager] Microfone ativado: ${micTrack?.label || 'Padrão'}`);
+      this.buildCombinedStream();
+      return this.micStream;
+    } catch (err) {
+      console.warn('[MediaManager] Erro ao iniciar microfone:', err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Lista todos os dispositivos de entrada de áudio (microfones) conectados ao sistema
+   */
+  async enumerateMicrophones() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return [];
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter(d => d.kind === 'audioinput')
+        .map(d => ({
+          deviceId: d.deviceId,
+          label: d.label || `Microfone (${d.deviceId.substring(0, 5)})`
+        }));
+    } catch (err) {
+      console.warn('[MediaManager] Erro ao listar microfones:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Altera o dispositivo de microfone em tempo real
+   */
+  async setMicrophoneDevice(deviceId) {
+    this.selectedMicDeviceId = deviceId;
+    try { localStorage.setItem('hyperstream_mic_device', deviceId); } catch (_) {}
+    if (this.hasActiveMic()) {
+      await this.startMicrophone(deviceId);
+    }
   }
 
   /**
@@ -110,7 +248,7 @@ export class MediaManager {
 
       const videoTracks = this.cameraStream.getVideoTracks();
       if (videoTracks.length > 0) {
-        videoTracks[0].contentHint = 'motion'; // Otimização de renderização de rosto/movimento
+        videoTracks[0].contentHint = 'motion';
       }
 
       console.log('[MediaManager] Câmera ativada com sucesso.');
@@ -176,19 +314,21 @@ export class MediaManager {
       this.screenStream.getTracks().forEach(track => track.stop());
       this.screenStream = null;
     }
+    this.teardownSystemAudioAnalyser();
     this.buildCombinedStream();
   }
 
   /**
-   * Ativa ou desativa o microfone do usuário
+   * Ativa ou desativa o microfone global do usuário
    */
   async toggleMicrophone() {
     const allAudioTracks = this.getAudioTracks();
 
     if (allAudioTracks.length === 0) {
       try {
-        this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        await this.startMicrophone(this.selectedMicDeviceId);
         this.isMuted = false;
+        this.micMuted = false;
         this.buildCombinedStream();
         return { active: true, muted: false, stream: this.combinedStream };
       } catch (err) {
@@ -197,11 +337,197 @@ export class MediaManager {
       }
     } else {
       this.isMuted = !this.isMuted;
+      this.micMuted = this.isMuted;
       allAudioTracks.forEach(track => {
         track.enabled = !this.isMuted;
       });
       return { active: true, muted: this.isMuted, stream: this.combinedStream };
     }
+  }
+
+  /**
+   * Muta ou desmuta apenas o áudio do sistema/jogo de forma independente
+   */
+  setSystemAudioMuted(muted) {
+    this.systemAudioMuted = Boolean(muted);
+    const track = this.getScreenAudioTrack();
+    if (track) {
+      track.enabled = !this.systemAudioMuted;
+    }
+  }
+
+  /**
+   * Muta ou desmuta apenas o microfone de forma independente
+   */
+  setMicMuted(muted) {
+    this.micMuted = Boolean(muted);
+    const track = this.getMicAudioTrack();
+    if (track) {
+      track.enabled = !this.micMuted && !this.isMuted;
+    }
+  }
+
+  /**
+   * Configura se o áudio do sistema deve ser capturado ao compartilhar a tela
+   */
+  setCaptureSystemAudio(enabled) {
+    this.captureSystemAudio = Boolean(enabled);
+    try { localStorage.setItem('hyperstream_capture_system_audio', this.captureSystemAudio); } catch (_) {}
+    if (window.desktopAPI && typeof window.desktopAPI.setCaptureAudio === 'function') {
+      window.desktopAPI.setCaptureAudio(this.captureSystemAudio);
+    }
+    const track = this.getScreenAudioTrack();
+    if (track) {
+      track.enabled = this.captureSystemAudio && !this.systemAudioMuted;
+    }
+  }
+
+  /**
+   * Salva e atualiza parâmetros de qualidade de vídeo
+   */
+  setVideoQualityConfig({ targetFps, targetResolution, contentHint }) {
+    if (targetFps) {
+      this.targetFps = parseInt(targetFps, 10);
+      try { localStorage.setItem('hyperstream_target_fps', this.targetFps); } catch (_) {}
+    }
+    if (targetResolution) {
+      this.targetResolution = targetResolution;
+      try { localStorage.setItem('hyperstream_target_res', this.targetResolution); } catch (_) {}
+    }
+    if (contentHint) {
+      this.contentHint = contentHint;
+      try { localStorage.setItem('hyperstream_content_hint', this.contentHint); } catch (_) {}
+      const track = this.getScreenVideoTrack();
+      if (track) track.contentHint = this.contentHint;
+    }
+  }
+
+  /**
+   * Atualiza filtros de processamento de áudio
+   */
+  async setAudioProcessing({ echoCancellation, noiseSuppression, autoGainControl }) {
+    if (echoCancellation !== undefined) {
+      this.echoCancellation = Boolean(echoCancellation);
+      try { localStorage.setItem('hyperstream_echo_cancel', this.echoCancellation); } catch (_) {}
+    }
+    if (noiseSuppression !== undefined) {
+      this.noiseSuppression = Boolean(noiseSuppression);
+      try { localStorage.setItem('hyperstream_noise_suppress', this.noiseSuppression); } catch (_) {}
+    }
+    if (autoGainControl !== undefined) {
+      this.autoGainControl = Boolean(autoGainControl);
+      try { localStorage.setItem('hyperstream_auto_gain', this.autoGainControl); } catch (_) {}
+    }
+
+    if (this.hasActiveMic()) {
+      await this.startMicrophone(this.selectedMicDeviceId);
+    }
+  }
+
+  // ========================================================
+  // ANALISADORES DE ÁUDIO PARA VU METER (TEMPO REAL)
+  // ========================================================
+  ensureAudioContext() {
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.audioContext = new AudioCtx();
+      }
+    }
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch(() => {});
+    }
+    return this.audioContext;
+  }
+
+  setupSystemAudioAnalyser() {
+    const track = this.getScreenAudioTrack();
+    if (!track) {
+      this.teardownSystemAudioAnalyser();
+      return;
+    }
+    try {
+      const ctx = this.ensureAudioContext();
+      if (!ctx) return;
+      const stream = new MediaStream([track]);
+      const source = ctx.createMediaStreamSource(stream);
+      this.systemAnalyser = ctx.createAnalyser();
+      this.systemAnalyser.fftSize = 64;
+      this.systemDataArray = new Uint8Array(this.systemAnalyser.frequencyBinCount);
+      source.connect(this.systemAnalyser);
+    } catch (e) {
+      console.warn('[MediaManager] Falha ao configurar analisador de áudio do sistema:', e);
+    }
+  }
+
+  teardownSystemAudioAnalyser() {
+    this.systemAnalyser = null;
+    this.systemDataArray = null;
+  }
+
+  setupMicAudioAnalyser() {
+    const track = this.getMicAudioTrack();
+    if (!track) {
+      this.micAnalyser = null;
+      this.micDataArray = null;
+      return;
+    }
+    try {
+      const ctx = this.ensureAudioContext();
+      if (!ctx) return;
+      const stream = new MediaStream([track]);
+      const source = ctx.createMediaStreamSource(stream);
+      this.micAnalyser = ctx.createAnalyser();
+      this.micAnalyser.fftSize = 64;
+      this.micDataArray = new Uint8Array(this.micAnalyser.frequencyBinCount);
+      source.connect(this.micAnalyser);
+    } catch (e) {
+      console.warn('[MediaManager] Falha ao configurar analisador de microfone:', e);
+    }
+  }
+
+  /**
+   * Retorna os níveis sonoros instantâneos (0 a 100%) para os medidores visuais
+   */
+  getAudioMeterLevels() {
+    let systemLevel = 0;
+    let micLevel = 0;
+
+    if (this.systemAnalyser && this.systemDataArray && !this.systemAudioMuted && this.getScreenAudioTrack()?.enabled) {
+      this.systemAnalyser.getByteFrequencyData(this.systemDataArray);
+      let sum = 0;
+      for (let i = 0; i < this.systemDataArray.length; i++) {
+        sum += this.systemDataArray[i];
+      }
+      systemLevel = Math.min(100, Math.round((sum / (this.systemDataArray.length * 255)) * 140));
+    }
+
+    if (this.micAnalyser && this.micDataArray && !this.micMuted && !this.isMuted && this.getMicAudioTrack()?.enabled) {
+      this.micAnalyser.getByteFrequencyData(this.micDataArray);
+      let sum = 0;
+      for (let i = 0; i < this.micDataArray.length; i++) {
+        sum += this.micDataArray[i];
+      }
+      micLevel = Math.min(100, Math.round((sum / (this.micDataArray.length * 255)) * 140));
+    }
+
+    return { systemLevel, micLevel };
+  }
+
+  getAudioStatus() {
+    const screenAudio = this.getScreenAudioTrack();
+    const micAudio = this.getMicAudioTrack();
+
+    return {
+      hasSystemAudio: Boolean(screenAudio && screenAudio.readyState === 'live'),
+      systemAudioName: screenAudio ? (screenAudio.label || 'Áudio do Sistema / Jogo') : 'Nenhum áudio de tela',
+      systemAudioMuted: this.systemAudioMuted,
+      captureSystemAudio: this.captureSystemAudio,
+      hasMicAudio: Boolean(micAudio && micAudio.readyState === 'live'),
+      micName: micAudio ? (micAudio.label || 'Microfone') : 'Nenhum microfone ativo',
+      micMuted: this.micMuted || this.isMuted,
+      selectedMicDeviceId: this.selectedMicDeviceId
+    };
   }
 
   getCameraVideoTrack() {
@@ -252,6 +578,10 @@ export class MediaManager {
     return !!this.screenStream && this.screenStream.active && (this.getScreenVideoTrack()?.readyState === 'live');
   }
 
+  hasActiveScreenAudio() {
+    return !!this.screenStream && this.screenStream.active && (this.getScreenAudioTrack()?.readyState === 'live');
+  }
+
   hasActiveCamera() {
     return !!this.cameraStream && this.cameraStream.active && (this.getCameraVideoTrack()?.readyState === 'live');
   }
@@ -260,4 +590,3 @@ export class MediaManager {
     return !!this.micStream && this.micStream.active && (this.getMicAudioTrack()?.readyState === 'live');
   }
 }
-

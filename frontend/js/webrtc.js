@@ -33,6 +33,9 @@ export class WebRTCManager {
     this.onRemoteTrack = null;
     this.onRemoteTrackUnmuted = null;
     this.onNegotiationComplete = null;
+    this.preferredCodec = (() => {
+      try { return localStorage.getItem('hyperstream_preferred_codec') || 'auto'; } catch (_) { return 'auto'; }
+    })();
   }
 
   setIceServers(servers) {
@@ -178,7 +181,92 @@ export class WebRTCManager {
   }
 
   /**
-   * Configura preferência de codecs no Transceiver WebRTC (AV1 preferencial, H.264 fallback)
+   * Retorna a lista de codecs de vídeo disponíveis e suportados pelo dispositivo/navegador
+   */
+  static getAvailableCodecs() {
+    if (typeof RTCRtpReceiver.getCapabilities !== 'function') {
+      return [
+        { codec: 'H264', label: 'H.264 (AVC)', description: 'Aceleração de hardware universal (NVidia / AMD / Intel)' },
+        { codec: 'VP8', label: 'VP8', description: 'Compatibilidade padrão universal' }
+      ];
+    }
+
+    try {
+      const caps = RTCRtpReceiver.getCapabilities('video');
+      if (!caps || !caps.codecs) return [];
+
+      const seen = new Set();
+      const result = [];
+
+      for (const c of caps.codecs) {
+        const mime = c.mimeType.replace(/^video\//i, '').toUpperCase();
+        if (!['RTX', 'RED', 'ULPFEC', 'FLEXFEC-03'].includes(mime) && !seen.has(mime)) {
+          seen.add(mime);
+          let label = mime;
+          let description = 'Codec de vídeo WebRTC';
+          let badge = '';
+
+          if (mime === 'AV1') {
+            label = 'AV1 (Ultra Eficiente / Next-Gen)';
+            description = 'Altíssima fidelidade a 60 FPS com bitrate reduzido';
+            badge = 'Recomendado';
+          } else if (mime === 'H264') {
+            label = 'H.264 (Aceleração Nativa GPU)';
+            description = 'Aceleração total por hardware em placas NVidia, AMD e Intel';
+            badge = 'Mais Rápido';
+          } else if (mime === 'VP9') {
+            label = 'VP9 (Google)';
+            description = 'Excelente fidelidade de cores e transições suaves';
+            badge = 'HD';
+          } else if (mime === 'VP8') {
+            label = 'VP8 (Legado)';
+            description = 'Compatibilidade com todos os dispositivos e navegadores';
+            badge = 'Básico';
+          }
+
+          result.push({ codec: mime, label, description, badge });
+        }
+      }
+
+      return result;
+    } catch (err) {
+      console.warn('[WebRTC] Erro ao listar codecs disponíveis:', err);
+      return [
+        { codec: 'H264', label: 'H.264 (AVC)', description: 'Compatibilidade GPU' },
+        { codec: 'AV1', label: 'AV1', description: 'Ultra eficiente' }
+      ];
+    }
+  }
+
+  /**
+   * Altera a preferência de codec (Automático, AV1, H.264, VP9, VP8)
+   */
+  async setPreferredCodec(codec) {
+    this.preferredCodec = codec;
+    try { localStorage.setItem('hyperstream_preferred_codec', codec); } catch (_) {}
+    console.log(`[WebRTC] Preferência de codec alterada para: ${codec}`);
+    await this.applyCodecPreferencesToAllPeers();
+  }
+
+  getPreferredCodec() {
+    return this.preferredCodec || 'auto';
+  }
+
+  /**
+   * Aplica a ordem de codecs preferenciais a todos os transceivers ativos e renegocia
+   */
+  async applyCodecPreferencesToAllPeers() {
+    for (const [userId, pc] of this.peers.entries()) {
+      const transceivers = pc.getTransceivers().filter(t => t.sender && t.sender.track && t.sender.track.kind === 'video');
+      for (const t of transceivers) {
+        this.configureCodecPreferences(t);
+      }
+    }
+    await this.renegotiateAllPeers();
+  }
+
+  /**
+   * Configura preferência de codecs no Transceiver WebRTC conforme seleção do usuário
    */
   configureCodecPreferences(transceiver) {
     if (!transceiver || typeof transceiver.setCodecPreferences !== 'function') {
@@ -195,6 +283,8 @@ export class WebRTCManager {
 
       const av1Codecs = [];
       const h264Codecs = [];
+      const vp9Codecs = [];
+      const vp8Codecs = [];
       const otherCodecs = [];
 
       for (const codec of capabilities.codecs) {
@@ -203,16 +293,34 @@ export class WebRTCManager {
           av1Codecs.push(codec);
         } else if (mime === 'video/h264') {
           h264Codecs.push(codec);
+        } else if (mime === 'video/vp9') {
+          vp9Codecs.push(codec);
+        } else if (mime === 'video/vp8') {
+          vp8Codecs.push(codec);
         } else {
           otherCodecs.push(codec);
         }
       }
 
-      // Ordenação: 1º AV1 (se suportado), 2º H.264, 3º Demais codecs
-      const preferredOrder = [...av1Codecs, ...h264Codecs, ...otherCodecs];
+      const pref = (this.preferredCodec || 'auto').toUpperCase();
+      let preferredOrder = [];
+
+      if (pref === 'AV1') {
+        preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      } else if (pref === 'H264') {
+        preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      } else if (pref === 'VP9') {
+        preferredOrder = [...vp9Codecs, ...av1Codecs, ...h264Codecs, ...vp8Codecs, ...otherCodecs];
+      } else if (pref === 'VP8') {
+        preferredOrder = [...vp8Codecs, ...h264Codecs, ...av1Codecs, ...otherCodecs];
+      } else {
+        // Modo Automático: AV1 prioritário se disponível, senão H.264
+        preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      }
+
       if (preferredOrder.length > 0) {
         transceiver.setCodecPreferences(preferredOrder);
-        console.log(`[WebRTC] Ordem de codecs definida: ${av1Codecs.length > 0 ? 'AV1 prioritário' : 'H.264 prioritário'}`);
+        console.log(`[WebRTC] Ordem de codecs aplicada (${pref}): 1º ${preferredOrder[0]?.mimeType}`);
       }
     } catch (err) {
       console.warn('[WebRTC] Não foi possível definir preferência de codecs (usando padrão):', err.message);

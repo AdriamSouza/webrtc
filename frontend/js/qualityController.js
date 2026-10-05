@@ -30,6 +30,14 @@ export const QUALITY_PROFILES = {
     minBitrate: 800000,
     maxFps: 30,
     description: '30 FPS com até 1.8 Mbps (Ideal para conexões instáveis ou 4G)'
+  },
+  custom: {
+    id: 'custom',
+    label: 'Personalizado',
+    maxBitrate: 6000000,
+    minBitrate: 2000000,
+    maxFps: 60,
+    description: 'Configuração manual definida pelo usuário'
   }
 };
 
@@ -102,6 +110,22 @@ export class QualityController {
         }
       }
     }
+  }
+
+  /**
+   * Define parâmetros customizados de qualidade e aplica imediatamente
+   */
+  async setCustomQuality({ maxBitrate, minBitrate, maxFps }) {
+    if (maxBitrate !== undefined && maxBitrate > 0) {
+      QUALITY_PROFILES.custom.maxBitrate = Number(maxBitrate);
+    }
+    if (minBitrate !== undefined && minBitrate > 0) {
+      QUALITY_PROFILES.custom.minBitrate = Number(minBitrate);
+    }
+    if (maxFps !== undefined && maxFps > 0) {
+      QUALITY_PROFILES.custom.maxFps = Number(maxFps);
+    }
+    await this.setProfile('custom');
   }
 
   async collectMetrics() {

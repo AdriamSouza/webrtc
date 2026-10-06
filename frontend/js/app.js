@@ -1740,17 +1740,21 @@ function setupSettingsModal() {
     stopVuMeterLoop();
     const vuMeterSystem = document.getElementById('vuMeterSystem');
     const vuMeterMic = document.getElementById('vuMeterMic');
+    const vuMeterGameAudio = document.getElementById('vuMeterGameAudio');
 
     function updateMeters() {
       if (settingsModal.classList.contains('hidden')) {
         return;
       }
-      const { systemLevel, micLevel } = media.getAudioMeterLevels();
+      const { systemLevel, micLevel, gameLevel } = media.getAudioMeterLevels();
       if (vuMeterSystem) {
         vuMeterSystem.style.width = `${systemLevel}%`;
       }
       if (vuMeterMic) {
         vuMeterMic.style.width = `${micLevel}%`;
+      }
+      if (vuMeterGameAudio) {
+        vuMeterGameAudio.style.width = `${gameLevel}%`;
       }
       vuMeterAnimFrame = requestAnimationFrame(updateMeters);
     }
@@ -1764,8 +1768,10 @@ function setupSettingsModal() {
     }
     const vuMeterSystem = document.getElementById('vuMeterSystem');
     const vuMeterMic = document.getElementById('vuMeterMic');
+    const vuMeterGameAudio = document.getElementById('vuMeterGameAudio');
     if (vuMeterSystem) vuMeterSystem.style.width = '0%';
     if (vuMeterMic) vuMeterMic.style.width = '0%';
+    if (vuMeterGameAudio) vuMeterGameAudio.style.width = '0%';
   }
 
   // Lista de Dispositivos de Microfone
@@ -1790,18 +1796,67 @@ function setupSettingsModal() {
     }
   }
 
-  // Verificação de Codecs Disponíveis
+  // Lista de Dispositivos para Áudio Dedicado de Jogo (Cabos Virtuais, Linhas, Stereo Mix)
+  async function refreshGameAudioDeviceList() {
+    const select = document.getElementById('settingGameAudioDeviceSelect');
+    if (!select) return;
+    try {
+      const devices = await media.enumerateAudioInputDevices();
+      const currentVal = select.value || media.selectedGameAudioDeviceId;
+      select.innerHTML = '<option value="">Selecione um cabo virtual ou dispositivo...</option>';
+      devices.forEach(dev => {
+        const opt = document.createElement('option');
+        opt.value = dev.deviceId;
+        const isVirtual = /cable|virtual|stereo mix|mixagem|line|linha/i.test(dev.label);
+        opt.textContent = `${dev.label || 'Dispositivo de Entrada'} ${isVirtual ? '⭐ (Recomendado)' : ''}`;
+        if (dev.deviceId === currentVal || dev.deviceId === media.selectedGameAudioDeviceId) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    } catch (err) {
+      console.warn('[Settings] Erro ao listar dispositivos de áudio de jogo:', err);
+    }
+  }
+
+  // Verificação e Diagnóstico de Aceleração por Hardware GPU dos Codecs
   async function refreshCodecsList() {
     try {
-      const codecs = await WebRTCManager.getAvailableCodecs();
+      const gpuInfo = WebRTCManager.detectGpuHardwareAcceleration();
+      
+      const badgeH264 = document.getElementById('badgeH264Status');
+      const descH264 = document.getElementById('descH264Status');
+      if (badgeH264) {
+        badgeH264.textContent = gpuInfo.h264.badge;
+        badgeH264.className = `badge ${gpuInfo.h264.gpuAccelerated ? 'badge-success' : 'badge-secondary'}`;
+      }
+      if (descH264 && gpuInfo.h264.description) {
+        descH264.textContent = gpuInfo.h264.description;
+      }
+
       const badgeAv1 = document.getElementById('badgeAv1Status');
+      const descAv1 = document.getElementById('descAv1Status');
       if (badgeAv1) {
-        const hasAv1 = codecs.some(c => c.name === 'AV1');
-        badgeAv1.textContent = hasAv1 ? 'Disponível' : 'Não Suportado';
-        badgeAv1.className = `badge ${hasAv1 ? 'badge-success' : 'badge-secondary'}`;
+        badgeAv1.textContent = gpuInfo.av1.badge;
+        badgeAv1.className = `badge ${gpuInfo.av1.gpuAccelerated ? 'badge-success' : 'badge-secondary'}`;
+      }
+      if (descAv1 && gpuInfo.av1.description) {
+        descAv1.textContent = gpuInfo.av1.description;
+      }
+
+      const badgeVp9 = document.getElementById('badgeVp9Status');
+      if (badgeVp9) {
+        badgeVp9.textContent = gpuInfo.vp9.badge;
+        badgeVp9.className = `badge ${gpuInfo.vp9.gpuAccelerated ? 'badge-success' : 'badge-secondary'}`;
+      }
+
+      const badgeVp8 = document.getElementById('badgeVp8Status');
+      if (badgeVp8) {
+        badgeVp8.textContent = gpuInfo.vp8.badge;
+        badgeVp8.className = 'badge badge-secondary';
       }
     } catch (err) {
-      console.warn('[Settings] Erro ao verificar codecs:', err);
+      console.warn('[Settings] Erro ao verificar aceleração de hardware dos codecs:', err);
     }
   }
 
@@ -1825,6 +1880,7 @@ function setupSettingsModal() {
     switchSettingsTab(initialTab);
     settingsModal.classList.remove('hidden');
     refreshMicrophoneList();
+    refreshGameAudioDeviceList();
     refreshCodecsList();
     checkAppVersion();
     startVuMeterLoop();
@@ -1958,7 +2014,96 @@ function setupSettingsModal() {
     });
   }
 
-  // --- CONTROLES DE ÁUDIO ---
+  // Cartões Clicáveis de Codecs de Vídeo
+  const codecCards = [
+    { el: document.getElementById('codecCardH264'), val: 'H264' },
+    { el: document.getElementById('codecCardAV1'), val: 'AV1' },
+    { el: document.getElementById('codecCardVP9'), val: 'VP9' },
+    { el: document.getElementById('codecCardVP8'), val: 'VP8' }
+  ];
+
+  codecCards.forEach(({ el, val }) => {
+    if (el) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', async () => {
+        if (settingPreferredCodec) settingPreferredCodec.value = val;
+        webrtc.setPreferredCodec(val);
+        await webrtc.applyCodecPreferencesToAllPeers();
+        saveSettingsState();
+        appendSystemChat(`Codec de vídeo priorizado: ${val.toUpperCase()}`);
+      });
+    }
+  });
+
+  // --- CONTROLES DE ÁUDIO DO JOGO & APLICAÇÃO ---
+  const radioAudioLoopback = document.getElementById('radioAudioLoopback');
+  const radioAudioDedicated = document.getElementById('radioAudioDedicated');
+  const pillModeLoopback = document.getElementById('pillModeLoopback');
+  const pillModeDedicated = document.getElementById('pillModeDedicated');
+  const dedicatedAudioPanel = document.getElementById('dedicatedAudioPanel');
+  const loopbackAudioPanel = document.getElementById('loopbackAudioPanel');
+  const settingGameAudioDeviceSelect = document.getElementById('settingGameAudioDeviceSelect');
+  const btnMuteGameAudio = document.getElementById('btnMuteGameAudio');
+  const btnMuteGameAudioText = document.getElementById('btnMuteGameAudioText');
+  let isGameAudioMuted = false;
+
+  async function updateGameAudioModeUI(mode) {
+    const isDedicated = mode === 'dedicated';
+    if (radioAudioLoopback) radioAudioLoopback.checked = !isDedicated;
+    if (radioAudioDedicated) radioAudioDedicated.checked = isDedicated;
+    if (pillModeLoopback) pillModeLoopback.classList.toggle('active', !isDedicated);
+    if (pillModeDedicated) pillModeDedicated.classList.toggle('active', isDedicated);
+    if (dedicatedAudioPanel) dedicatedAudioPanel.classList.toggle('hidden', !isDedicated);
+    if (loopbackAudioPanel) loopbackAudioPanel.classList.toggle('hidden', isDedicated);
+
+    await media.setGameAudioMode(mode);
+    saveSettingsState();
+
+    if (media.hasActiveScreenStream()) {
+      const otherIds = roomState.getOtherParticipantIds();
+      await webrtc.syncLocalMedia(media, otherIds);
+      await webrtc.renegotiateAllPeers(otherIds);
+    }
+  }
+
+  if (radioAudioLoopback) {
+    radioAudioLoopback.addEventListener('change', () => updateGameAudioModeUI('loopback'));
+  }
+  if (radioAudioDedicated) {
+    radioAudioDedicated.addEventListener('change', () => updateGameAudioModeUI('dedicated'));
+  }
+  if (pillModeLoopback) {
+    pillModeLoopback.addEventListener('click', () => updateGameAudioModeUI('loopback'));
+  }
+  if (pillModeDedicated) {
+    pillModeDedicated.addEventListener('click', () => updateGameAudioModeUI('dedicated'));
+  }
+
+  if (settingGameAudioDeviceSelect) {
+    settingGameAudioDeviceSelect.addEventListener('change', async () => {
+      const devId = settingGameAudioDeviceSelect.value;
+      await media.setGameAudioDevice(devId);
+      saveSettingsState();
+      if (media.hasActiveScreenStream()) {
+        const otherIds = roomState.getOtherParticipantIds();
+        await webrtc.syncLocalMedia(media, otherIds);
+        await webrtc.renegotiateAllPeers(otherIds);
+      }
+    });
+  }
+
+  if (btnMuteGameAudio) {
+    btnMuteGameAudio.addEventListener('click', () => {
+      isGameAudioMuted = !isGameAudioMuted;
+      media.setGameAudioMuted(isGameAudioMuted);
+      btnMuteGameAudio.classList.toggle('btn-danger', isGameAudioMuted);
+      if (btnMuteGameAudioText) {
+        btnMuteGameAudioText.textContent = isGameAudioMuted ? 'Desmutar Áudio do Jogo' : 'Mutar Áudio do Jogo';
+      }
+    });
+  }
+
+  // --- CONTROLES DE ÁUDIO DO SISTEMA (WASAPI LOOPBACK) ---
   const settingCaptureSystemAudio = document.getElementById('settingCaptureSystemAudio');
   const btnMuteSystemAudio = document.getElementById('btnMuteSystemAudio');
   const btnMuteSystemAudioText = document.getElementById('btnMuteSystemAudioText');
@@ -2210,6 +2355,8 @@ function setupSettingsModal() {
         minBitrate: settingMinBitrate ? settingMinBitrate.value : '4000000',
         codec: settingPreferredCodec ? settingPreferredCodec.value : 'auto',
         captureSystemAudio: settingCaptureSystemAudio ? settingCaptureSystemAudio.checked : false,
+        gameAudioMode: media.gameAudioMode || 'loopback',
+        gameAudioDeviceId: settingGameAudioDeviceSelect ? settingGameAudioDeviceSelect.value : (media.selectedGameAudioDeviceId || ''),
         micDeviceId: settingMicDeviceSelect ? settingMicDeviceSelect.value : '',
         echo: filterEcho ? filterEcho.checked : true,
         noise: filterNoise ? filterNoise.checked : true,
@@ -2250,6 +2397,13 @@ function setupSettingsModal() {
       if (s.codec && settingPreferredCodec) {
         settingPreferredCodec.value = s.codec;
         webrtc.setPreferredCodec(s.codec);
+      }
+      if (s.gameAudioMode) {
+        updateGameAudioModeUI(s.gameAudioMode);
+      }
+      if (s.gameAudioDeviceId && settingGameAudioDeviceSelect) {
+        settingGameAudioDeviceSelect.value = s.gameAudioDeviceId;
+        media.setGameAudioDevice(s.gameAudioDeviceId);
       }
       if (s.captureSystemAudio !== undefined && settingCaptureSystemAudio) {
         settingCaptureSystemAudio.checked = Boolean(s.captureSystemAudio);

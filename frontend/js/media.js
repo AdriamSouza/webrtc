@@ -33,6 +33,16 @@ export class MediaManager {
     // Estados de mudo específicos
     this.systemAudioMuted = false;
     this.micMuted = false;
+    this.gameAudioMuted = false;
+
+    // Modo de áudio do jogo: 'loopback' (WASAPI geral do sistema) ou 'dedicated' (Dispositivo virtual / VB-Cable)
+    this.gameAudioMode = (() => {
+      try { return localStorage.getItem('hyperstream_game_audio_mode') || 'loopback'; } catch (_) { return 'loopback'; }
+    })();
+    this.selectedGameAudioDeviceId = (() => {
+      try { return localStorage.getItem('hyperstream_game_audio_device') || ''; } catch (_) { return ''; }
+    })();
+    this.dedicatedGameAudioStream = null;
 
     // Configurações de qualidade de vídeo
     this.targetFps = (() => {
@@ -49,8 +59,10 @@ export class MediaManager {
     this.audioContext = null;
     this.systemAnalyser = null;
     this.micAnalyser = null;
+    this.gameAudioAnalyser = null;
     this.systemDataArray = null;
     this.micDataArray = null;
+    this.gameDataArray = null;
   }
 
   /**
@@ -220,6 +232,126 @@ export class MediaManager {
   }
 
   /**
+   * Lista todos os dispositivos de entrada de áudio do sistema (Microfones, Cabos Virtuais, Linhas, Stereo Mix)
+   */
+  async enumerateAudioInputDevices() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return [];
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter(d => d.kind === 'audioinput')
+        .map(d => ({
+          deviceId: d.deviceId,
+          label: d.label || `Dispositivo de Áudio (${d.deviceId.substring(0, 5)})`
+        }));
+    } catch (err) {
+      console.warn('[MediaManager] Erro ao enumerar dispositivos de áudio:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Inicia a captura de áudio dedicado do jogo / cabo virtual (VB-Cable / Stereo Mix / Linha)
+   * Captura estéreo 48 kHz sem filtros de voz destrutivos (som puro e cristalino do jogo)
+   */
+  async startDedicatedGameAudio(deviceId = null) {
+    if (deviceId) {
+      this.selectedGameAudioDeviceId = deviceId;
+      try { localStorage.setItem('hyperstream_game_audio_device', deviceId); } catch (_) {}
+    }
+
+    this.stopDedicatedGameAudio();
+
+    if (!this.selectedGameAudioDeviceId) {
+      console.log('[MediaManager] Nenhum dispositivo de áudio dedicado especificado.');
+      return null;
+    }
+
+    const audioConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: { ideal: 2 },
+      sampleRate: { ideal: 48000 }
+    };
+
+    if (this.selectedGameAudioDeviceId !== 'default') {
+      audioConstraints.deviceId = { exact: this.selectedGameAudioDeviceId };
+    }
+
+    try {
+      console.log(`[MediaManager] Iniciando captura de áudio dedicado de jogo (${this.selectedGameAudioDeviceId})...`);
+      this.dedicatedGameAudioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      const track = this.getDedicatedGameAudioTrack();
+      if (track) {
+        track.enabled = !this.gameAudioMuted && !this.systemAudioMuted;
+      }
+      this.setupGameAudioAnalyser();
+      console.log(`[MediaManager] Áudio dedicado de jogo ativo: ${track?.label || 'Dispositivo Virtual'}`);
+      this.buildCombinedStream();
+      return this.dedicatedGameAudioStream;
+    } catch (err) {
+      console.warn('[MediaManager] Falha ao iniciar áudio dedicado de jogo:', err.message);
+      this.dedicatedGameAudioStream = null;
+      throw err;
+    }
+  }
+
+  /**
+   * Interrompe a captura de áudio dedicado de jogo
+   */
+  stopDedicatedGameAudio() {
+    if (this.dedicatedGameAudioStream) {
+      this.dedicatedGameAudioStream.getTracks().forEach(t => t.stop());
+      this.dedicatedGameAudioStream = null;
+    }
+    this.teardownGameAudioAnalyser();
+    this.buildCombinedStream();
+  }
+
+  /**
+   * Altera o modo de áudio do jogo ('loopback' ou 'dedicated')
+   */
+  async setGameAudioMode(mode) {
+    this.gameAudioMode = mode === 'dedicated' ? 'dedicated' : 'loopback';
+    try { localStorage.setItem('hyperstream_game_audio_mode', this.gameAudioMode); } catch (_) {}
+    console.log(`[MediaManager] Modo de áudio do jogo alterado para: ${this.gameAudioMode}`);
+
+    if (this.gameAudioMode === 'dedicated') {
+      if (this.selectedGameAudioDeviceId) {
+        await this.startDedicatedGameAudio(this.selectedGameAudioDeviceId);
+      }
+    } else {
+      this.stopDedicatedGameAudio();
+    }
+    this.buildCombinedStream();
+  }
+
+  /**
+   * Altera o dispositivo de áudio dedicado do jogo
+   */
+  async setGameAudioDevice(deviceId) {
+    this.selectedGameAudioDeviceId = deviceId || '';
+    try { localStorage.setItem('hyperstream_game_audio_device', this.selectedGameAudioDeviceId); } catch (_) {}
+    if (this.gameAudioMode === 'dedicated' && this.selectedGameAudioDeviceId) {
+      await this.startDedicatedGameAudio(this.selectedGameAudioDeviceId);
+    }
+  }
+
+  /**
+   * Muta ou desmuta o áudio dedicado do jogo
+   */
+  setGameAudioMuted(muted) {
+    this.gameAudioMuted = Boolean(muted);
+    const track = this.getDedicatedGameAudioTrack();
+    if (track) {
+      track.enabled = !this.gameAudioMuted && !this.systemAudioMuted;
+    }
+  }
+
+  /**
    * Ativa ou desativa a câmera (Webcam) do usuário estilo Meet / Discord
    */
   async toggleCamera() {
@@ -276,8 +408,17 @@ export class MediaManager {
       const screenVideoTracks = this.screenStream.getVideoTracks();
       if (screenVideoTracks.length > 0) tracks.push(screenVideoTracks[0]);
 
-      const screenAudio = this.screenStream.getAudioTracks();
-      if (screenAudio.length > 0) tracks.push(...screenAudio);
+      // Áudio de tela (Loopback padrão se modo for loopback)
+      if (this.gameAudioMode !== 'dedicated') {
+        const screenAudio = this.screenStream.getAudioTracks();
+        if (screenAudio.length > 0) tracks.push(...screenAudio);
+      }
+    }
+
+    // Áudio dedicado do jogo / cabo virtual (se ativo)
+    if (this.gameAudioMode === 'dedicated' && this.dedicatedGameAudioStream && this.dedicatedGameAudioStream.active) {
+      const dedicatedTracks = this.dedicatedGameAudioStream.getAudioTracks();
+      if (dedicatedTracks.length > 0) tracks.push(...dedicatedTracks);
     }
 
     // Vídeo da câmera
@@ -511,6 +652,47 @@ export class MediaManager {
     this.systemDataArray = null;
   }
 
+  setupGameAudioAnalyser() {
+    const track = this.getDedicatedGameAudioTrack();
+    if (!track) {
+      this.teardownGameAudioAnalyser();
+      return;
+    }
+    try {
+      const ctx = this.ensureAudioContext();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      this.teardownGameAudioAnalyser();
+
+      const stream = new MediaStream([track]);
+      const source = ctx.createMediaStreamSource(stream);
+      this.gameAudioAnalyser = ctx.createAnalyser();
+      this.gameAudioAnalyser.fftSize = 128;
+      this.gameAudioAnalyser.smoothingTimeConstant = 0.2;
+      this.gameDataArray = new Uint8Array(this.gameAudioAnalyser.frequencyBinCount);
+      source.connect(this.gameAudioAnalyser);
+
+      const dummyGain = ctx.createGain();
+      dummyGain.gain.setValueAtTime(0.00001, ctx.currentTime);
+      this.gameAudioAnalyser.connect(dummyGain);
+      dummyGain.connect(ctx.destination);
+
+      track.onunmute = () => {
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      };
+    } catch (e) {
+      console.warn('[MediaManager] Falha ao configurar analisador de áudio do jogo:', e);
+    }
+  }
+
+  teardownGameAudioAnalyser() {
+    this.gameAudioAnalyser = null;
+    this.gameDataArray = null;
+  }
+
   setupMicAudioAnalyser() {
     const track = this.getMicAudioTrack();
     if (!track) {
@@ -568,6 +750,7 @@ export class MediaManager {
   getAudioMeterLevels() {
     let systemLevel = 0;
     let micLevel = 0;
+    let gameLevel = 0;
 
     if (this.audioContext && this.audioContext.state === 'suspended') {
       this.audioContext.resume().catch(() => {});
@@ -587,6 +770,20 @@ export class MediaManager {
       systemLevel = Math.min(100, Math.round(((max * 0.75) + (avg * 1.5)) / 255 * 100));
     }
 
+    if (this.gameAudioAnalyser && this.gameDataArray && !this.gameAudioMuted && !this.systemAudioMuted) {
+      this.gameAudioAnalyser.getByteFrequencyData(this.gameDataArray);
+      let max = 0;
+      let sum = 0;
+      const len = this.gameDataArray.length;
+      for (let i = 0; i < len; i++) {
+        const val = this.gameDataArray[i];
+        if (val > max) max = val;
+        sum += val;
+      }
+      const avg = sum / len;
+      gameLevel = Math.min(100, Math.round(((max * 0.75) + (avg * 1.5)) / 255 * 100));
+    }
+
     if (this.micAnalyser && this.micDataArray && !this.micMuted && !this.isMuted) {
       this.micAnalyser.getByteFrequencyData(this.micDataArray);
       let max = 0;
@@ -601,18 +798,23 @@ export class MediaManager {
       micLevel = Math.min(100, Math.round(((max * 0.75) + (avg * 1.5)) / 255 * 100));
     }
 
-    return { systemLevel, micLevel };
+    return { systemLevel, micLevel, gameLevel };
   }
 
   getAudioStatus() {
     const screenAudio = this.getScreenAudioTrack();
     const micAudio = this.getMicAudioTrack();
+    const gameAudio = this.getDedicatedGameAudioTrack();
 
     return {
       hasSystemAudio: Boolean(screenAudio && screenAudio.readyState === 'live'),
       systemAudioName: screenAudio ? (screenAudio.label || 'Áudio do Sistema / Jogo') : 'Nenhum áudio de tela',
       systemAudioMuted: this.systemAudioMuted,
       captureSystemAudio: this.captureSystemAudio,
+      gameAudioMode: this.gameAudioMode,
+      hasDedicatedGameAudio: Boolean(gameAudio && gameAudio.readyState === 'live'),
+      gameAudioName: gameAudio ? (gameAudio.label || 'Dispositivo de Jogo') : 'Nenhum dispositivo dedicado',
+      gameAudioMuted: this.gameAudioMuted,
       hasMicAudio: Boolean(micAudio && micAudio.readyState === 'live'),
       micName: micAudio ? (micAudio.label || 'Microfone') : 'Nenhum microfone ativo',
       micMuted: this.micMuted || this.isMuted,
@@ -638,7 +840,17 @@ export class MediaManager {
     return tracks.length > 0 ? tracks[0] : null;
   }
 
+  getDedicatedGameAudioTrack() {
+    if (!this.dedicatedGameAudioStream) return null;
+    const tracks = this.dedicatedGameAudioStream.getAudioTracks();
+    return tracks.length > 0 ? tracks[0] : null;
+  }
+
   getScreenAudioTrack() {
+    if (this.gameAudioMode === 'dedicated' && this.dedicatedGameAudioStream) {
+      const dedicatedTrack = this.getDedicatedGameAudioTrack();
+      if (dedicatedTrack && dedicatedTrack.readyState === 'live') return dedicatedTrack;
+    }
     if (!this.screenStream) return null;
     const tracks = this.screenStream.getAudioTracks();
     return tracks.length > 0 ? tracks[0] : null;

@@ -453,13 +453,25 @@ export class QualityController {
         ? (totalBitrateBps / 1000000).toFixed(2)
         : '--';
 
+      let formattedCodec = activeCodec;
+      if (activeCodec === 'H264') {
+        formattedCodec = 'H.264 (GPU ⚡)';
+      } else if (activeCodec === 'AV1') {
+        formattedCodec = 'AV1 (GPU 🚀)';
+      } else if (activeCodec === 'VP9') {
+        formattedCodec = 'VP9 (HD)';
+      } else if (!activeCodec) {
+        const pref = (this.webrtc?.preferredCodec || 'auto').toUpperCase();
+        formattedCodec = pref === 'AUTO' ? 'H.264 (GPU ⚡)' : (pref === 'AV1' ? 'AV1 (GPU 🚀)' : `${pref} (GPU)`);
+      }
+
       const metrics = {
         fps: finalFps,
         resolution: width && height ? `${width}x${height}` : '--',
         rtt: finalRtt,
         bitrateMbps,
         packetLossPercent: finalPacketLoss,
-        codec: activeCodec || 'AV1 / H.264',
+        codec: formattedCodec,
         connectionType: dominantConnectionType,
         activeProfile: this.activeProfile
       };

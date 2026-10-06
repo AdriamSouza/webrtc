@@ -739,50 +739,50 @@
             <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
             </svg>
-            <p>Selecione o codec preferencial para a codificação de vídeo. O codec selecionado é priorizado imediatamente via <code>setCodecPreferences()</code> em todas as conexões WebRTC ativas.</p>
+            <p>Selecione o codec preferencial para a codificação de vídeo. O codec selecionado é priorizado imediatamente via aceleração de hardware GPU e reordenação SDP em todas as conexões WebRTC ativas.</p>
           </div>
 
           <div class="form-group">
             <label for="settingPreferredCodec">Codec Preferencial</label>
             <select id="settingPreferredCodec" class="form-select">
               <option value="auto">Automático (GPU / Mais Rápido)</option>
-              <option value="H264">H.264 (NVIDIA / AMD / Intel)</option>
-              <option value="AV1">AV1 (Ultra Eficiente)</option>
+              <option value="H264">H.264 (NVIDIA NVENC / AMD / Intel) ⚡</option>
+              <option value="AV1">AV1 (Ultra Eficiente / Next-Gen) 🚀</option>
               <option value="VP9">VP9 (Google HD)</option>
               <option value="VP8">VP8 (Básico)</option>
             </select>
           </div>
 
           <div class="settings-section">
-            <label class="settings-label">Codecs Detectados neste Dispositivo</label>
+            <label class="settings-label">Aceleração de Hardware Detectada nesta Máquina</label>
             <div id="codecCapabilitiesList" class="codecs-list">
               <div class="codec-item" id="codecCardH264">
                 <div class="codec-header">
-                  <span class="codec-name">H.264 / AVC</span>
-                  <span class="badge badge-success">Disponível</span>
+                  <span class="codec-name">H.264 / AVC (NVENC / AMF / QuickSync)</span>
+                  <span class="badge badge-success" id="badgeH264Status">GPU ⚡</span>
                 </div>
-                <div class="codec-desc">Aceleração de hardware total na GPU (NVIDIA NVENC, AMD AMF, Intel QuickSync). Latência ultra-baixa.</div>
+                <div class="codec-desc" id="descH264Status">Aceleração nativa por hardware em placas NVIDIA, AMD e Intel. Latência ultrabaixa para jogos a 60 FPS.</div>
               </div>
               <div class="codec-item" id="codecCardAV1">
                 <div class="codec-header">
-                  <span class="codec-name">AV1</span>
+                  <span class="codec-name">AV1 (Next-Gen Ultra Compacto)</span>
                   <span class="badge" id="badgeAv1Status">Verificando...</span>
                 </div>
-                <div class="codec-desc">Formato de última geração livre de royalties. Máxima qualidade por megabit trafegado.</div>
+                <div class="codec-desc" id="descAv1Status">Compressão de última geração: máxima nitidez visual a 60 FPS com até 40% de economia de banda de internet.</div>
               </div>
               <div class="codec-item" id="codecCardVP9">
                 <div class="codec-header">
-                  <span class="codec-name">VP9</span>
-                  <span class="badge badge-success">Disponível</span>
+                  <span class="codec-name">VP9 (Google HD)</span>
+                  <span class="badge badge-success" id="badgeVp9Status">HD</span>
                 </div>
-                <div class="codec-desc">Compressão avançada do Google com ampla compatibilidade em todos os navegadores modernos.</div>
+                <div class="codec-desc">Excelente fidelidade de cores e transições de cena dinâmicas com ampla compatibilidade de navegadores.</div>
               </div>
               <div class="codec-item" id="codecCardVP8">
                 <div class="codec-header">
-                  <span class="codec-name">VP8</span>
-                  <span class="badge badge-success">Disponível</span>
+                  <span class="codec-name">VP8 (Legado)</span>
+                  <span class="badge badge-secondary" id="badgeVp8Status">Básico</span>
                 </div>
-                <div class="codec-desc">Padrão histórico WebRTC, excelente para máquinas sem placas de vídeo dedicadas.</div>
+                <div class="codec-desc">Padrão histórico WebRTC, excelente para máquinas e notebooks sem placa de vídeo dedicada.</div>
               </div>
             </div>
           </div>
@@ -791,7 +791,7 @@
         <!-- ABA 3: ÁUDIO & CAPTURA -->
         <div id="settingsTabAudio" class="settings-pane">
           
-          <!-- Seção de Áudio do Sistema / Janelas -->
+          <!-- Seção de Áudio do Sistema / Jogo Dedicado -->
           <div class="audio-source-card">
             <div class="audio-source-header">
               <div class="audio-source-info">
@@ -801,33 +801,78 @@
                     <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
                   </svg>
-                  <span>Áudio do Sistema e Janelas de Jogos</span>
+                  <span>Áudio do Jogo / Aplicação</span>
                 </div>
-                <span class="audio-source-help">Captura o áudio emitido por janelas, jogos e navegadores no dispositivo padrão do Windows via loopback.</span>
+                <span class="audio-source-help">Transmita o áudio do seu jogo ou janelas com fidelidade estéreo a 48 kHz (Opus 128 kbps).</span>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="settingCaptureSystemAudio">
-                <span class="toggle-slider"></span>
+            </div>
+
+            <!-- Seletor de Modo: Loopback vs Dedicado -->
+            <div class="audio-mode-selector" style="display: flex; gap: 10px; margin: 12px 0;">
+              <label class="audio-mode-pill active" id="pillModeLoopback" style="flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #27272a; background: #141417; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                <input type="radio" name="gameAudioMode" id="radioAudioLoopback" value="loopback" checked style="accent-color: #3b82f6;">
+                <div>
+                  <div style="font-size: 0.85rem; font-weight: 600; color: #fff;">WASAPI Loopback (Geral)</div>
+                  <div style="font-size: 0.74rem; color: #a1a1aa;">Captura todo o som reproduzido no seu fone/alto-falante.</div>
+                </div>
+              </label>
+              <label class="audio-mode-pill" id="pillModeDedicated" style="flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #27272a; background: #141417; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                <input type="radio" name="gameAudioMode" id="radioAudioDedicated" value="dedicated" style="accent-color: #3b82f6;">
+                <div>
+                  <div style="font-size: 0.85rem; font-weight: 600; color: #fff;">Dispositivo Dedicado (Isolamento)</div>
+                  <div style="font-size: 0.74rem; color: #a1a1aa;">Transmite apenas o jogo (VB-Cable, Mixagem, Cabo Virtual).</div>
+                </div>
               </label>
             </div>
 
-            <div class="audio-controls-row">
-              <button type="button" id="btnMuteSystemAudio" class="btn btn-secondary btn-sm btn-icon-inline">
-                <span id="btnMuteSystemAudioText">Mutar Som do Sistema</span>
-              </button>
-              <div class="vu-meter-container">
-                <span class="vu-label">Nível de Saída:</span>
-                <div class="vu-meter-track">
-                  <div id="vuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
+            <!-- Painel para Dispositivo Dedicado (mostrado quando dedicated estiver ativo) -->
+            <div id="dedicatedAudioPanel" class="form-group hidden" style="margin-top: 10px;">
+              <label for="settingGameAudioDeviceSelect">Dispositivo de Áudio do Jogo (Cabo Virtual / Linha):</label>
+              <select id="settingGameAudioDeviceSelect" class="form-select">
+                <option value="">Selecione um cabo virtual ou dispositivo...</option>
+              </select>
+              <div class="audio-controls-row" style="margin-top: 10px;">
+                <button type="button" id="btnMuteGameAudio" class="btn btn-secondary btn-sm btn-icon-inline">
+                  <span id="btnMuteGameAudioText">Mutar Áudio do Jogo</span>
+                </button>
+                <div class="vu-meter-container">
+                  <span class="vu-label">Nível do Jogo:</span>
+                  <div class="vu-meter-track">
+                    <div id="vuMeterGameAudio" class="vu-meter-bar" style="width: 0%; background: #00d2ff;"></div>
+                  </div>
                 </div>
               </div>
+              <div class="audio-note-box" style="margin-top: 12px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; padding: 10px 12px; border-radius: 6px;">
+                <strong style="color: #60a5fa; display: block; margin-bottom: 4px; font-size: 0.8rem;">💡 Dica para Gamers: Como isolar seu Jogo do Discord e Spotify</strong>
+                <span style="font-size: 0.78rem; color: #d4d4d8; line-height: 1.4; display: block;">
+                  Instale um cabo virtual gratuito (ex: <strong>VB-Audio Cable</strong>). No Windows (<em>Configurações &gt; Som &gt; Mixer de volume</em>), configure a Saída do seu Jogo para <strong>CABLE Input</strong>. Aqui no Hyperstream, selecione <strong>CABLE Output</strong> acima. O stream receberá apenas o som do jogo em estéreo puro sem vazar o Discord ou músicas de fundo!
+                </span>
+              </div>
             </div>
-            
-            <div class="audio-note-box">
-              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-              </svg>
-              <span>No Windows (WGC/Electron), o áudio loopback captura os sons reproduzidos pelas janelas e jogos ativos com mixagem automática.</span>
+
+            <!-- Painel Loopback Padrão -->
+            <div id="loopbackAudioPanel" style="margin-top: 10px;">
+              <div class="audio-controls-row">
+                <label class="toggle-switch" style="margin-right: 10px;">
+                  <input type="checkbox" id="settingCaptureSystemAudio">
+                  <span class="toggle-slider"></span>
+                </label>
+                <button type="button" id="btnMuteSystemAudio" class="btn btn-secondary btn-sm btn-icon-inline">
+                  <span id="btnMuteSystemAudioText">Mutar Som do Sistema</span>
+                </button>
+                <div class="vu-meter-container">
+                  <span class="vu-label">Nível de Saída:</span>
+                  <div class="vu-meter-track">
+                    <div id="vuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="audio-note-box" style="margin-top: 10px;">
+                <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                <span>No modo Loopback (WGC/Electron), o som do sistema é capturado diretamente do dispositivo de saída padrão do Windows.</span>
+              </div>
             </div>
           </div>
 
@@ -898,7 +943,7 @@
             <div class="update-card-header">
               <div class="app-version-badge">
                 <span class="version-label">Versão Instalada:</span>
-                <strong id="currentAppVersionDisplay">v1.0.9</strong>
+                <strong id="currentAppVersionDisplay">v1.1.0</strong>
               </div>
               <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
                 <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

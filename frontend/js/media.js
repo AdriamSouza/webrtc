@@ -413,6 +413,7 @@ export class MediaManager {
         const screenAudio = this.screenStream.getAudioTracks();
         if (screenAudio.length > 0) tracks.push(...screenAudio);
       }
+    }
 
     // Vídeo da câmera
     if (this.cameraStream && this.cameraStream.active) {

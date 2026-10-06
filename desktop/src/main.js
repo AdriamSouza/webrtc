@@ -56,7 +56,7 @@ function saveServerUrl(url) {
 
 let mainWindow = null;
 let selectedSourceId = null;
-let captureAudioEnabled = false;
+let captureAudioEnabled = true;
 let cachedCapturerSources = [];
 
 const RENDER_DEFAULT_URL = 'https://hyperstream-g9gz.onrender.com';
@@ -273,7 +273,7 @@ ipcMain.handle('desktop:get-audio-apps', async () => {
     return sources.map(s => ({
       id: s.id,
       name: s.name,
-      appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
+      appIcon: s.appIcon ? s.appIcon.toDataURL() : (s.thumbnail ? s.thumbnail.toDataURL() : null),
       hasAudio: true
     }));
   } catch (err) {
@@ -560,7 +560,7 @@ app.whenReady().then(() => {
       if (chosen) {
         console.log('[Desktop Main] Transmitindo fonte:', chosen.name, 'id:', chosen.id);
         const streamOpts = { video: chosen };
-        if (captureAudioEnabled && request.audioRequested) {
+        if (captureAudioEnabled && (request.audioRequested || request.audioRequested === undefined)) {
           streamOpts.audio = 'loopback';
           console.log('[Desktop Main] Loopback de áudio do sistema ativado na captura.');
         }

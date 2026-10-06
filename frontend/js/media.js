@@ -13,9 +13,9 @@ export class MediaManager {
     this.isMuted = false;
     this.onStreamEnded = null;
 
-    // Configurações persistentes de áudio (desativada por padrão para simplificar a transmissão)
+    // Configurações persistentes de áudio (ativada por padrão para capturar som do sistema normalmente)
     this.captureSystemAudio = (() => {
-      try { return localStorage.getItem('hyperstream_capture_system_audio') === 'true'; } catch (_) { return false; }
+      try { return localStorage.getItem('hyperstream_capture_system_audio') !== 'false'; } catch (_) { return true; }
     })();
     this.selectedMicDeviceId = (() => {
       try { return localStorage.getItem('hyperstream_mic_device') || 'default'; } catch (_) { return 'default'; }
@@ -408,18 +408,11 @@ export class MediaManager {
       const screenVideoTracks = this.screenStream.getVideoTracks();
       if (screenVideoTracks.length > 0) tracks.push(screenVideoTracks[0]);
 
-      // Áudio de tela (Loopback padrão se modo for loopback)
-      if (this.gameAudioMode !== 'dedicated') {
+      // Áudio de tela (Loopback do sistema e jogos)
+      if (this.captureSystemAudio) {
         const screenAudio = this.screenStream.getAudioTracks();
         if (screenAudio.length > 0) tracks.push(...screenAudio);
       }
-    }
-
-    // Áudio dedicado do jogo / cabo virtual (se ativo)
-    if (this.gameAudioMode === 'dedicated' && this.dedicatedGameAudioStream && this.dedicatedGameAudioStream.active) {
-      const dedicatedTracks = this.dedicatedGameAudioStream.getAudioTracks();
-      if (dedicatedTracks.length > 0) tracks.push(...dedicatedTracks);
-    }
 
     // Vídeo da câmera
     if (this.cameraStream && this.cameraStream.active) {

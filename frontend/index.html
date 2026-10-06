@@ -791,7 +791,7 @@
         <!-- ABA 3: ÁUDIO & CAPTURA -->
         <div id="settingsTabAudio" class="settings-pane">
           
-          <!-- Seção de Áudio do Sistema / Jogo Dedicado -->
+          <!-- Card 1: Áudio do Sistema & Jogos (WASAPI Loopback) -->
           <div class="audio-source-card">
             <div class="audio-source-header">
               <div class="audio-source-info">
@@ -801,77 +801,68 @@
                     <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
                   </svg>
-                  <span>Áudio do Jogo / Aplicação</span>
+                  <span>Áudio do Sistema & Jogos</span>
                 </div>
-                <span class="audio-source-help">Transmita o áudio do seu jogo ou janelas com fidelidade estéreo a 48 kHz (Opus 128 kbps).</span>
+                <span class="audio-source-help">Captura todo o áudio reproduzido no computador (jogos, navegadores e sons do sistema) em estéreo puro a 48 kHz (Opus 128 kbps).</span>
               </div>
-            </div>
-
-            <!-- Seletor de Modo: Loopback vs Dedicado -->
-            <div class="audio-mode-selector" style="display: flex; gap: 10px; margin: 12px 0;">
-              <label class="audio-mode-pill active" id="pillModeLoopback" style="flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #27272a; background: #141417; cursor: pointer; display: flex; align-items: center; gap: 10px;">
-                <input type="radio" name="gameAudioMode" id="radioAudioLoopback" value="loopback" checked style="accent-color: #3b82f6;">
-                <div>
-                  <div style="font-size: 0.85rem; font-weight: 600; color: #fff;">WASAPI Loopback (Geral)</div>
-                  <div style="font-size: 0.74rem; color: #a1a1aa;">Captura todo o som reproduzido no seu fone/alto-falante.</div>
-                </div>
-              </label>
-              <label class="audio-mode-pill" id="pillModeDedicated" style="flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #27272a; background: #141417; cursor: pointer; display: flex; align-items: center; gap: 10px;">
-                <input type="radio" name="gameAudioMode" id="radioAudioDedicated" value="dedicated" style="accent-color: #3b82f6;">
-                <div>
-                  <div style="font-size: 0.85rem; font-weight: 600; color: #fff;">Dispositivo Dedicado (Isolamento)</div>
-                  <div style="font-size: 0.74rem; color: #a1a1aa;">Transmite apenas o jogo (VB-Cable, Mixagem, Cabo Virtual).</div>
-                </div>
+              <label class="toggle-switch" title="Ativar ou desativar captura de áudio do sistema">
+                <input type="checkbox" id="settingCaptureSystemAudio" checked>
+                <span class="toggle-slider"></span>
               </label>
             </div>
 
-            <!-- Painel para Dispositivo Dedicado (mostrado quando dedicated estiver ativo) -->
-            <div id="dedicatedAudioPanel" class="form-group hidden" style="margin-top: 10px;">
-              <label for="settingGameAudioDeviceSelect">Dispositivo de Áudio do Jogo (Cabo Virtual / Linha):</label>
-              <select id="settingGameAudioDeviceSelect" class="form-select">
-                <option value="">Selecione um cabo virtual ou dispositivo...</option>
-              </select>
-              <div class="audio-controls-row" style="margin-top: 10px;">
-                <button type="button" id="btnMuteGameAudio" class="btn btn-secondary btn-sm btn-icon-inline">
-                  <span id="btnMuteGameAudioText">Mutar Áudio do Jogo</span>
-                </button>
-                <div class="vu-meter-container">
-                  <span class="vu-label">Nível do Jogo:</span>
-                  <div class="vu-meter-track">
-                    <div id="vuMeterGameAudio" class="vu-meter-bar" style="width: 0%; background: #00d2ff;"></div>
-                  </div>
+            <div class="audio-controls-row" style="margin-top: 14px;">
+              <button type="button" id="btnMuteSystemAudio" class="btn btn-secondary btn-sm btn-icon-inline">
+                <span id="btnMuteSystemAudioText">Mutar Som do Sistema</span>
+              </button>
+              <div class="vu-meter-container">
+                <span class="vu-label">Nível de Saída:</span>
+                <div class="vu-meter-track">
+                  <div id="vuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
                 </div>
-              </div>
-              <div class="audio-note-box" style="margin-top: 12px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; padding: 10px 12px; border-radius: 6px;">
-                <strong style="color: #60a5fa; display: block; margin-bottom: 4px; font-size: 0.8rem;">💡 Dica para Gamers: Como isolar seu Jogo do Discord e Spotify</strong>
-                <span style="font-size: 0.78rem; color: #d4d4d8; line-height: 1.4; display: block;">
-                  Instale um cabo virtual gratuito (ex: <strong>VB-Audio Cable</strong>). No Windows (<em>Configurações &gt; Som &gt; Mixer de volume</em>), configure a Saída do seu Jogo para <strong>CABLE Input</strong>. Aqui no Hyperstream, selecione <strong>CABLE Output</strong> acima. O stream receberá apenas o som do jogo em estéreo puro sem vazar o Discord ou músicas de fundo!
-                </span>
               </div>
             </div>
+          </div>
 
-            <!-- Painel Loopback Padrão -->
-            <div id="loopbackAudioPanel" style="margin-top: 10px;">
-              <div class="audio-controls-row">
-                <label class="toggle-switch" style="margin-right: 10px;">
-                  <input type="checkbox" id="settingCaptureSystemAudio">
-                  <span class="toggle-slider"></span>
-                </label>
-                <button type="button" id="btnMuteSystemAudio" class="btn btn-secondary btn-sm btn-icon-inline">
-                  <span id="btnMuteSystemAudioText">Mutar Som do Sistema</span>
-                </button>
-                <div class="vu-meter-container">
-                  <span class="vu-label">Nível de Saída:</span>
-                  <div class="vu-meter-track">
-                    <div id="vuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
-                  </div>
-                </div>
-              </div>
-              <div class="audio-note-box" style="margin-top: 10px;">
-                <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          <!-- Card 2: Aplicativos e Janelas Detectados no PC (Mixer com Chaves Seletivas) -->
+          <div class="audio-apps-card" style="margin-top: 16px;">
+            <div class="audio-apps-header">
+              <div class="audio-apps-title-group">
+                <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 18V5l12-2v13"/>
+                  <circle cx="6" cy="18" r="3"/>
+                  <circle cx="18" cy="16" r="3"/>
                 </svg>
-                <span>No modo Loopback (WGC/Electron), o som do sistema é capturado diretamente do dispositivo de saída padrão do Windows.</span>
+                <span>Aplicativos e Janelas Detectados no PC</span>
+              </div>
+              <div class="audio-apps-mode-selector">
+                <label class="radio-label">
+                  <input type="radio" name="audioAppsMode" id="audioModeAllApps" value="all" checked>
+                  <span>Todos os Apps</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="audioAppsMode" id="audioModeSelectiveApps" value="selective">
+                  <span>Selecionar Apps</span>
+                </label>
+                <button type="button" id="btnRefreshAudioApps" class="btn btn-secondary btn-sm" title="Atualizar lista de aplicativos abertos" style="padding: 4px 10px; margin-left: 6px;">
+                  <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <polyline points="1 20 1 14 7 14"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                  </svg>
+                  <span>Recarregar</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="audio-apps-description">
+              Defina quais programas e janelas têm seu áudio capturado na transmissão. Ative ou desative o botão para cada aplicativo individualmente.
+            </div>
+
+            <div id="settingsAudioAppsList" class="audio-apps-list">
+              <!-- Renderizado dinamicamente via JS com ícones, títulos e botões toggle-switch -->
+              <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; justify-content: center;">
+                <span>Carregando aplicativos abertos no Windows...</span>
               </div>
             </div>
           </div>
@@ -943,7 +934,7 @@
             <div class="update-card-header">
               <div class="app-version-badge">
                 <span class="version-label">Versão Instalada:</span>
-                <strong id="currentAppVersionDisplay">v1.1.0</strong>
+                <strong id="currentAppVersionDisplay">v1.1.1</strong>
               </div>
               <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
                 <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -67,10 +67,11 @@ export class MediaManager {
 
     const fps = this.targetFps || 60;
     
-    // Constraints limpos para getDisplayMedia
+    // Constraints para getDisplayMedia com framerate explícito (ideal e max)
+    // O Chromium requer 'max' explícito para não limitar a captura a 30 FPS padrão
     const displayConstraints = {
       video: {
-        frameRate: { ideal: fps }
+        frameRate: { ideal: fps, max: fps }
       }
     };
 
@@ -89,7 +90,7 @@ export class MediaManager {
         displayConstraints.audio = false;
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: {
-            frameRate: { ideal: fps }
+            frameRate: { ideal: fps, max: fps }
           }
         });
       } else {
@@ -110,7 +111,7 @@ export class MediaManager {
       videoTrack.contentHint = this.contentHint || 'motion';
 
       const trackConstraints = {
-        frameRate: { ideal: fps }
+        frameRate: { ideal: fps, max: fps }
       };
 
       if (this.targetResolution === '1080p') {

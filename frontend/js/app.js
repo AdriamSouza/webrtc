@@ -1877,16 +1877,19 @@ function setupSettingsModal() {
         settingMaxBitrate.value = 8000000;
         settingMinBitrate.value = 4000000;
         settingFpsSelect.value = '60';
+        media.setFpsPreference(60);
         qualityController.setProfile('ultra');
       } else if (profile === 'balanced') {
         settingMaxBitrate.value = 3500000;
         settingMinBitrate.value = 1500000;
         settingFpsSelect.value = '60';
+        media.setFpsPreference(60);
         qualityController.setProfile('balanced');
       } else if (profile === 'eco') {
         settingMaxBitrate.value = 1800000;
         settingMinBitrate.value = 800000;
         settingFpsSelect.value = '30';
+        media.setFpsPreference(30);
         qualityController.setProfile('eco');
       }
       updateBitrateBadges();

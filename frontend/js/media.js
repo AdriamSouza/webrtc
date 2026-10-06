@@ -13,9 +13,9 @@ export class MediaManager {
     this.isMuted = false;
     this.onStreamEnded = null;
 
-    // Configurações persistentes de áudio
+    // Configurações persistentes de áudio (desativada por padrão para simplificar a transmissão)
     this.captureSystemAudio = (() => {
-      try { return localStorage.getItem('hyperstream_capture_system_audio') !== 'false'; } catch (_) { return true; }
+      try { return localStorage.getItem('hyperstream_capture_system_audio') === 'true'; } catch (_) { return false; }
     })();
     this.selectedMicDeviceId = (() => {
       try { return localStorage.getItem('hyperstream_mic_device') || 'default'; } catch (_) { return 'default'; }
@@ -67,16 +67,35 @@ export class MediaManager {
 
     const fps = this.targetFps || 60;
     
-    // Constraints limpos para getDisplayMedia (sem 'max' restritivo que causa OverconstrainedError)
+    // Constraints limpos para getDisplayMedia
     const displayConstraints = {
       video: {
         frameRate: { ideal: fps }
-      },
-      audio: Boolean(this.captureSystemAudio)
+      }
     };
 
-    // Chamada direta para preservar a ativação transitória do gesto de clique do usuário
-    const stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+    if (this.captureSystemAudio) {
+      displayConstraints.audio = true;
+    }
+
+    // Chamada com fallback automático caso o áudio falhe no dispositivo
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+    } catch (captureErr) {
+      // Se falhou e tinha áudio solicitado via configs, tenta fallback imediato apenas com vídeo
+      if (displayConstraints.audio) {
+        console.warn('[MediaManager] Falha ao capturar tela com áudio, tentando fallback somente vídeo:', captureErr.message);
+        displayConstraints.audio = false;
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: fps }
+          }
+        });
+      } else {
+        throw captureErr;
+      }
+    }
 
     if (!stream) {
       throw new Error('Nenhuma transmissão de tela foi capturada.');

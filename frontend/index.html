@@ -474,9 +474,9 @@
 
   </div>
 
-  <!-- Modal Unificado de Transmissão de Tela, Perfil e Mixer de Áudio -->
+  <!-- Modal de Seleção de Fonte de Transmissão (Tela ou Janela) -->
   <div id="desktopSourceModal" class="modal-backdrop hidden" aria-hidden="true">
-    <div class="source-picker-card transmission-modal-card">
+    <div class="source-picker-card">
       <div class="source-picker-header">
         <div class="source-picker-title">
           <div class="source-header-icon">
@@ -487,301 +487,65 @@
             </svg>
           </div>
           <div>
-            <h3>Transmitir Tela ou Jogo</h3>
-            <span class="source-picker-subtitle">Selecione a fonte, perfil de 60 FPS e quais aplicativos terão som captado</span>
+            <h3>Transmitir Tela ou Janela</h3>
+            <span class="source-picker-subtitle">Selecione o monitor ou aplicativo que deseja compartilhar</span>
           </div>
         </div>
         <button id="btnCloseSourceModal" class="btn-icon-close" title="Fechar">&times;</button>
       </div>
 
-      <!-- Abas Principais do Modal de Transmissão -->
-      <div class="transmission-modal-tabs">
-        <button type="button" id="tabNavSources" class="trans-nav-tab active" data-tab="sources">
-          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-            <line x1="12" y1="17" x2="12" y2="21"/>
-          </svg>
-          <span>1. Fonte de Vídeo</span>
-        </button>
-        <button type="button" id="tabNavProfile" class="trans-nav-tab" data-tab="profile">
-          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-          </svg>
-          <span>2. Perfil & Qualidade</span>
-          <span id="modalActiveProfileBadge" class="tab-badge-pill">Ultra 60</span>
-        </button>
-        <button type="button" id="tabNavAudio" class="trans-nav-tab" data-tab="audio">
-          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-          </svg>
-          <span>3. Áudio & Aplicativos</span>
-          <span id="modalAudioActiveBadge" class="tab-badge-pill active">Áudio Ativo</span>
-        </button>
-      </div>
-
-      <!-- CONTEÚDO DAS ABAS DE TRANSMISSÃO -->
-      <div class="transmission-tab-content">
-        
-        <!-- ABA 1: SELETOR DE FONTES (TELAS & JANELAS) -->
-        <div id="transPaneSources" class="trans-pane active">
-          <div class="sources-filter-bar">
-            <div class="source-picker-tabs">
-              <button type="button" id="tabSourcesScreens" class="source-tab-btn active" data-type="screen">
-                <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                  <line x1="8" y1="21" x2="16" y2="21"/>
-                  <line x1="12" y1="17" x2="12" y2="21"/>
-                </svg>
-                <span>Monitores Inteiros</span>
-              </button>
-              <button type="button" id="tabSourcesWindows" class="source-tab-btn" data-type="window">
-                <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                  <line x1="3" y1="9" x2="21" y2="9"/>
-                  <line x1="9" y1="21" x2="9" y2="9"/>
-                </svg>
-                <span>Janelas de Jogos e Apps</span>
-              </button>
-            </div>
-
-            <div class="sources-search-box">
-              <input type="text" id="sourceSearchInput" placeholder="🔍 Filtrar janela ou jogo..." autocomplete="off">
-            </div>
+      <div class="source-picker-body">
+        <div class="sources-filter-bar">
+          <div class="source-picker-tabs">
+            <button type="button" id="tabSourcesScreens" class="source-tab-btn active" data-type="screen">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+              <span>Monitores Inteiros</span>
+            </button>
+            <button type="button" id="tabSourcesWindows" class="source-tab-btn" data-type="window">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="9" y1="21" x2="9" y2="9"/>
+              </svg>
+              <span>Janelas e Aplicativos</span>
+            </button>
           </div>
 
-          <div id="sourcesLoading" class="sources-loading hidden">
-            <div class="loading-spinner"></div>
-            <span>Detectando janelas e monitores com aceleração GPU (WGC)...</span>
-          </div>
-
-          <div id="sourcesGrid" class="sources-grid">
-            <!-- Renderizado dinamicamente via JS com thumbnails e nomes -->
-          </div>
-
-          <div id="webBrowserNotice" class="sources-browser-notice hidden">
-            <svg class="icon-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <div>
-              <strong>Navegador Web:</strong>
-              <span>Ao clicar em "Iniciar Transmissão", o diálogo nativo do seu navegador permitirá selecionar qual tela ou janela compartilhar. Configure a qualidade e o áudio nas abas acima.</span>
-            </div>
+          <div class="sources-search-box">
+            <input type="text" id="sourceSearchInput" placeholder="🔍 Filtrar janela ou jogo..." autocomplete="off">
           </div>
         </div>
 
-        <!-- ABA 2: PERFIL DE TRANSMISSÃO, RESOLUÇÃO & FPS -->
-        <div id="transPaneProfile" class="trans-pane">
-          <div class="profile-config-container">
-            <div class="profile-header-meta">
-              <label class="settings-label">Perfil de Transmissão</label>
-              <span class="profile-hint-meta">Predefinição de fluidez e qualidade</span>
-            </div>
-
-            <div class="preset-cards-grid modal-preset-grid">
-              <button type="button" class="preset-card active" data-profile="ultra">
-                <div class="preset-header-row">
-                  <div class="preset-name">Ultra 60 FPS</div>
-                  <span class="badge badge-success">Recomendado</span>
-                </div>
-                <div class="preset-detail">60 FPS • até 8.0 Mbps</div>
-                <div class="preset-desc">Máxima fluidez contínua para jogos competitivos</div>
-              </button>
-              <button type="button" class="preset-card" data-profile="balanced">
-                <div class="preset-header-row">
-                  <div class="preset-name">Equilibrado</div>
-                  <span class="badge badge-desktop">60 FPS</span>
-                </div>
-                <div class="preset-detail">60 FPS • até 5.0 Mbps</div>
-                <div class="preset-desc">Excelente estabilidade para transmissões gerais</div>
-              </button>
-              <button type="button" class="preset-card" data-profile="eco">
-                <div class="preset-header-row">
-                  <div class="preset-name">Econômico</div>
-                  <span class="badge badge-host">30 FPS</span>
-                </div>
-                <div class="preset-detail">30 FPS • até 2.0 Mbps</div>
-                <div class="preset-desc">Baixo consumo para internet oscilante ou 4G</div>
-              </button>
-              <button type="button" class="preset-card" data-profile="custom">
-                <div class="preset-header-row">
-                  <div class="preset-name">Personalizado</div>
-                  <span class="badge">Manual</span>
-                </div>
-                <div class="preset-detail">Ajuste Livre</div>
-                <div class="preset-desc">Controle manual dos parâmetros abaixo</div>
-              </button>
-            </div>
-
-            <!-- Controles Rápidos de Resolução e Taxa de Quadros -->
-            <div class="trans-quick-options-grid">
-              <div class="form-group">
-                <label for="modalSettingResSelect">Resolução</label>
-                <select id="modalSettingResSelect" class="form-select">
-                  <option value="native" selected>Nativa (Original da Tela)</option>
-                  <option value="1080p">1080p (Full HD)</option>
-                  <option value="720p">720p (HD)</option>
-                  <option value="480p">480p (SD)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label for="modalSettingFpsSelect">Taxa de Quadros (FPS)</label>
-                <select id="modalSettingFpsSelect" class="form-select">
-                  <option value="60" selected>60 FPS (Ultra Fluidez)</option>
-                  <option value="30">30 FPS (Padrão)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label for="modalSettingContentHint">Otimização</label>
-                <select id="modalSettingContentHint" class="form-select">
-                  <option value="motion" selected>Jogos & Vídeos (Fluidez)</option>
-                  <option value="detail">Texto & Leitura (Nitidez)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label for="modalSettingCodecSelect">Codec de Vídeo</label>
-                <select id="modalSettingCodecSelect" class="form-select">
-                  <option value="auto" selected>Automático (GPU / Mais Rápido)</option>
-                  <option value="H264">H.264 (NVIDIA / AMD / Intel)</option>
-                  <option value="AV1">AV1 (Ultra Eficiente)</option>
-                  <option value="VP9">VP9 (Google HD)</option>
-                  <option value="VP8">VP8 (Básico)</option>
-                </select>
-              </div>
-            </div>
-          </div>
+        <div id="sourcesLoading" class="sources-loading hidden">
+          <div class="loading-spinner"></div>
+          <span>Detectando janelas e monitores com aceleração GPU (WGC)...</span>
         </div>
 
-        <!-- ABA 3: ÁUDIO DOS APLICATIVOS & MIXER DE CAPTURA -->
-        <div id="transPaneAudio" class="trans-pane">
-          <div class="audio-mixer-container">
-            
-            <!-- Card 1: Áudio do Computador / Jogos -->
-            <div class="audio-source-card">
-              <div class="audio-source-header">
-                <div class="audio-source-info">
-                  <div class="audio-source-title">
-                    <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-                    </svg>
-                    <span>Som do Computador & Jogos</span>
-                    <span class="badge badge-success">WASAPI Loopback</span>
-                  </div>
-                  <span class="audio-source-help">Captura o áudio emitido pelas janelas, jogos e navegadores abertos no PC.</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="modalSettingCaptureSystemAudio" checked>
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-
-              <div class="audio-controls-row">
-                <div class="vu-meter-container" style="flex: 1;">
-                  <div class="vu-meter-header-row">
-                    <span class="vu-label">Nível de Áudio do PC:</span>
-                    <span id="modalSystemAudioStatusText" class="vu-status-badge">Pronto para capturar</span>
-                  </div>
-                  <div class="vu-meter-track">
-                    <div id="modalVuMeterSystem" class="vu-meter-bar" style="width: 0%"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Card 2: Lista de Aplicativos Detectados no PC -->
-            <div class="audio-apps-card">
-              <div class="audio-apps-header">
-                <div class="audio-apps-title-group">
-                  <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="4" y="4" width="16" height="16" rx="2"/>
-                    <rect x="9" y="9" width="6" height="6"/>
-                    <line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/>
-                  </svg>
-                  <strong>Aplicativos Detectados no PC</strong>
-                </div>
-                <div class="audio-apps-mode-selector">
-                  <label class="radio-label">
-                    <input type="radio" name="audioCaptureMode" value="all" id="audioModeAll" checked>
-                    <span>Todos os Apps (Mix Geral)</span>
-                  </label>
-                  <label class="radio-label">
-                    <input type="radio" name="audioCaptureMode" value="focused" id="audioModeFocused">
-                    <span>Apenas Janela Selecionada</span>
-                  </label>
-                </div>
-              </div>
-
-              <p class="audio-apps-description">
-                Abaixo estão as janelas e aplicativos ativos no seu computador. Você pode marcar ou desmarcar quais deseja que façam parte do som transmitido:
-              </p>
-
-              <div id="modalAudioAppsList" class="audio-apps-list">
-                <div class="audio-apps-loading">
-                  <div class="loading-spinner" style="width: 18px; height: 18px;"></div>
-                  <span>Identificando aplicativos em execução...</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Card 3: Microfone & Voz -->
-            <div class="audio-source-card">
-              <div class="audio-source-header">
-                <div class="audio-source-info">
-                  <div class="audio-source-title">
-                    <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-                      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                      <line x1="12" x2="12" y1="19" y2="22"/>
-                    </svg>
-                    <span>Microfone (Sua Voz)</span>
-                  </div>
-                  <span class="audio-source-help">Transmite sua voz simultaneamente com os sons dos jogos para os participantes.</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="modalSettingEnableMic">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-
-              <div class="form-group" style="margin-top: 10px;">
-                <label for="modalSettingMicDeviceSelect">Dispositivo de Microfone</label>
-                <select id="modalSettingMicDeviceSelect" class="form-select">
-                  <option value="">Padrão do Sistema</option>
-                </select>
-              </div>
-
-              <div class="audio-controls-row">
-                <div class="vu-meter-container" style="flex: 1;">
-                  <span class="vu-label">Nível de Voz:</span>
-                  <div class="vu-meter-track">
-                    <div id="modalVuMeterMic" class="vu-meter-bar" style="width: 0%"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </div>
+        <div id="sourcesGrid" class="sources-grid">
+          <!-- Renderizado dinamicamente via JS com thumbnails e nomes -->
         </div>
 
+        <div id="webBrowserNotice" class="sources-browser-notice hidden">
+          <svg class="icon-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <div>
+            <strong>Navegador Web:</strong>
+            <span>Ao clicar em "Transmitir Tela", o diálogo nativo do seu navegador permitirá selecionar qual tela ou janela compartilhar.</span>
+          </div>
+        </div>
       </div>
 
       <!-- RODAPÉ DO MODAL COM RESUMO E BOTÃO DE INICIAR -->
       <div class="source-picker-footer transmission-modal-footer">
         <div class="transmission-selection-summary">
-          <span class="summary-label">Configuração:</span>
+          <span class="summary-label">Fonte:</span>
           <div id="transmissionSummaryPill" class="summary-pill">
-            <span id="summarySourceName">Nenhuma fonte selecionada</span>
-            <span class="summary-divider">•</span>
-            <span id="summaryProfile">Ultra 60 FPS (8 Mbps)</span>
-            <span class="summary-divider">•</span>
-            <span id="summaryAudio">Áudio do PC Ativo</span>
+            <span id="summarySourceName">Monitor Principal</span>
           </div>
         </div>
 
@@ -791,7 +555,7 @@
             <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
-            <span id="btnStartTransmissionText">Iniciar Transmissão (60 FPS)</span>
+            <span id="btnStartTransmissionText">Transmitir Tela</span>
           </button>
         </div>
       </div>
@@ -1042,7 +806,7 @@
                 <span class="audio-source-help">Captura o áudio emitido por janelas, jogos e navegadores no dispositivo padrão do Windows via loopback.</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="settingCaptureSystemAudio" checked>
+                <input type="checkbox" id="settingCaptureSystemAudio">
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -1134,7 +898,7 @@
             <div class="update-card-header">
               <div class="app-version-badge">
                 <span class="version-label">Versão Instalada:</span>
-                <strong id="currentAppVersionDisplay">v1.0.7</strong>
+                <strong id="currentAppVersionDisplay">v1.0.8</strong>
               </div>
               <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
                 <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -56,7 +56,8 @@ function saveServerUrl(url) {
 
 let mainWindow = null;
 let selectedSourceId = null;
-let captureAudioEnabled = true;
+let captureAudioEnabled = false;
+let cachedCapturerSources = [];
 
 const RENDER_DEFAULT_URL = 'https://hyperstream-g9gz.onrender.com';
 
@@ -188,6 +189,8 @@ ipcMain.handle('desktop:get-sources', async (event, opts = {}) => {
       thumbnailSize: { width: thumbnailWidth, height: thumbnailHeight },
       fetchWindowIcons: true
     });
+
+    cachedCapturerSources = sources;
 
     return sources.map(source => ({
       id: source.id,
@@ -528,29 +531,34 @@ app.whenReady().then(() => {
   // Manipulador nativo de captura para getDisplayMedia no Electron
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
-      // thumbnailSize 1x1 torna a detecção das janelas instantânea (evita expirar o evento de gesto do usuário)
-      const sources = await desktopCapturer.getSources({
-        types: ['screen', 'window'],
-        thumbnailSize: { width: 1, height: 1 }
-      });
-
       let chosen = null;
-      if (selectedSourceId && selectedSourceId !== 'default') {
-        chosen = sources.find(s => s.id === selectedSourceId);
-        if (chosen) {
-          console.log('[Desktop Main] Usando fonte selecionada pelo usuário:', chosen.name);
+
+      // Prioriza a fonte previamente selecionada pelo usuário no cache já carregado
+      if (selectedSourceId && selectedSourceId !== 'default' && Array.isArray(cachedCapturerSources) && cachedCapturerSources.length > 0) {
+        chosen = cachedCapturerSources.find(s => s.id === selectedSourceId);
+      }
+
+      // Se não encontrou no cache, busca as fontes rapidamente com thumbnail 1x1
+      if (!chosen) {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 1, height: 1 }
+        });
+        cachedCapturerSources = sources;
+
+        if (selectedSourceId && selectedSourceId !== 'default') {
+          chosen = sources.find(s => s.id === selectedSourceId);
+        }
+        if (!chosen) {
+          chosen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
         }
       }
 
-      if (!chosen) {
-        chosen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
-        console.log('[Desktop Main] Usando fonte padrão de tela:', chosen?.name);
-      }
-
-      // Limpa a seleção para que próximas transmissões não fiquem presas em janelas fechadas
+      // Limpa a seleção para que próximas transmissões não fiquem presas em janelas antigas
       selectedSourceId = null;
 
       if (chosen) {
+        console.log('[Desktop Main] Transmitindo fonte:', chosen.name, 'id:', chosen.id);
         const streamOpts = { video: chosen };
         if (captureAudioEnabled && request.audioRequested) {
           streamOpts.audio = 'loopback';

@@ -96,14 +96,22 @@ export class WebRTCManager {
 
     if (type === 'screen') {
       mapping.screenActive = Boolean(active);
-      if (mid) mapping.screenMid = mid;
-      if (streamId) mapping.screenStreamId = streamId;
-      if (active && !mapping.cameraActive) mapping.screenFirst = true;
+      if (!active) {
+        mapping.screenStreamId = null;
+      } else {
+        if (mid) mapping.screenMid = mid;
+        if (streamId) mapping.screenStreamId = streamId;
+        if (!mapping.cameraActive) mapping.screenFirst = true;
+      }
     } else if (type === 'camera') {
       mapping.cameraActive = Boolean(active);
-      if (mid) mapping.cameraMid = mid;
-      if (streamId) mapping.cameraStreamId = streamId;
-      if (active && !mapping.screenActive) mapping.screenFirst = false;
+      if (!active) {
+        mapping.cameraStreamId = null;
+      } else {
+        if (mid) mapping.cameraMid = mid;
+        if (streamId) mapping.cameraStreamId = streamId;
+        if (!mapping.screenActive) mapping.screenFirst = false;
+      }
     }
   }
 
@@ -604,6 +612,20 @@ export class WebRTCManager {
         console.log(`[WebRTC] Track remoto ${event.track.kind} de ${targetUserId} UNMUTED (transmissão reativada)`);
         if (this.onRemoteTrackUnmuted) {
           this.onRemoteTrackUnmuted(event.track, targetUserId);
+        }
+      };
+
+      event.track.onmute = () => {
+        console.log(`[WebRTC] Track remoto ${event.track.kind} de ${targetUserId} MUTED (transmissão pausada ou finalizada)`);
+        if (this.onRemoteTrackMuted) {
+          this.onRemoteTrackMuted(event.track, targetUserId);
+        }
+      };
+
+      event.track.onended = () => {
+        console.log(`[WebRTC] Track remoto ${event.track.kind} de ${targetUserId} ENDED (transmissão encerrada)`);
+        if (this.onRemoteTrackEnded) {
+          this.onRemoteTrackEnded(event.track, targetUserId);
         }
       };
 

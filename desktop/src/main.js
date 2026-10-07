@@ -323,24 +323,52 @@ const execFileAsync = util.promisify(execFile);
 
 function getAudioHelperExePath() {
   const candidatePaths = [
-    path.join(__dirname, '..', 'bin', 'AudioSessionHelper.exe'),
-    path.join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'bin', 'AudioSessionHelper.exe'),
+    // 1. Packaged: recursos descompactados fora do asar (executáveis nativos Windows)
     path.join(process.resourcesPath || '', 'app.asar.unpacked', 'bin', 'AudioSessionHelper.exe'),
+    path.join(app.getAppPath().replace(/app\.asar$/i, 'app.asar.unpacked'), 'bin', 'AudioSessionHelper.exe'),
+    path.join(path.dirname(app.getAppPath()), 'app.asar.unpacked', 'bin', 'AudioSessionHelper.exe'),
+    path.join(__dirname.replace(/app\.asar/i, 'app.asar.unpacked'), '..', 'bin', 'AudioSessionHelper.exe'),
+    // 2. Extraído em userData
+    path.join(app.getPath('userData'), 'AudioSessionHelper.exe'),
+    // 3. Desenvolvimento / binários locais fora do asar
     path.join(process.resourcesPath || '', 'bin', 'AudioSessionHelper.exe'),
-    path.join(app.getAppPath(), 'bin', 'AudioSessionHelper.exe'),
-    path.join(app.getPath('userData'), 'AudioSessionHelper.exe')
+    path.join(__dirname, '..', 'bin', 'AudioSessionHelper.exe'),
+    path.join(app.getAppPath(), 'bin', 'AudioSessionHelper.exe')
   ];
+
   for (const p of candidatePaths) {
+    // Windows CreateProcess não pode executar arquivos dentro do arquivo virtual .asar!
+    if (/app\.asar[\\/]/i.test(p) && !/app\.asar\.unpacked/i.test(p)) {
+      continue;
+    }
     if (fs.existsSync(p)) return p;
+  }
+
+  // Fallback: se estiver dentro do asar mas não descompactado, extrai para userData
+  try {
+    const asarExe = path.join(app.getAppPath(), 'bin', 'AudioSessionHelper.exe');
+    const targetExe = path.join(app.getPath('userData'), 'AudioSessionHelper.exe');
+    if (fs.existsSync(asarExe)) {
+      fs.writeFileSync(targetExe, fs.readFileSync(asarExe));
+      if (fs.existsSync(targetExe)) return targetExe;
+    }
+  } catch (err) {
+    console.warn('[Desktop Main] Falha ao extrair AudioSessionHelper para userData:', err.message);
   }
 
   // Se não encontrou binário pré-compilado, compila na hora via csc.exe do .NET nativo do Windows
   const csCandidates = [
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'bin', 'AudioSessionHelper.cs'),
+    path.join(path.dirname(app.getAppPath()), 'app.asar.unpacked', 'bin', 'AudioSessionHelper.cs'),
+    path.join(__dirname.replace(/app\.asar/i, 'app.asar.unpacked'), '..', 'bin', 'AudioSessionHelper.cs'),
     path.join(__dirname, '..', 'bin', 'AudioSessionHelper.cs'),
     path.join(app.getAppPath(), 'bin', 'AudioSessionHelper.cs'),
     path.join(process.resourcesPath || '', 'bin', 'AudioSessionHelper.cs')
   ];
-  const csFile = csCandidates.find(p => fs.existsSync(p));
+  const csFile = csCandidates.find(p => {
+    if (/app\.asar[\\/]/i.test(p) && !/app\.asar\.unpacked/i.test(p)) return false;
+    return fs.existsSync(p);
+  });
   if (csFile) {
     const cscCompiler = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
     const targetExe = path.join(app.getPath('userData'), 'AudioSessionHelper.exe');
@@ -431,7 +459,7 @@ async function queryMixerAppsInBackground() {
       mainWindow.webContents.send('desktop:audio-apps-updated', cachedMixerApps);
     }
   } catch (err) {
-    // Silencioso em background para evitar poluição de logs
+    console.warn('[Desktop Main] Erro ao consultar mixer apps via AudioSessionHelper:', err?.message || err);
   } finally {
     isQueryingMixer = false;
   }
@@ -467,6 +495,7 @@ function startBackgroundAudioQueryLoop() {
 // IPC: Obter aplicativos diretamente do Mixer de Áudio do Windows (retorno instantâneo a partir da memória)
 ipcMain.handle('desktop:get-audio-apps', async () => {
   if (Array.isArray(cachedMixerApps) && cachedMixerApps.length > 0) {
+    queryMixerAppsInBackground().catch(() => {});
     return cachedMixerApps;
   }
   return await queryMixerAppsInBackground();

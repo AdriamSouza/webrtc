@@ -391,7 +391,12 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
  */
 function removeTile(id) {
   const entry = activeTiles.get(id);
-  if (!entry) return;
+  if (!entry) {
+    const orphanEl = document.getElementById(`tile-${id}`);
+    if (orphanEl) orphanEl.remove();
+    updateGridLayout();
+    return;
+  }
 
   if (entry.videoEl) {
     try {
@@ -443,7 +448,7 @@ function syncRemotePeerTiles(userId) {
     const screenStream = webrtc.getRemoteStreamForTile(userId, 'screen');
     const screenVideoTrack = webrtc.getRemoteVideoTrack(userId, 'screen');
 
-    if (screenVideoTrack && screenVideoTrack.readyState === 'live') {
+    if (screenVideoTrack && screenVideoTrack.readyState === 'live' && !screenVideoTrack.muted) {
       addOrUpdateTile({
         id: screenTileId,
         title: `${participantName} (Tela 60 FPS)`,
@@ -459,6 +464,23 @@ function syncRemotePeerTiles(userId) {
           tile.videoEl.play().catch(e => console.warn(e));
         }
       };
+
+      screenVideoTrack.onmute = () => {
+        setTimeout(() => {
+          if (screenVideoTrack.muted) {
+            const um = remoteUserMedia.get(userId);
+            if (!um || !um.screen) {
+              removeTile(screenTileId);
+            }
+          }
+        }, 300);
+      };
+
+      screenVideoTrack.onended = () => {
+        removeTile(screenTileId);
+      };
+    } else if (screenVideoTrack && screenVideoTrack.muted) {
+      removeTile(screenTileId);
     } else {
       pendingTrack = true;
     }
@@ -472,7 +494,7 @@ function syncRemotePeerTiles(userId) {
     const cameraStream = webrtc.getRemoteStreamForTile(userId, 'camera');
     const cameraVideoTrack = webrtc.getRemoteVideoTrack(userId, 'camera');
 
-    if (cameraVideoTrack && cameraVideoTrack.readyState === 'live') {
+    if (cameraVideoTrack && cameraVideoTrack.readyState === 'live' && !cameraVideoTrack.muted) {
       addOrUpdateTile({
         id: cameraTileId,
         title: `${participantName} (Câmera)`,
@@ -488,6 +510,23 @@ function syncRemotePeerTiles(userId) {
           tile.videoEl.play().catch(e => console.warn(e));
         }
       };
+
+      cameraVideoTrack.onmute = () => {
+        setTimeout(() => {
+          if (cameraVideoTrack.muted) {
+            const um = remoteUserMedia.get(userId);
+            if (!um || !um.camera) {
+              removeTile(cameraTileId);
+            }
+          }
+        }, 300);
+      };
+
+      cameraVideoTrack.onended = () => {
+        removeTile(cameraTileId);
+      };
+    } else if (cameraVideoTrack && cameraVideoTrack.muted) {
+      removeTile(cameraTileId);
     } else {
       pendingTrack = true;
     }
@@ -1295,7 +1334,8 @@ function renderSourceItems(onClick, onDblClick) {
 }
 
 async function handleToggleScreenShare() {
-  if (media.hasActiveScreenStream()) {
+  const isSharing = btnShareScreen.classList.contains('active') || media.hasActiveScreenStream() || !!media.screenStream;
+  if (isSharing) {
     media.stopScreenCapture();
     handleStreamEnded();
   } else {
@@ -1323,8 +1363,8 @@ async function handleToggleScreenShare() {
       const trackId = media.getScreenVideoTrack()?.id;
       const streamId = media.screenStream?.id;
 
-      signaling.send('START_STREAM', { hasVideo: true, hasAudio, trackId, streamId });
-      signaling.send('MEDIA_STATE', { type: 'screen', active: true, trackId, streamId });
+      signaling.send('START_STREAM', { hasVideo: true, hasAudio, trackId, streamId, userId: roomState.myUserId });
+      signaling.send('MEDIA_STATE', { type: 'screen', active: true, trackId, streamId, userId: roomState.myUserId });
 
       appendSystemChat(`Você iniciou o compartilhamento de tela.`);
       updateGridLayout();
@@ -1349,8 +1389,8 @@ function handleStreamEnded() {
   webrtc.syncLocalMedia(media, otherIds);
   webrtc.renegotiateAllPeers(otherIds).catch(() => {});
 
-  signaling.send('STOP_STREAM', {});
-  signaling.send('MEDIA_STATE', { type: 'screen', active: false });
+  signaling.send('STOP_STREAM', { userId: roomState.myUserId });
+  signaling.send('MEDIA_STATE', { type: 'screen', active: false, userId: roomState.myUserId });
   appendSystemChat('Você encerrou o compartilhamento de tela.');
   updateGridLayout();
 }
@@ -1382,6 +1422,34 @@ function setupWebRTCEvents() {
   webrtc.onRemoteTrackUnmuted = (track, fromUserId) => {
     console.log(`[App] onRemoteTrackUnmuted recebido de ${fromUserId}: kind=${track.kind}`);
     syncRemotePeerTiles(fromUserId);
+  };
+
+  // Callback acionado quando um track remoto é mutado (o transmissor encerrou a captura ou replaceTrack(null))
+  webrtc.onRemoteTrackMuted = (track, fromUserId) => {
+    console.log(`[App] onRemoteTrackMuted recebido de ${fromUserId}: kind=${track.kind}`);
+    if (track.kind === 'video') {
+      setTimeout(() => {
+        if (track.muted) {
+          const userMedia = remoteUserMedia.get(fromUserId);
+          const screenTrack = webrtc.getRemoteVideoTrack(fromUserId, 'screen');
+          if (screenTrack === track && (!userMedia || !userMedia.screen || track.muted)) {
+            console.log(`[App] Track de tela de ${fromUserId} continua mutado. Removendo tile congelado.`);
+            if (userMedia) userMedia.screen = false;
+            removeTile(`${fromUserId}-screen`);
+          }
+        }
+      }, 300);
+    }
+  };
+
+  // Callback acionado quando um track remoto é finalizado
+  webrtc.onRemoteTrackEnded = (track, fromUserId) => {
+    console.log(`[App] onRemoteTrackEnded recebido de ${fromUserId}: kind=${track.kind}`);
+    if (track.kind === 'video') {
+      const userMedia = remoteUserMedia.get(fromUserId);
+      if (userMedia) userMedia.screen = false;
+      removeTile(`${fromUserId}-screen`);
+    }
   };
 
   // Notificação imediata quando a negociação SDP (Offer/Answer) conclui
@@ -1530,43 +1598,64 @@ function setupSignalingEvents() {
 
   // Atualização de estado de transmissão remota (câmera ou tela iniciada/encerrada)
   signaling.on('MEDIA_STATE', (msg) => {
-    const { type, active, mid, streamId } = msg.data;
-    const fromUserId = msg.from;
+    const { type, active, mid, streamId } = msg.data || {};
+    const fromUserId = msg.from || msg.data?.userId;
     console.log(`[App] Evento MEDIA_STATE de ${fromUserId}: tipo=${type}, ativo=${active}, mid=${mid}`);
 
-    let userMedia = remoteUserMedia.get(fromUserId);
-    if (!userMedia) {
-      userMedia = { screen: false, camera: false };
-      remoteUserMedia.set(fromUserId, userMedia);
-    }
-    userMedia[type] = active;
+    if (fromUserId) {
+      let userMedia = remoteUserMedia.get(fromUserId);
+      if (!userMedia) {
+        userMedia = { screen: false, camera: false };
+        remoteUserMedia.set(fromUserId, userMedia);
+      }
+      if (type) {
+        userMedia[type] = Boolean(active);
+      }
 
-    webrtc.updatePeerMediaState(fromUserId, type, active, mid, streamId);
-    syncRemotePeerTiles(fromUserId);
+      webrtc.updatePeerMediaState(fromUserId, type, Boolean(active), mid, streamId);
+
+      if (!active && type) {
+        removeTile(`${fromUserId}-${type}`);
+      }
+      syncRemotePeerTiles(fromUserId);
+    }
   });
 
   signaling.on('START_STREAM', (msg) => {
-    const fromUserId = msg.from;
+    const fromUserId = msg.from || msg.data?.userId;
     console.log(`[App] Evento START_STREAM de ${fromUserId}`);
-    let userMedia = remoteUserMedia.get(fromUserId);
-    if (!userMedia) {
-      userMedia = { screen: false, camera: false };
-      remoteUserMedia.set(fromUserId, userMedia);
-    }
-    userMedia.screen = true;
+    if (fromUserId) {
+      let userMedia = remoteUserMedia.get(fromUserId);
+      if (!userMedia) {
+        userMedia = { screen: false, camera: false };
+        remoteUserMedia.set(fromUserId, userMedia);
+      }
+      userMedia.screen = true;
 
-    webrtc.updatePeerMediaState(fromUserId, 'screen', true, msg.data?.mid, msg.data?.streamId);
-    syncRemotePeerTiles(fromUserId);
+      webrtc.updatePeerMediaState(fromUserId, 'screen', true, msg.data?.mid, msg.data?.streamId);
+      syncRemotePeerTiles(fromUserId);
+    }
   });
 
   signaling.on('STOP_STREAM', (msg) => {
-    const fromUserId = msg.from;
-    console.log(`[App] Evento STOP_STREAM de ${fromUserId}`);
-    let userMedia = remoteUserMedia.get(fromUserId);
-    if (userMedia) userMedia.screen = false;
+    const fromUserId = msg.from || msg.data?.userId;
+    console.log(`[App] Evento STOP_STREAM recebido de ${fromUserId}`);
+    if (fromUserId) {
+      let userMedia = remoteUserMedia.get(fromUserId);
+      if (userMedia) userMedia.screen = false;
 
-    webrtc.updatePeerMediaState(fromUserId, 'screen', false);
-    syncRemotePeerTiles(fromUserId);
+      webrtc.updatePeerMediaState(fromUserId, 'screen', false);
+      removeTile(`${fromUserId}-screen`);
+      syncRemotePeerTiles(fromUserId);
+    } else {
+      // Se não especificou o remetente, remove todas as telas remotas
+      remoteUserMedia.forEach((um, uid) => {
+        um.screen = false;
+        webrtc.updatePeerMediaState(uid, 'screen', false);
+        removeTile(`${uid}-screen`);
+      });
+      updateGridLayout();
+    }
   });
 
   signaling.on('CHAT_MESSAGE', (msg) => {
@@ -1987,6 +2076,12 @@ function setupSettingsModal() {
     // Se já temos cache recente em memória, renderiza instantaneamente
     if (Array.isArray(cachedAudioApps) && cachedAudioApps.length > 0) {
       renderAudioAppsList(cachedAudioApps);
+    } else {
+      settingsAudioAppsList.innerHTML = `
+        <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; justify-content: center;">
+          <span>Detectando aplicativos com som no Windows...</span>
+        </div>
+      `;
     }
 
     try {

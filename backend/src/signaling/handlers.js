@@ -137,7 +137,7 @@ export function handleStartStream(user, message, roomManager) {
 }
 
 export function handleStopStream(user, message, roomManager) {
-  const { roomId } = message;
+  const roomId = message.roomId || user.roomId;
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
@@ -147,12 +147,14 @@ export function handleStopStream(user, message, roomManager) {
   room.status = 'idle';
 
   room.broadcast(
-    createMessage(MessageTypes.STOP_STREAM, roomId, user.id, null, {})
+    createMessage(MessageTypes.STOP_STREAM, roomId, user.id, null, {
+      userId: user.id
+    })
   );
 }
 
 export function handleMute(user, message, roomManager) {
-  const { roomId, data } = message;
+  const roomId = message.roomId || user.roomId;
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
@@ -165,10 +167,11 @@ export function handleMute(user, message, roomManager) {
 }
 
 export function handleMediaState(user, message, roomManager) {
-  const { roomId, data } = message;
+  const roomId = message.roomId || user.roomId;
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
+  const data = message.data || {};
   if (data?.type === 'screen') {
     user.isScreenSharing = Boolean(data.active);
   } else if (data?.type === 'camera') {
@@ -181,7 +184,10 @@ export function handleMediaState(user, message, roomManager) {
   }
 
   room.broadcast(
-    createMessage(MessageTypes.MEDIA_STATE, roomId, user.id, null, data),
+    createMessage(MessageTypes.MEDIA_STATE, roomId, user.id, null, {
+      ...data,
+      userId: user.id
+    }),
     user.id
   );
 }

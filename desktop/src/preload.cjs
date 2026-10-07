@@ -20,6 +20,15 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   getCaptureAudio: () => ipcRenderer.invoke('desktop:get-capture-audio'),
   getAudioApplications: () => ipcRenderer.invoke('desktop:get-audio-apps'),
 
+  // Captura seletiva de áudio nativo por processo / WASAPI Loopback
+  startLoopbackCapture: (opts) => ipcRenderer.invoke('desktop:start-loopback-capture', opts),
+  stopLoopbackCapture: () => ipcRenderer.invoke('desktop:stop-loopback-capture'),
+  onAudioPcmChunk: (callback) => {
+    const listener = (event, chunk) => callback(chunk);
+    ipcRenderer.on('desktop:audio-pcm-chunk', listener);
+    return () => ipcRenderer.removeListener('desktop:audio-pcm-chunk', listener);
+  },
+
   // Sistema de Atualizações Automáticas no App
   checkForUpdates: () => ipcRenderer.invoke('desktop:check-for-updates'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('desktop:download-and-install-update'),

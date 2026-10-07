@@ -1798,6 +1798,7 @@ function setupSettingsModal() {
   const audioModeSelectiveApps = document.getElementById('audioModeSelectiveApps');
 
   let disabledAudioAppIds = new Set();
+  let disabledAudioAppsMap = new Map(); // id -> { id, name, pid, processName }
   let audioAppsFilterMode = 'all'; // 'all' ou 'selective'
 
   function loadSavedAudioAppsState() {
@@ -1809,16 +1810,33 @@ function setupSettingsModal() {
         if (Array.isArray(parsed.disabledIds)) {
           disabledAudioAppIds = new Set(parsed.disabledIds);
         }
+        if (Array.isArray(parsed.disabledApps)) {
+          disabledAudioAppsMap = new Map(parsed.disabledApps.map(a => [a.id, a]));
+        }
       }
     } catch (_) {}
   }
 
   function saveAudioAppsState() {
     try {
+      const disabledApps = Array.from(disabledAudioAppsMap.values());
       localStorage.setItem('hyperstream_audio_apps_config', JSON.stringify({
         mode: audioAppsFilterMode,
-        disabledIds: Array.from(disabledAudioAppIds)
+        disabledIds: Array.from(disabledAudioAppIds),
+        disabledApps
       }));
+      localStorage.setItem('hyperstream_audio_apps_filter', JSON.stringify({
+        mode: audioAppsFilterMode,
+        disabledApps
+      }));
+
+      // Notifica imediatamente o MediaManager com os apps e PIDs excluídos
+      if (media && typeof media.updateAudioAppFilter === 'function') {
+        media.updateAudioAppFilter({
+          mode: audioAppsFilterMode,
+          disabledApps
+        });
+      }
     } catch (_) {}
   }
 
@@ -1868,14 +1886,22 @@ function setupSettingsModal() {
           ? `<img src="${app.appIcon}" class="audio-app-icon" alt="" />`
           : `<svg class="icon-svg audio-app-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>`;
 
+        const pillText = app.processName ? app.processName.replace(/\.exe$/i, '') : 'Janela';
+
         item.innerHTML = `
           <div class="audio-app-info">
             ${iconHtml}
             <span class="audio-app-title" title="${escapeHtml(app.name)}">${escapeHtml(app.name)}</span>
-            <span class="audio-app-pill">Janela</span>
+            <span class="audio-app-pill">${escapeHtml(pillText)}</span>
           </div>
           <label class="toggle-switch" title="Capturar áudio deste aplicativo">
-            <input type="checkbox" class="app-audio-toggle" data-app-id="${escapeHtml(app.id)}" ${isEnabled ? 'checked' : ''} ${audioAppsFilterMode === 'all' ? 'disabled' : ''}>
+            <input type="checkbox" class="app-audio-toggle"
+              data-app-id="${escapeHtml(app.id)}"
+              data-app-name="${escapeHtml(app.name)}"
+              data-process-name="${escapeHtml(app.processName || '')}"
+              data-pid="${app.pid || ''}"
+              ${isEnabled ? 'checked' : ''}
+              ${audioAppsFilterMode === 'all' ? 'disabled' : ''}>
             <span class="toggle-slider"></span>
           </label>
         `;
@@ -1885,8 +1911,15 @@ function setupSettingsModal() {
           toggleInput.addEventListener('change', () => {
             if (toggleInput.checked) {
               disabledAudioAppIds.delete(app.id);
+              disabledAudioAppsMap.delete(app.id);
             } else {
               disabledAudioAppIds.add(app.id);
+              disabledAudioAppsMap.set(app.id, {
+                id: app.id,
+                name: app.name,
+                processName: app.processName,
+                pid: app.pid
+              });
             }
             saveAudioAppsState();
           });
@@ -1912,7 +1945,6 @@ function setupSettingsModal() {
 
   function updateAudioAppsMode(mode) {
     audioAppsFilterMode = mode;
-    saveAudioAppsState();
     const toggles = settingsAudioAppsList?.querySelectorAll('.app-audio-toggle') || [];
     toggles.forEach(toggle => {
       toggle.disabled = (mode === 'all');
@@ -1923,6 +1955,7 @@ function setupSettingsModal() {
         toggle.checked = !disabledAudioAppIds.has(id);
       }
     });
+    saveAudioAppsState();
   }
 
   if (audioModeAllApps) {
@@ -2461,6 +2494,8 @@ function setupSettingsModal() {
 
       updateBitrateBadges();
       updateAudioFilters();
+      loadSavedAudioAppsState();
+      saveAudioAppsState();
     } catch (e) {
       console.warn('[Settings] Erro ao restaurar configurações:', e);
     }

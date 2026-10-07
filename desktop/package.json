@@ -19,6 +19,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "electron": "^33.2.1"
+    "electron": "^33.2.1",
+    "loopback-capture": "^3.0.2"
   }
 }

@@ -2,8 +2,11 @@ import { app, BrowserWindow, ipcMain, desktopCapturer, shell, session } from 'el
 import path from 'node:path';
 import fs from 'node:fs';
 import https from 'node:https';
-import { spawn, exec } from 'node:child_process';
+import { spawn, exec, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import loopbackModule from 'loopback-capture';
+
+const LoopbackCapture = loopbackModule.LoopbackCapture || loopbackModule.default?.LoopbackCapture;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -262,7 +265,46 @@ ipcMain.handle('desktop:get-capture-audio', () => {
   return captureAudioEnabled;
 });
 
-// IPC: Obter aplicativos e janelas abertas no sistema para seleção no mixer de áudio
+let activeLoopback = null;
+
+function getProcessListFast() {
+  try {
+    const stdout = execSync('tasklist /fo csv', { encoding: 'utf8', timeout: 1500 });
+    const lines = stdout.trim().split(/\r?\n/);
+    const procs = [];
+    for (let i = 1; i < lines.length; i++) {
+      const m = lines[i].match(/^"([^"]*)","([^"]*)"/);
+      if (m) {
+        procs.push({ imageName: m[1], pid: parseInt(m[2], 10) });
+      }
+    }
+    return procs;
+  } catch (e) {
+    return [];
+  }
+}
+
+function findPidForAppName(name, cachedProcs) {
+  const lower = (name || '').toLowerCase();
+  const procs = cachedProcs || getProcessListFast();
+  if (lower.includes('discord')) {
+    const discordProcs = procs.filter(p => p.imageName.toLowerCase().includes('discord'));
+    if (discordProcs.length > 0) {
+      const sorted = discordProcs.sort((a, b) => a.pid - b.pid);
+      return { pid: sorted[0].pid, processName: sorted[0].imageName };
+    }
+  }
+
+  for (const p of procs) {
+    const base = p.imageName.replace(/\.exe$/i, '').toLowerCase();
+    if (base.length >= 3 && lower.includes(base)) {
+      return { pid: p.pid, processName: p.imageName };
+    }
+  }
+  return null;
+}
+
+// IPC: Obter aplicativos e janelas abertas no sistema com enriquecimento de PID para isolamento de áudio
 ipcMain.handle('desktop:get-audio-apps', async () => {
   try {
     const sources = await desktopCapturer.getSources({
@@ -270,15 +312,96 @@ ipcMain.handle('desktop:get-audio-apps', async () => {
       fetchWindowIcons: true,
       thumbnailSize: { width: 64, height: 64 }
     });
-    return sources.map(s => ({
-      id: s.id,
-      name: s.name,
-      appIcon: s.appIcon ? s.appIcon.toDataURL() : (s.thumbnail ? s.thumbnail.toDataURL() : null),
-      hasAudio: true
-    }));
+    const procs = getProcessListFast();
+    return sources.map(s => {
+      const match = findPidForAppName(s.name, procs);
+      return {
+        id: s.id,
+        name: s.name,
+        appIcon: s.appIcon ? s.appIcon.toDataURL() : (s.thumbnail ? s.thumbnail.toDataURL() : null),
+        hasAudio: true,
+        pid: match ? match.pid : null,
+        processName: match ? match.processName : null
+      };
+    });
   } catch (err) {
     console.warn('[Desktop Main] Erro ao obter lista de aplicativos de áudio:', err.message);
     return [];
+  }
+});
+
+// IPC: Inicia captura nativa de áudio do sistema com suporte a isolamento de processo (WASAPI Loopback)
+ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
+  try {
+    if (activeLoopback) {
+      try { activeLoopback.stop(); } catch (_) {}
+      activeLoopback = null;
+    }
+
+    if (!LoopbackCapture) {
+      throw new Error('Módulo LoopbackCapture nativo indisponível.');
+    }
+
+    const capture = new LoopbackCapture();
+    const mode = opts.mode || 'system';
+    let targetPid = opts.pid ? Number(opts.pid) : null;
+
+    if (!targetPid && opts.name) {
+      const found = findPidForAppName(opts.name);
+      if (found) targetPid = found.pid;
+    }
+
+    console.log(`[Desktop Main] Iniciando captura de loopback nativa: modo=${mode}, pid=${targetPid}, name=${opts.name || ''}`);
+
+    const onChunk = (chunk) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('desktop:audio-pcm-chunk', chunk);
+      }
+    };
+
+    if (mode === 'exclude' && targetPid) {
+      // includeProcessTree: false ativa WASAPI PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE (exclui Discord e subprocessos)
+      capture.start(targetPid, false, onChunk);
+    } else if (mode === 'include' && targetPid) {
+      capture.start(targetPid, true, onChunk);
+    } else {
+      capture.startSystemAudio(onChunk);
+    }
+
+    activeLoopback = capture;
+    return { success: true, mode, pid: targetPid };
+  } catch (err) {
+    console.error('[Desktop Main] Falha ao iniciar LoopbackCapture:', err);
+    // Fallback: tenta capturar áudio global do sistema
+    try {
+      const fallback = new LoopbackCapture();
+      fallback.startSystemAudio((chunk) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('desktop:audio-pcm-chunk', chunk);
+        }
+      });
+      activeLoopback = fallback;
+      return { success: true, mode: 'fallback_system' };
+    } catch (fbErr) {
+      console.error('[Desktop Main] Fallback de LoopbackCapture também falhou:', fbErr);
+      return { success: false, error: err.message };
+    }
+  }
+});
+
+// IPC: Interrompe captura nativa de áudio do sistema
+ipcMain.handle('desktop:stop-loopback-capture', async () => {
+  try {
+    if (activeLoopback) {
+      activeLoopback.stop();
+      activeLoopback = null;
+      console.log('[Desktop Main] LoopbackCapture nativo encerrado.');
+    }
+    return { success: true };
+  } catch (err) {
+    console.warn('[Desktop Main] Erro ao encerrar LoopbackCapture:', err.message);
+    activeLoopback = null;
+    return { success: false, error: err.message };
   }
 });
 
@@ -582,6 +705,13 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  if (activeLoopback) {
+    try { activeLoopback.stop(); } catch (_) {}
+    activeLoopback = null;
+  }
 });
 
 app.on('window-all-closed', () => {

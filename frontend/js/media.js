@@ -44,6 +44,23 @@ export class MediaManager {
     })();
     this.dedicatedGameAudioStream = null;
 
+    // Captura nativa seletiva por processo / WASAPI Loopback (Electron)
+    this.processAudioTrack = null;
+    this.nativePcmCleanup = null;
+    this.nativeAudioDestNode = null;
+    this.isNativePcmActive = false;
+    this.nextPcmPlayTime = 0;
+
+    // Filtro seletivo de apps carregado do localStorage
+    const savedFilter = (() => {
+      try {
+        const raw = localStorage.getItem('hyperstream_audio_apps_filter');
+        return raw ? JSON.parse(raw) : null;
+      } catch (_) { return null; }
+    })();
+    this.audioFilterMode = savedFilter?.mode || 'all';
+    this.disabledAudioApps = savedFilter?.disabledApps || [];
+
     // Configurações de qualidade de vídeo
     this.targetFps = (() => {
       try { return parseInt(localStorage.getItem('hyperstream_target_fps'), 10) || 60; } catch (_) { return 60; }
@@ -87,7 +104,19 @@ export class MediaManager {
       }
     };
 
-    if (this.captureSystemAudio) {
+    const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
+    const hasExcludedApps = this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0;
+
+    if (isDesktopApp && hasExcludedApps && this.captureSystemAudio) {
+      console.log('[MediaManager] Isolamento seletivo de áudio ativo para apps:', this.disabledAudioApps);
+      try {
+        await this.startNativePcmAudioStream();
+        displayConstraints.audio = false; // Impede Chromium de capturar mix geral com Discord
+      } catch (nativeErr) {
+        console.warn('[MediaManager] Falha ao iniciar WASAPI loopback por processo, usando áudio padrão:', nativeErr);
+        displayConstraints.audio = true;
+      }
+    } else if (this.captureSystemAudio) {
       displayConstraints.audio = true;
     }
 
@@ -408,10 +437,10 @@ export class MediaManager {
       const screenVideoTracks = this.screenStream.getVideoTracks();
       if (screenVideoTracks.length > 0) tracks.push(screenVideoTracks[0]);
 
-      // Áudio de tela (Loopback do sistema e jogos)
+      // Áudio de tela (Loopback do sistema, jogos e isolamento de processo)
       if (this.captureSystemAudio) {
-        const screenAudio = this.screenStream.getAudioTracks();
-        if (screenAudio.length > 0) tracks.push(...screenAudio);
+        const screenAudio = this.getScreenAudioTrack();
+        if (screenAudio) tracks.push(screenAudio);
       }
     }
 
@@ -438,6 +467,7 @@ export class MediaManager {
    * Interrompe a captura de tela
    */
   stopScreenCapture() {
+    this.stopNativePcmAudioStream();
     if (this.screenStream) {
       this.screenStream.getTracks().forEach(track => track.stop());
       this.screenStream = null;
@@ -507,6 +537,131 @@ export class MediaManager {
     const track = this.getScreenAudioTrack();
     if (track) {
       track.enabled = this.captureSystemAudio && !this.systemAudioMuted;
+    }
+  }
+
+  /**
+   * Inicia a captura nativa de áudio do sistema com isolamento de processo via WASAPI (Desktop)
+   */
+  async startNativePcmAudioStream() {
+    if (!window.desktopAPI || typeof window.desktopAPI.startLoopbackCapture !== 'function') {
+      return null;
+    }
+
+    this.stopNativePcmAudioStream();
+
+    const ctx = this.ensureAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
+
+    this.nativeAudioDestNode = ctx.createMediaStreamDestination();
+    this.nextPcmPlayTime = 0;
+
+    // Prioriza excluir Discord se estiver na lista de apps desmarcados
+    let targetApp = null;
+    if (Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0) {
+      targetApp = this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0];
+    }
+
+    const captureOpts = {
+      mode: 'exclude',
+      pid: targetApp?.pid || null,
+      name: targetApp?.name || targetApp?.processName || 'Discord'
+    };
+
+    console.log('[MediaManager] Solicitando LoopbackCapture nativo com:', captureOpts);
+    await window.desktopAPI.startLoopbackCapture(captureOpts);
+
+    this.nativePcmCleanup = window.desktopAPI.onAudioPcmChunk((chunk) => {
+      if (this.systemAudioMuted || !this.captureSystemAudio || !this.nativeAudioDestNode) return;
+      try {
+        const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        if (!bytes || bytes.length < 4) return;
+
+        const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+        const numFrames = int16.length / 2;
+        if (numFrames <= 0) return;
+
+        const audioBuf = ctx.createBuffer(2, numFrames, 48000);
+        const leftChannel = audioBuf.getChannelData(0);
+        const rightChannel = audioBuf.getChannelData(1);
+
+        for (let i = 0; i < numFrames; i++) {
+          leftChannel[i] = int16[i * 2] / 32768.0;
+          rightChannel[i] = int16[i * 2 + 1] / 32768.0;
+        }
+
+        const sourceNode = ctx.createBufferSource();
+        sourceNode.buffer = audioBuf;
+        sourceNode.connect(this.nativeAudioDestNode);
+
+        const now = ctx.currentTime;
+        if (this.nextPcmPlayTime < now) {
+          this.nextPcmPlayTime = now + 0.02;
+        } else if (this.nextPcmPlayTime > now + 0.25) {
+          this.nextPcmPlayTime = now + 0.04;
+        }
+
+        sourceNode.start(this.nextPcmPlayTime);
+        this.nextPcmPlayTime += audioBuf.duration;
+      } catch (err) {
+        console.warn('[MediaManager] Erro ao agendar PCM nativo:', err);
+      }
+    });
+
+    const tracks = this.nativeAudioDestNode.stream.getAudioTracks();
+    if (tracks.length > 0) {
+      this.processAudioTrack = tracks[0];
+      this.processAudioTrack.enabled = !this.systemAudioMuted;
+      this.isNativePcmActive = true;
+      console.log('[MediaManager] Pipeline nativo de áudio WASAPI configurado com sucesso!');
+    }
+
+    return this.processAudioTrack;
+  }
+
+  /**
+   * Encerra a captura nativa de áudio do sistema
+   */
+  stopNativePcmAudioStream() {
+    if (this.nativePcmCleanup) {
+      this.nativePcmCleanup();
+      this.nativePcmCleanup = null;
+    }
+    if (window.desktopAPI && typeof window.desktopAPI.stopLoopbackCapture === 'function') {
+      window.desktopAPI.stopLoopbackCapture().catch(() => {});
+    }
+    if (this.processAudioTrack) {
+      this.processAudioTrack.stop();
+      this.processAudioTrack = null;
+    }
+    this.nativeAudioDestNode = null;
+    this.isNativePcmActive = false;
+    this.nextPcmPlayTime = 0;
+  }
+
+  /**
+   * Atualiza configurações de filtro seletivo de aplicativos
+   */
+  async updateAudioAppFilter({ mode, disabledApps }) {
+    this.audioFilterMode = mode || 'all';
+    this.disabledAudioApps = disabledApps || [];
+    console.log(`[MediaManager] Filtro de aplicativos atualizado: modo=${this.audioFilterMode}, desativados=${this.disabledAudioApps.length}`);
+
+    // Se estiver transmitindo tela ao vivo, reaplica dinamicamente
+    if (this.screenStream && this.screenStream.active) {
+      const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
+      const hasExcludedApps = this.audioFilterMode === 'selective' && this.disabledAudioApps.length > 0;
+
+      if (isDesktopApp && hasExcludedApps && this.captureSystemAudio) {
+        await this.startNativePcmAudioStream();
+      } else {
+        this.stopNativePcmAudioStream();
+      }
+
+      this.setupSystemAudioAnalyser();
+      this.buildCombinedStream();
     }
   }
 
@@ -845,6 +1000,9 @@ export class MediaManager {
       const dedicatedTrack = this.getDedicatedGameAudioTrack();
       if (dedicatedTrack && dedicatedTrack.readyState === 'live') return dedicatedTrack;
     }
+    if (this.processAudioTrack && this.processAudioTrack.readyState === 'live') {
+      return this.processAudioTrack;
+    }
     if (!this.screenStream) return null;
     const tracks = this.screenStream.getAudioTracks();
     return tracks.length > 0 ? tracks[0] : null;
@@ -858,8 +1016,9 @@ export class MediaManager {
 
   getAudioTracks() {
     const tracks = [];
-    if (this.screenStream) {
-      tracks.push(...this.screenStream.getAudioTracks());
+    const screenAudio = this.getScreenAudioTrack();
+    if (screenAudio) {
+      tracks.push(screenAudio);
     }
     if (this.cameraStream) {
       tracks.push(...this.cameraStream.getAudioTracks());

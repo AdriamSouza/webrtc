@@ -48,6 +48,7 @@ export class MediaManager {
     this.processAudioTrack = null;
     this.nativePcmCleanup = null;
     this.nativeAudioDestNode = null;
+    this.nativeAudioMixerNode = null;
     this.isNativePcmActive = false;
     this.nextPcmPlayTime = 0;
 
@@ -104,8 +105,18 @@ export class MediaManager {
       }
     };
 
+    // Recarrega filtros salvos do localStorage para garantir sincronismo com o painel de configurações
+    try {
+      const raw = localStorage.getItem('hyperstream_audio_apps_filter');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.mode) this.audioFilterMode = parsed.mode;
+        if (Array.isArray(parsed.disabledApps)) this.disabledAudioApps = parsed.disabledApps;
+      }
+    } catch (_) {}
+
     const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
-    const hasExcludedApps = this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0;
+    const hasExcludedApps = (this.audioFilterMode === 'selective' || (Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0)) && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0;
 
     if (isDesktopApp && hasExcludedApps && this.captureSystemAudio) {
       console.log('[MediaManager] Isolamento seletivo de áudio ativo para apps:', this.disabledAudioApps);
@@ -144,6 +155,14 @@ export class MediaManager {
     }
 
     this.screenStream = stream;
+
+    // Se o áudio nativo filtrado estiver ativo, cancela qualquer track de áudio residual anexado pelo Chromium
+    if (this.isNativePcmActive && this.screenStream) {
+      this.screenStream.getAudioTracks().forEach(t => {
+        t.enabled = false;
+        t.stop();
+      });
+    }
 
     // Configura track de vídeo com taxa de quadros e resolução ajustadas downstream
     const videoTracks = this.screenStream.getVideoTracks();
@@ -556,6 +575,8 @@ export class MediaManager {
     }
 
     this.nativeAudioDestNode = ctx.createMediaStreamDestination();
+    this.nativeAudioMixerNode = ctx.createGain();
+    this.nativeAudioMixerNode.connect(this.nativeAudioDestNode);
     this.nextPcmPlayTime = 0;
 
     // Prioriza excluir Discord se estiver na lista de apps desmarcados
@@ -567,14 +588,15 @@ export class MediaManager {
     const captureOpts = {
       mode: 'exclude',
       pid: targetApp?.pid || null,
-      name: targetApp?.name || targetApp?.processName || 'Discord'
+      name: targetApp?.name || targetApp?.processName || 'Discord',
+      processName: targetApp?.processName || 'Discord.exe'
     };
 
     console.log('[MediaManager] Solicitando LoopbackCapture nativo com:', captureOpts);
     await window.desktopAPI.startLoopbackCapture(captureOpts);
 
     this.nativePcmCleanup = window.desktopAPI.onAudioPcmChunk((chunk) => {
-      if (this.systemAudioMuted || !this.captureSystemAudio || !this.nativeAudioDestNode) return;
+      if (this.systemAudioMuted || !this.captureSystemAudio || !this.nativeAudioMixerNode) return;
       try {
         const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
         if (!bytes || bytes.length < 4) return;
@@ -594,7 +616,7 @@ export class MediaManager {
 
         const sourceNode = ctx.createBufferSource();
         sourceNode.buffer = audioBuf;
-        sourceNode.connect(this.nativeAudioDestNode);
+        sourceNode.connect(this.nativeAudioMixerNode);
 
         const now = ctx.currentTime;
         if (this.nextPcmPlayTime < now) {
@@ -616,6 +638,7 @@ export class MediaManager {
       this.processAudioTrack.enabled = !this.systemAudioMuted;
       this.isNativePcmActive = true;
       console.log('[MediaManager] Pipeline nativo de áudio WASAPI configurado com sucesso!');
+      this.setupSystemAudioAnalyser();
     }
 
     return this.processAudioTrack;
@@ -636,6 +659,10 @@ export class MediaManager {
       this.processAudioTrack.stop();
       this.processAudioTrack = null;
     }
+    if (this.nativeAudioMixerNode) {
+      try { this.nativeAudioMixerNode.disconnect(); } catch (_) {}
+      this.nativeAudioMixerNode = null;
+    }
     this.nativeAudioDestNode = null;
     this.isNativePcmActive = false;
     this.nextPcmPlayTime = 0;
@@ -652,9 +679,14 @@ export class MediaManager {
     // Se estiver transmitindo tela ao vivo, reaplica dinamicamente
     if (this.screenStream && this.screenStream.active) {
       const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
-      const hasExcludedApps = this.audioFilterMode === 'selective' && this.disabledAudioApps.length > 0;
+      const hasExcludedApps = (this.audioFilterMode === 'selective' || this.disabledAudioApps.length > 0) && this.disabledAudioApps.length > 0;
 
       if (isDesktopApp && hasExcludedApps && this.captureSystemAudio) {
+        // Desativa faixas de áudio residuais do Chromium para que apenas o loopback WASAPI filtrado seja ouvido
+        this.screenStream.getAudioTracks().forEach(t => {
+          t.enabled = false;
+          t.stop();
+        });
         await this.startNativePcmAudioStream();
       } else {
         this.stopNativePcmAudioStream();
@@ -760,11 +792,6 @@ export class MediaManager {
   }
 
   setupSystemAudioAnalyser() {
-    const track = this.getScreenAudioTrack();
-    if (!track) {
-      this.teardownSystemAudioAnalyser();
-      return;
-    }
     try {
       const ctx = this.ensureAudioContext();
       if (!ctx) return;
@@ -774,23 +801,34 @@ export class MediaManager {
 
       this.teardownSystemAudioAnalyser();
 
-      const stream = new MediaStream([track]);
-      const source = ctx.createMediaStreamSource(stream);
       this.systemAnalyser = ctx.createAnalyser();
       this.systemAnalyser.fftSize = 128;
       this.systemAnalyser.smoothingTimeConstant = 0.2;
       this.systemDataArray = new Uint8Array(this.systemAnalyser.frequencyBinCount);
-      source.connect(this.systemAnalyser);
 
-      // Conexão inaudível (0.00001) para forçar o Chromium a processar continuamente os buffers sem eco
-      const dummyGain = ctx.createGain();
-      dummyGain.gain.setValueAtTime(0.00001, ctx.currentTime);
-      this.systemAnalyser.connect(dummyGain);
-      dummyGain.connect(ctx.destination);
+      if (this.isNativePcmActive && this.nativeAudioMixerNode) {
+        // Conexão direta e pura do áudio WASAPI filtrado ao analisador de VU meter (zero Discord)
+        this.nativeAudioMixerNode.connect(this.systemAnalyser);
+      } else {
+        const track = this.getScreenAudioTrack();
+        if (!track) {
+          this.teardownSystemAudioAnalyser();
+          return;
+        }
+        const stream = new MediaStream([track]);
+        const source = ctx.createMediaStreamSource(stream);
+        source.connect(this.systemAnalyser);
 
-      track.onunmute = () => {
-        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      };
+        // Conexão inaudível (0.00001) para forçar o Chromium a processar continuamente os buffers sem eco
+        const dummyGain = ctx.createGain();
+        dummyGain.gain.setValueAtTime(0.00001, ctx.currentTime);
+        this.systemAnalyser.connect(dummyGain);
+        dummyGain.connect(ctx.destination);
+
+        track.onunmute = () => {
+          if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        };
+      }
     } catch (e) {
       console.warn('[MediaManager] Falha ao configurar analisador de áudio do sistema:', e);
     }

@@ -284,21 +284,32 @@ function getProcessListFast() {
   }
 }
 
+function getProcessRootPid(imageName) {
+  try {
+    const cmd = `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \\"Name = '${imageName}' and not CommandLine like '%--type=%'\\" | Select-Object -ExpandProperty ProcessId"`;
+    const res = execSync(cmd, { encoding: 'utf8', timeout: 2000 }).trim();
+    const pid = parseInt(res, 10);
+    if (!isNaN(pid) && pid > 0) return pid;
+  } catch (_) {}
+  return null;
+}
+
 function findPidForAppName(name, cachedProcs) {
   const lower = (name || '').toLowerCase();
-  const procs = cachedProcs || getProcessListFast();
+  
   if (lower.includes('discord')) {
-    const discordProcs = procs.filter(p => p.imageName.toLowerCase().includes('discord'));
-    if (discordProcs.length > 0) {
-      const sorted = discordProcs.sort((a, b) => a.pid - b.pid);
-      return { pid: sorted[0].pid, processName: sorted[0].imageName };
+    const rootPid = getProcessRootPid('Discord.exe');
+    if (rootPid) {
+      return { pid: rootPid, processName: 'Discord.exe' };
     }
   }
 
+  const procs = cachedProcs || getProcessListFast();
   for (const p of procs) {
     const base = p.imageName.replace(/\.exe$/i, '').toLowerCase();
     if (base.length >= 3 && lower.includes(base)) {
-      return { pid: p.pid, processName: p.imageName };
+      const rootPid = getProcessRootPid(p.imageName) || p.pid;
+      return { pid: rootPid, processName: p.imageName };
     }
   }
   return null;
@@ -346,12 +357,17 @@ ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
     const mode = opts.mode || 'system';
     let targetPid = opts.pid ? Number(opts.pid) : null;
 
-    if (!targetPid && opts.name) {
+    // Se for Discord, busca SEMPRE o processo raiz principal (PID sem --type=) para excluir toda a árvore (inclusive áudio e chamadas de voz)
+    const lowerName = `${opts.name || ''} ${opts.processName || ''}`.toLowerCase();
+    if (lowerName.includes('discord')) {
+      const discordRootPid = getProcessRootPid('Discord.exe');
+      if (discordRootPid) targetPid = discordRootPid;
+    } else if (!targetPid && opts.name) {
       const found = findPidForAppName(opts.name);
       if (found) targetPid = found.pid;
     }
 
-    console.log(`[Desktop Main] Iniciando captura de loopback nativa: modo=${mode}, pid=${targetPid}, name=${opts.name || ''}`);
+    console.log(`[Desktop Main] Iniciando captura de loopback nativa: modo=${mode}, pid=${targetPid}, name=${opts.name || opts.processName || ''}`);
 
     const onChunk = (chunk) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -360,7 +376,7 @@ ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
     };
 
     if (mode === 'exclude' && targetPid) {
-      // includeProcessTree: false ativa WASAPI PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE (exclui Discord e subprocessos)
+      // includeProcessTree: false ativa WASAPI PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE (exclui Discord e todos os subprocessos de voz)
       capture.start(targetPid, false, onChunk);
     } else if (mode === 'include' && targetPid) {
       capture.start(targetPid, true, onChunk);
@@ -683,9 +699,11 @@ app.whenReady().then(() => {
       if (chosen) {
         console.log('[Desktop Main] Transmitindo fonte:', chosen.name, 'id:', chosen.id);
         const streamOpts = { video: chosen };
-        if (captureAudioEnabled && (request.audioRequested || request.audioRequested === undefined)) {
+        if (captureAudioEnabled && request.audioRequested === true) {
           streamOpts.audio = 'loopback';
           console.log('[Desktop Main] Loopback de áudio do sistema ativado na captura.');
+        } else {
+          console.log('[Desktop Main] Captura sem loopback geral do Chromium (isolamento de processo ativo ou sem áudio).');
         }
         callback(streamOpts);
       } else {

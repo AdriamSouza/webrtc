@@ -1820,6 +1820,11 @@ function setupSettingsModal() {
   function saveAudioAppsState() {
     try {
       const disabledApps = Array.from(disabledAudioAppsMap.values());
+      if (disabledApps.length > 0) {
+        audioAppsFilterMode = 'selective';
+        if (audioModeSelectiveApps) audioModeSelectiveApps.checked = true;
+        if (audioModeAllApps) audioModeAllApps.checked = false;
+      }
       localStorage.setItem('hyperstream_audio_apps_config', JSON.stringify({
         mode: audioAppsFilterMode,
         disabledIds: Array.from(disabledAudioAppIds),
@@ -1835,6 +1840,12 @@ function setupSettingsModal() {
         media.updateAudioAppFilter({
           mode: audioAppsFilterMode,
           disabledApps
+        }).then(() => {
+          // Atualiza em tempo real as conexões WebRTC ativas com a nova faixa filtrada
+          if (webrtc && typeof webrtc.syncLocalMedia === 'function' && Array.isArray(state?.roomParticipants)) {
+            const otherIds = state.roomParticipants.filter(p => p.id !== state.user?.id).map(p => p.id);
+            webrtc.syncLocalMedia(media, otherIds);
+          }
         });
       }
     } catch (_) {}
@@ -1880,7 +1891,7 @@ function setupSettingsModal() {
         const item = document.createElement('div');
         item.className = 'audio-app-item';
 
-        const isEnabled = audioAppsFilterMode === 'all' || !disabledAudioAppIds.has(app.id);
+        const isEnabled = !disabledAudioAppIds.has(app.id);
 
         const iconHtml = app.appIcon
           ? `<img src="${app.appIcon}" class="audio-app-icon" alt="" />`
@@ -1900,8 +1911,7 @@ function setupSettingsModal() {
               data-app-name="${escapeHtml(app.name)}"
               data-process-name="${escapeHtml(app.processName || '')}"
               data-pid="${app.pid || ''}"
-              ${isEnabled ? 'checked' : ''}
-              ${audioAppsFilterMode === 'all' ? 'disabled' : ''}>
+              ${isEnabled ? 'checked' : ''}>
             <span class="toggle-slider"></span>
           </label>
         `;
@@ -1920,6 +1930,9 @@ function setupSettingsModal() {
                 processName: app.processName,
                 pid: app.pid
               });
+              audioAppsFilterMode = 'selective';
+              if (audioModeSelectiveApps) audioModeSelectiveApps.checked = true;
+              if (audioModeAllApps) audioModeAllApps.checked = false;
             }
             saveAudioAppsState();
           });
@@ -1945,9 +1958,12 @@ function setupSettingsModal() {
 
   function updateAudioAppsMode(mode) {
     audioAppsFilterMode = mode;
+    if (mode === 'all') {
+      disabledAudioAppIds.clear();
+      disabledAudioAppsMap.clear();
+    }
     const toggles = settingsAudioAppsList?.querySelectorAll('.app-audio-toggle') || [];
     toggles.forEach(toggle => {
-      toggle.disabled = (mode === 'all');
       if (mode === 'all') {
         toggle.checked = true;
       } else {

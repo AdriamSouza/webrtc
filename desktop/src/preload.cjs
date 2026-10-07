@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   setCaptureAudio: (enabled) => ipcRenderer.invoke('desktop:set-capture-audio', enabled),
   getCaptureAudio: () => ipcRenderer.invoke('desktop:get-capture-audio'),
   getAudioApplications: () => ipcRenderer.invoke('desktop:get-audio-apps'),
+  onAudioAppsUpdated: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('desktop:audio-apps-updated', listener);
+    return () => ipcRenderer.removeListener('desktop:audio-apps-updated', listener);
+  },
 
   // Captura seletiva de áudio nativo por processo / WASAPI Loopback
   startLoopbackCapture: (opts) => ipcRenderer.invoke('desktop:start-loopback-capture', opts),

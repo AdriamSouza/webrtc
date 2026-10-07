@@ -833,7 +833,7 @@
                   <circle cx="6" cy="18" r="3"/>
                   <circle cx="18" cy="16" r="3"/>
                 </svg>
-                <span>Aplicativos e Janelas Detectados no PC</span>
+                <span>Mixer de Áudio do Windows (Sons Ativos)</span>
               </div>
               <div class="audio-apps-mode-selector">
                 <label class="radio-label">
@@ -844,7 +844,7 @@
                   <input type="radio" name="audioAppsMode" id="audioModeSelectiveApps" value="selective">
                   <span>Selecionar Apps</span>
                 </label>
-                <button type="button" id="btnRefreshAudioApps" class="btn btn-secondary btn-sm" title="Atualizar lista de aplicativos abertos" style="padding: 4px 10px; margin-left: 6px;">
+                <button type="button" id="btnRefreshAudioApps" class="btn btn-secondary btn-sm" title="Atualizar sessões de áudio do mixer" style="padding: 4px 10px; margin-left: 6px;">
                   <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="23 4 23 10 17 10"/>
                     <polyline points="1 20 1 14 7 14"/>
@@ -856,13 +856,13 @@
             </div>
 
             <div class="audio-apps-description">
-              Defina quais programas e janelas têm seu áudio capturado na transmissão. Ative ou desative o botão para cada aplicativo individualmente.
+              Detecta diretamente os programas com sessões de áudio e som ativo no Mixer do Windows (jogos, Discord, Spotify, reprodutores, navegadores). Janelas sem áudio como o explorador de arquivos são ignoradas automaticamente.
             </div>
 
             <div id="settingsAudioAppsList" class="audio-apps-list">
               <!-- Renderizado dinamicamente via JS com ícones, títulos e botões toggle-switch -->
               <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; justify-content: center;">
-                <span>Carregando aplicativos abertos no Windows...</span>
+                <span>Consultando Mixer de Áudio do Windows...</span>
               </div>
             </div>
           </div>

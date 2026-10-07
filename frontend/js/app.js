@@ -1817,6 +1817,115 @@ function setupSettingsModal() {
     } catch (_) {}
   }
 
+  let cachedAudioApps = null;
+
+  function renderAudioAppsList(apps) {
+    if (!settingsAudioAppsList) return;
+
+    const list = Array.isArray(apps) ? [...apps] : [];
+
+    // Mantém aplicativos desativados pelo usuário visíveis na lista mesmo se pausarem o som momentaneamente
+    const displayedAppIds = new Set(list.map(a => a.id));
+    disabledAudioAppsMap.forEach((disabledApp, appId) => {
+      if (!displayedAppIds.has(appId)) {
+        list.push({
+          id: appId,
+          name: disabledApp.name || appId,
+          processName: disabledApp.processName || appId,
+          pid: disabledApp.pid || 0,
+          rootPid: disabledApp.rootPid || disabledApp.pid || 0,
+          windowTitle: '',
+          state: 0,
+          peak: 0,
+          hasAudio: true,
+          isActiveAudio: false,
+          isSilentOrPaused: true,
+          appIcon: null
+        });
+      }
+    });
+
+    if (list.length === 0) {
+      settingsAudioAppsList.innerHTML = `
+        <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; justify-content: center;">
+          <span>Nenhum aplicativo com sessão de áudio detectado no momento. Abra seu jogo, música ou Discord e clique em Recarregar.</span>
+        </div>
+      `;
+      return;
+    }
+
+    settingsAudioAppsList.innerHTML = '';
+    list.forEach(app => {
+      const item = document.createElement('div');
+      item.className = 'audio-app-item';
+
+      const isEnabled = !disabledAudioAppIds.has(app.id);
+
+      const iconHtml = app.appIcon
+        ? `<img src="${app.appIcon}" class="audio-app-icon" alt="" />`
+        : `<svg class="icon-svg audio-app-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+
+      let statusBadge = '';
+      if (!isEnabled) {
+        statusBadge = `<span class="audio-app-pill" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="Captura de áudio desativada para este aplicativo">🔇 Desmarcado</span>`;
+      } else if (app.isActiveAudio) {
+        statusBadge = `<span class="audio-app-pill active" title="Emitindo som ativo no Windows neste momento">🔊 Som Ativo</span>`;
+      } else {
+        statusBadge = `<span class="audio-app-pill idle" title="Sessão aberta no mixer de áudio">Mixer</span>`;
+      }
+
+      const pillText = app.processName ? app.processName.replace(/\.exe$/i, '') : 'App';
+      const hasSubTitle = app.windowTitle && app.windowTitle.trim() !== '' && app.windowTitle !== app.name;
+
+      item.innerHTML = `
+        <div class="audio-app-info">
+          ${iconHtml}
+          <div style="display: flex; flex-direction: column; min-width: 0; overflow: hidden;">
+            <span class="audio-app-title" title="${escapeHtml(app.name)}">${escapeHtml(app.name)}</span>
+            ${hasSubTitle ? `<span style="font-size: 0.72rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(app.windowTitle)}">${escapeHtml(app.windowTitle)}</span>` : ''}
+          </div>
+          ${statusBadge}
+          <span class="audio-app-pill" style="opacity: 0.85; font-size: 0.7rem;">${escapeHtml(pillText)}</span>
+        </div>
+        <label class="toggle-switch" title="Capturar áudio deste aplicativo">
+          <input type="checkbox" class="app-audio-toggle"
+            data-app-id="${escapeHtml(app.id)}"
+            data-app-name="${escapeHtml(app.name)}"
+            data-process-name="${escapeHtml(app.processName || '')}"
+            data-pid="${app.pid || ''}"
+            data-root-pid="${app.rootPid || app.pid || ''}"
+            ${isEnabled ? 'checked' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+      `;
+
+      const toggleInput = item.querySelector('.app-audio-toggle');
+      if (toggleInput) {
+        toggleInput.addEventListener('change', () => {
+          if (toggleInput.checked) {
+            disabledAudioAppIds.delete(app.id);
+            disabledAudioAppsMap.delete(app.id);
+          } else {
+            disabledAudioAppIds.add(app.id);
+            disabledAudioAppsMap.set(app.id, {
+              id: app.id,
+              name: app.name,
+              processName: app.processName,
+              pid: app.pid,
+              rootPid: app.rootPid || app.pid
+            });
+            audioAppsFilterMode = 'selective';
+            if (audioModeSelectiveApps) audioModeSelectiveApps.checked = true;
+            if (audioModeAllApps) audioModeAllApps.checked = false;
+          }
+          saveAudioAppsState();
+        });
+      }
+
+      settingsAudioAppsList.appendChild(item);
+    });
+  }
+
   function saveAudioAppsState() {
     try {
       const disabledApps = Array.from(disabledAudioAppsMap.values());
@@ -1824,6 +1933,10 @@ function setupSettingsModal() {
         audioAppsFilterMode = 'selective';
         if (audioModeSelectiveApps) audioModeSelectiveApps.checked = true;
         if (audioModeAllApps) audioModeAllApps.checked = false;
+      } else {
+        audioAppsFilterMode = 'all';
+        if (audioModeAllApps) audioModeAllApps.checked = true;
+        if (audioModeSelectiveApps) audioModeSelectiveApps.checked = false;
       }
       localStorage.setItem('hyperstream_audio_apps_config', JSON.stringify({
         mode: audioAppsFilterMode,
@@ -1842,8 +1955,10 @@ function setupSettingsModal() {
           disabledApps
         }).then(() => {
           // Atualiza em tempo real as conexões WebRTC ativas com a nova faixa filtrada
-          if (webrtc && typeof webrtc.syncLocalMedia === 'function' && Array.isArray(state?.roomParticipants)) {
-            const otherIds = state.roomParticipants.filter(p => p.id !== state.user?.id).map(p => p.id);
+          if (webrtc && typeof webrtc.syncLocalMedia === 'function' && roomState) {
+            const otherIds = typeof roomState.getOtherParticipantIds === 'function'
+              ? roomState.getOtherParticipantIds()
+              : [];
             webrtc.syncLocalMedia(media, otherIds);
           }
         });
@@ -1863,91 +1978,45 @@ function setupSettingsModal() {
     if (!window.desktopAPI || !window.desktopAPI.getAudioApplications) {
       settingsAudioAppsList.innerHTML = `
         <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; padding: 12px 14px;">
-          <span>No app Desktop do Hyperstream, todas as janelas abertas e jogos aparecem aqui com chaves seletivas de áudio individuais. Na versão web, o som é transmitido diretamente pelo compartilhamento de tela.</span>
+          <span>No app Desktop do Hyperstream, os aplicativos com áudio no mixer do Windows aparecem aqui com chaves seletivas. Na versão web, o áudio é transmitido pelo compartilhamento de tela.</span>
         </div>
       `;
       return;
     }
 
-    settingsAudioAppsList.innerHTML = `
-      <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; justify-content: center;">
-        <span>Detectando janelas e jogos abertos no Windows...</span>
-      </div>
-    `;
+    // Se já temos cache recente em memória, renderiza instantaneamente
+    if (Array.isArray(cachedAudioApps) && cachedAudioApps.length > 0) {
+      renderAudioAppsList(cachedAudioApps);
+    }
 
     try {
+      // Retorna em 0ms a partir do cache do processo principal
       const apps = await window.desktopAPI.getAudioApplications();
-      if (!apps || apps.length === 0) {
-        settingsAudioAppsList.innerHTML = `
-          <div class="audio-app-item" style="color: #94a3b8; font-size: 0.82rem; justify-content: center;">
-            <span>Nenhuma janela aberta detectada no momento. Abra seu jogo ou navegador e clique em Recarregar.</span>
-          </div>
-        `;
-        return;
-      }
-
-      settingsAudioAppsList.innerHTML = '';
-      apps.forEach(app => {
-        const item = document.createElement('div');
-        item.className = 'audio-app-item';
-
-        const isEnabled = !disabledAudioAppIds.has(app.id);
-
-        const iconHtml = app.appIcon
-          ? `<img src="${app.appIcon}" class="audio-app-icon" alt="" />`
-          : `<svg class="icon-svg audio-app-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>`;
-
-        const pillText = app.processName ? app.processName.replace(/\.exe$/i, '') : 'Janela';
-
-        item.innerHTML = `
-          <div class="audio-app-info">
-            ${iconHtml}
-            <span class="audio-app-title" title="${escapeHtml(app.name)}">${escapeHtml(app.name)}</span>
-            <span class="audio-app-pill">${escapeHtml(pillText)}</span>
-          </div>
-          <label class="toggle-switch" title="Capturar áudio deste aplicativo">
-            <input type="checkbox" class="app-audio-toggle"
-              data-app-id="${escapeHtml(app.id)}"
-              data-app-name="${escapeHtml(app.name)}"
-              data-process-name="${escapeHtml(app.processName || '')}"
-              data-pid="${app.pid || ''}"
-              ${isEnabled ? 'checked' : ''}>
-            <span class="toggle-slider"></span>
-          </label>
-        `;
-
-        const toggleInput = item.querySelector('.app-audio-toggle');
-        if (toggleInput) {
-          toggleInput.addEventListener('change', () => {
-            if (toggleInput.checked) {
-              disabledAudioAppIds.delete(app.id);
-              disabledAudioAppsMap.delete(app.id);
-            } else {
-              disabledAudioAppIds.add(app.id);
-              disabledAudioAppsMap.set(app.id, {
-                id: app.id,
-                name: app.name,
-                processName: app.processName,
-                pid: app.pid
-              });
-              audioAppsFilterMode = 'selective';
-              if (audioModeSelectiveApps) audioModeSelectiveApps.checked = true;
-              if (audioModeAllApps) audioModeAllApps.checked = false;
-            }
-            saveAudioAppsState();
-          });
-        }
-
-        settingsAudioAppsList.appendChild(item);
-      });
+      cachedAudioApps = apps || [];
+      renderAudioAppsList(cachedAudioApps);
     } catch (err) {
       console.warn('[Settings] Erro ao carregar aplicativos de áudio:', err);
-      settingsAudioAppsList.innerHTML = `
-        <div class="audio-app-item" style="color: #ef4444; font-size: 0.82rem; justify-content: center;">
-          <span>Falha ao listar janelas: ${escapeHtml(err.message)}</span>
-        </div>
-      `;
+      if (!cachedAudioApps) {
+        settingsAudioAppsList.innerHTML = `
+          <div class="audio-app-item" style="color: #ef4444; font-size: 0.82rem; justify-content: center;">
+            <span>Falha ao consultar mixer: ${escapeHtml(err.message)}</span>
+          </div>
+        `;
+      }
     }
+  }
+
+  // Ouvinte de atualizações automáticas em segundo plano vindas do Electron Main
+  if (window.desktopAPI && typeof window.desktopAPI.onAudioAppsUpdated === 'function') {
+    window.desktopAPI.onAudioAppsUpdated((apps) => {
+      cachedAudioApps = apps || [];
+      if (settingsModal && !settingsModal.classList.contains('hidden')) {
+        const activeTabBtn = settingsModal.querySelector('.settings-tab-btn.active');
+        if (activeTabBtn && activeTabBtn.dataset.tab === 'audio') {
+          renderAudioAppsList(cachedAudioApps);
+        }
+      }
+    });
   }
 
   if (btnRefreshAudioApps) {
@@ -2041,8 +2110,6 @@ function setupSettingsModal() {
   function openSettings(initialTab = 'video') {
     switchSettingsTab(initialTab);
     settingsModal.classList.remove('hidden');
-    refreshMicrophoneList();
-    loadAudioAppsInSettings();
     refreshCodecsList();
     checkAppVersion();
     startVuMeterLoop();
@@ -2205,11 +2272,17 @@ function setupSettingsModal() {
 
   if (settingCaptureSystemAudio) {
     settingCaptureSystemAudio.checked = media.captureSystemAudio;
-    settingCaptureSystemAudio.addEventListener('change', () => {
+    settingCaptureSystemAudio.addEventListener('change', async () => {
       const enabled = settingCaptureSystemAudio.checked;
-      media.setCaptureSystemAudio(enabled);
+      await media.setCaptureSystemAudio(enabled);
       if (window.desktopAPI && window.desktopAPI.setCaptureAudio) {
         window.desktopAPI.setCaptureAudio(enabled);
+      }
+      if (webrtc && typeof webrtc.syncLocalMedia === 'function' && roomState) {
+        const otherIds = typeof roomState.getOtherParticipantIds === 'function'
+          ? roomState.getOtherParticipantIds()
+          : [];
+        await webrtc.syncLocalMedia(media, otherIds);
       }
       saveSettingsState();
     });

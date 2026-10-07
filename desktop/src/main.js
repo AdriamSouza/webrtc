@@ -2,7 +2,8 @@ import { app, BrowserWindow, ipcMain, desktopCapturer, shell, session } from 'el
 import path from 'node:path';
 import fs from 'node:fs';
 import https from 'node:https';
-import { spawn, exec, execSync } from 'node:child_process';
+import { spawn, exec, execSync, execFile } from 'node:child_process';
+import util from 'node:util';
 import { fileURLToPath } from 'node:url';
 import loopbackModule from 'loopback-capture';
 
@@ -178,6 +179,9 @@ function createWindow() {
     shell.openExternal(url);
     return { action: 'deny' };
   });
+
+  // Inicia monitoramento de sessões do Mixer de Áudio em segundo plano com baixo impacto
+  startBackgroundAudioQueryLoop();
 }
 
 // IPC: Retorna lista de telas e janelas ativas com thumbnails para seleção WGC
@@ -315,30 +319,157 @@ function findPidForAppName(name, cachedProcs) {
   return null;
 }
 
-// IPC: Obter aplicativos e janelas abertas no sistema com enriquecimento de PID para isolamento de áudio
-ipcMain.handle('desktop:get-audio-apps', async () => {
+const execFileAsync = util.promisify(execFile);
+
+function getAudioHelperExePath() {
+  const candidatePaths = [
+    path.join(__dirname, '..', 'bin', 'AudioSessionHelper.exe'),
+    path.join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'bin', 'AudioSessionHelper.exe'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'bin', 'AudioSessionHelper.exe'),
+    path.join(process.resourcesPath || '', 'bin', 'AudioSessionHelper.exe'),
+    path.join(app.getAppPath(), 'bin', 'AudioSessionHelper.exe'),
+    path.join(app.getPath('userData'), 'AudioSessionHelper.exe')
+  ];
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  // Se não encontrou binário pré-compilado, compila na hora via csc.exe do .NET nativo do Windows
+  const csCandidates = [
+    path.join(__dirname, '..', 'bin', 'AudioSessionHelper.cs'),
+    path.join(app.getAppPath(), 'bin', 'AudioSessionHelper.cs'),
+    path.join(process.resourcesPath || '', 'bin', 'AudioSessionHelper.cs')
+  ];
+  const csFile = csCandidates.find(p => fs.existsSync(p));
+  if (csFile) {
+    const cscCompiler = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
+    const targetExe = path.join(app.getPath('userData'), 'AudioSessionHelper.exe');
+    if (fs.existsSync(cscCompiler)) {
+      try {
+        console.log('[Desktop Main] Compilando AudioSessionHelper nativo via csc.exe...');
+        execSync(`"${cscCompiler}" /target:exe /optimize+ /out:"${targetExe}" "${csFile}"`, { timeout: 8000 });
+        if (fs.existsSync(targetExe)) {
+          return targetExe;
+        }
+      } catch (err) {
+        console.warn('[Desktop Main] Falha ao compilar AudioSessionHelper via csc.exe:', err.message);
+      }
+    }
+  }
+
+  return candidatePaths[0];
+}
+
+const iconCache = new Map();
+let cachedMixerApps = [];
+let isQueryingMixer = false;
+let mixerQueryTimer = null;
+
+// Busca sessões de áudio do Windows Mixer em segundo plano sem travar a interface
+async function queryMixerAppsInBackground() {
+  if (isQueryingMixer) return cachedMixerApps;
+  isQueryingMixer = true;
+
   try {
-    const sources = await desktopCapturer.getSources({
-      types: ['window'],
-      fetchWindowIcons: true,
-      thumbnailSize: { width: 64, height: 64 }
+    const helperExe = getAudioHelperExePath();
+    if (!fs.existsSync(helperExe)) {
+      return cachedMixerApps;
+    }
+
+    // Executa helper passando o PID do Hyperstream para exclusão automática
+    const { stdout } = await execFileAsync(helperExe, [String(process.pid)], {
+      encoding: 'utf8',
+      timeout: 3000
     });
-    const procs = getProcessListFast();
-    return sources.map(s => {
-      const match = findPidForAppName(s.name, procs);
+
+    const parsed = JSON.parse(stdout.trim() || '[]');
+
+    // Pré-busca concorrente de ícones que ainda não estão no cache (cada ícone só é lido uma vez)
+    await Promise.all(parsed.map(async (item) => {
+      if (item.exePath && !iconCache.has(item.exePath) && fs.existsSync(item.exePath)) {
+        try {
+          const iconNative = await app.getFileIcon(item.exePath, { size: 'normal' });
+          if (iconNative && !iconNative.isEmpty()) {
+            iconCache.set(item.exePath, iconNative.toDataURL());
+          }
+        } catch (_) {}
+      }
+    }));
+
+    const results = parsed.map(item => {
+      const cleanProcess = item.processName || (item.exePath ? path.basename(item.exePath) : 'app.exe');
+      const appId = cleanProcess.toLowerCase();
+      const appIcon = item.exePath ? (iconCache.get(item.exePath) || null) : null;
+
       return {
-        id: s.id,
-        name: s.name,
-        appIcon: s.appIcon ? s.appIcon.toDataURL() : (s.thumbnail ? s.thumbnail.toDataURL() : null),
+        id: appId,
+        pid: item.pid,
+        rootPid: item.rootPid || item.pid,
+        name: item.name || cleanProcess.replace(/\.exe$/i, ''),
+        processName: cleanProcess,
+        windowTitle: item.windowTitle || '',
+        exePath: item.exePath || '',
+        state: item.state, // 1 = Active, 0 = Inactive
+        peak: Number(item.peak) || 0,
         hasAudio: true,
-        pid: match ? match.pid : null,
-        processName: match ? match.processName : null
+        isActiveAudio: item.state === 1 || (Number(item.peak) > 0.001),
+        appIcon
       };
     });
+
+    // Ordena colocando aplicativos com som ativo no topo
+    results.sort((a, b) => {
+      if (a.isActiveAudio && !b.isActiveAudio) return -1;
+      if (!a.isActiveAudio && b.isActiveAudio) return 1;
+      return (b.peak || 0) - (a.peak || 0);
+    });
+
+    cachedMixerApps = results;
+
+    // Notifica a janela do renderer em tempo real sobre mudanças no mixer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('desktop:audio-apps-updated', cachedMixerApps);
+    }
   } catch (err) {
-    console.warn('[Desktop Main] Erro ao obter lista de aplicativos de áudio:', err.message);
-    return [];
+    // Silencioso em background para evitar poluição de logs
+  } finally {
+    isQueryingMixer = false;
   }
+
+  return cachedMixerApps;
+}
+
+// Inicia loop leve em segundo plano: verifica a cada 3s quando em foco, ou 8s quando em background
+function startBackgroundAudioQueryLoop() {
+  if (mixerQueryTimer) {
+    clearTimeout(mixerQueryTimer);
+    mixerQueryTimer = null;
+  }
+
+  const scheduleNext = () => {
+    const isFocused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused();
+    const intervalMs = isFocused ? 3000 : 8000;
+
+    mixerQueryTimer = setTimeout(async () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        await queryMixerAppsInBackground();
+      }
+      scheduleNext();
+    }, intervalMs);
+  };
+
+  // Primeira execução inicial assíncrona
+  queryMixerAppsInBackground().finally(() => {
+    scheduleNext();
+  });
+}
+
+// IPC: Obter aplicativos diretamente do Mixer de Áudio do Windows (retorno instantâneo a partir da memória)
+ipcMain.handle('desktop:get-audio-apps', async () => {
+  if (Array.isArray(cachedMixerApps) && cachedMixerApps.length > 0) {
+    return cachedMixerApps;
+  }
+  return await queryMixerAppsInBackground();
 });
 
 // IPC: Inicia captura nativa de áudio do sistema com suporte a isolamento de processo (WASAPI Loopback)
@@ -347,6 +478,8 @@ ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
     if (activeLoopback) {
       try { activeLoopback.stop(); } catch (_) {}
       activeLoopback = null;
+      // Pausa defensiva de 60ms para Windows WASAPI liberar o endpoint e evitar colisão de stream
+      await new Promise(r => setTimeout(r, 60));
     }
 
     if (!LoopbackCapture) {
@@ -355,19 +488,9 @@ ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
 
     const capture = new LoopbackCapture();
     const mode = opts.mode || 'system';
-    let targetPid = opts.pid ? Number(opts.pid) : null;
+    let targetPid = (mode === 'exclude' && opts.rootPid) ? Number(opts.rootPid) : (opts.pid ? Number(opts.pid) : null);
 
-    // Se for Discord, busca SEMPRE o processo raiz principal (PID sem --type=) para excluir toda a árvore (inclusive áudio e chamadas de voz)
-    const lowerName = `${opts.name || ''} ${opts.processName || ''}`.toLowerCase();
-    if (lowerName.includes('discord')) {
-      const discordRootPid = getProcessRootPid('Discord.exe');
-      if (discordRootPid) targetPid = discordRootPid;
-    } else if (!targetPid && opts.name) {
-      const found = findPidForAppName(opts.name);
-      if (found) targetPid = found.pid;
-    }
-
-    console.log(`[Desktop Main] Iniciando captura de loopback nativa: modo=${mode}, pid=${targetPid}, name=${opts.name || opts.processName || ''}`);
+    console.log(`[Desktop Main] Iniciando captura de loopback nativa: modo=${mode}, pid=${targetPid}, rootPid=${opts.rootPid}, name=${opts.name || opts.processName || ''}`);
 
     const onChunk = (chunk) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -375,13 +498,19 @@ ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
       }
     };
 
-    if (mode === 'exclude' && targetPid) {
-      // includeProcessTree: false ativa WASAPI PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE (exclui Discord e todos os subprocessos de voz)
+    if (mode === 'exclude' && targetPid && targetPid > 0) {
+      // Exclui o processo alvo e toda sua árvore de processos (Chrome, Discord, etc.)
       capture.start(targetPid, false, onChunk);
-    } else if (mode === 'include' && targetPid) {
+    } else if (mode === 'include' && targetPid && targetPid > 0) {
       capture.start(targetPid, true, onChunk);
     } else {
-      capture.startSystemAudio(onChunk);
+      // Captura todo o som do sistema usando VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK excluindo o próprio Hyperstream
+      // Isso garante captura sem interrupções de Chrome, jogos e Spotify, e evita auto-eco do Hyperstream
+      try {
+        capture.start(process.pid, false, onChunk);
+      } catch (_) {
+        capture.startSystemAudio(onChunk);
+      }
     }
 
     activeLoopback = capture;
@@ -726,6 +855,10 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  if (mixerQueryTimer) {
+    clearTimeout(mixerQueryTimer);
+    mixerQueryTimer = null;
+  }
   if (activeLoopback) {
     try { activeLoopback.stop(); } catch (_) {}
     activeLoopback = null;

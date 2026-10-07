@@ -116,15 +116,25 @@ export class MediaManager {
     } catch (_) {}
 
     const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
-    const hasExcludedApps = (this.audioFilterMode === 'selective' || (Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0)) && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0;
+    const hasExcludedApps = (this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0);
 
-    if (isDesktopApp && hasExcludedApps && this.captureSystemAudio) {
-      console.log('[MediaManager] Isolamento seletivo de áudio ativo para apps:', this.disabledAudioApps);
+    if (isDesktopApp && this.captureSystemAudio) {
+      displayConstraints.audio = false; // Chromium não faz loopback interno (WASAPI captura tudo de forma nativa)
       try {
-        await this.startNativePcmAudioStream();
-        displayConstraints.audio = false; // Impede Chromium de capturar mix geral com Discord
+        const mode = hasExcludedApps ? 'exclude' : 'system';
+        let targetApp = hasExcludedApps
+          ? (this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0])
+          : null;
+
+        await this.startNativePcmAudioStream({
+          mode,
+          pid: targetApp?.pid || null,
+          rootPid: targetApp?.rootPid || targetApp?.pid || null,
+          name: targetApp?.name || targetApp?.processName || '',
+          processName: targetApp?.processName || ''
+        });
       } catch (nativeErr) {
-        console.warn('[MediaManager] Falha ao iniciar WASAPI loopback por processo, usando áudio padrão:', nativeErr);
+        console.warn('[MediaManager] Falha ao iniciar WASAPI loopback, usando áudio Chromium:', nativeErr);
         displayConstraints.audio = true;
       }
     } else if (this.captureSystemAudio) {
@@ -544,27 +554,61 @@ export class MediaManager {
     }
   }
 
-  /**
-   * Configura se o áudio do sistema deve ser capturado ao compartilhar a tela
-   */
-  setCaptureSystemAudio(enabled) {
+  async setCaptureSystemAudio(enabled) {
     this.captureSystemAudio = Boolean(enabled);
     try { localStorage.setItem('hyperstream_capture_system_audio', this.captureSystemAudio); } catch (_) {}
     if (window.desktopAPI && typeof window.desktopAPI.setCaptureAudio === 'function') {
       window.desktopAPI.setCaptureAudio(this.captureSystemAudio);
     }
-    const track = this.getScreenAudioTrack();
-    if (track) {
-      track.enabled = this.captureSystemAudio && !this.systemAudioMuted;
+
+    if (this.screenStream && this.screenStream.active) {
+      if (this.captureSystemAudio) {
+        if (!this.isNativePcmActive || !this.processAudioTrack || this.processAudioTrack.readyState !== 'live') {
+          await this.startNativePcmAudioStream();
+        } else {
+          this.processAudioTrack.enabled = !this.systemAudioMuted;
+        }
+      } else {
+        const track = this.getScreenAudioTrack();
+        if (track) {
+          track.enabled = false;
+        }
+      }
+      this.buildCombinedStream();
     }
   }
 
   /**
    * Inicia a captura nativa de áudio do sistema com isolamento de processo via WASAPI (Desktop)
    */
-  async startNativePcmAudioStream() {
+  async startNativePcmAudioStream(initialOpts = null) {
     if (!window.desktopAPI || typeof window.desktopAPI.startLoopbackCapture !== 'function') {
       return null;
+    }
+
+    const hasExcluded = (this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0);
+    const mode = initialOpts?.mode || (hasExcluded ? 'exclude' : 'system');
+    let targetApp = null;
+    if (mode === 'exclude') {
+      targetApp = (Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0)
+        ? (this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0])
+        : null;
+    }
+
+    const captureOpts = {
+      mode: targetApp ? 'exclude' : 'system',
+      pid: targetApp?.pid || initialOpts?.pid || null,
+      rootPid: targetApp?.rootPid || initialOpts?.rootPid || targetApp?.pid || null,
+      name: targetApp?.name || initialOpts?.name || '',
+      processName: targetApp?.processName || initialOpts?.processName || ''
+    };
+
+    // Se o pipeline já existe e o track está vivo, apenas troca a captura nativa no Electron sem reiniciar Web Audio
+    if (this.isNativePcmActive && this.processAudioTrack && this.processAudioTrack.readyState === 'live') {
+      console.log('[MediaManager] Atualizando captura WASAPI dinamicamente ao vivo:', captureOpts);
+      this.nextPcmPlayTime = 0;
+      await window.desktopAPI.startLoopbackCapture(captureOpts);
+      return this.processAudioTrack;
     }
 
     this.stopNativePcmAudioStream();
@@ -578,19 +622,6 @@ export class MediaManager {
     this.nativeAudioMixerNode = ctx.createGain();
     this.nativeAudioMixerNode.connect(this.nativeAudioDestNode);
     this.nextPcmPlayTime = 0;
-
-    // Prioriza excluir Discord se estiver na lista de apps desmarcados
-    let targetApp = null;
-    if (Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0) {
-      targetApp = this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0];
-    }
-
-    const captureOpts = {
-      mode: 'exclude',
-      pid: targetApp?.pid || null,
-      name: targetApp?.name || targetApp?.processName || 'Discord',
-      processName: targetApp?.processName || 'Discord.exe'
-    };
 
     console.log('[MediaManager] Solicitando LoopbackCapture nativo com:', captureOpts);
     await window.desktopAPI.startLoopbackCapture(captureOpts);
@@ -619,10 +650,8 @@ export class MediaManager {
         sourceNode.connect(this.nativeAudioMixerNode);
 
         const now = ctx.currentTime;
-        if (this.nextPcmPlayTime < now) {
+        if (this.nextPcmPlayTime < now || this.nextPcmPlayTime > now + 0.25) {
           this.nextPcmPlayTime = now + 0.02;
-        } else if (this.nextPcmPlayTime > now + 0.25) {
-          this.nextPcmPlayTime = now + 0.04;
         }
 
         sourceNode.start(this.nextPcmPlayTime);
@@ -669,31 +698,46 @@ export class MediaManager {
   }
 
   /**
-   * Atualiza configurações de filtro seletivo de aplicativos
+   * Atualiza configurações de filtro seletivo de aplicativos de forma 100% dinâmica em tempo real
    */
   async updateAudioAppFilter({ mode, disabledApps }) {
     this.audioFilterMode = mode || 'all';
     this.disabledAudioApps = disabledApps || [];
     console.log(`[MediaManager] Filtro de aplicativos atualizado: modo=${this.audioFilterMode}, desativados=${this.disabledAudioApps.length}`);
 
-    // Se estiver transmitindo tela ao vivo, reaplica dinamicamente
+    // Se estiver transmitindo tela ao vivo no app desktop
     if (this.screenStream && this.screenStream.active) {
       const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
-      const hasExcludedApps = (this.audioFilterMode === 'selective' || this.disabledAudioApps.length > 0) && this.disabledAudioApps.length > 0;
 
-      if (isDesktopApp && hasExcludedApps && this.captureSystemAudio) {
-        // Desativa faixas de áudio residuais do Chromium para que apenas o loopback WASAPI filtrado seja ouvido
-        this.screenStream.getAudioTracks().forEach(t => {
-          t.enabled = false;
-          t.stop();
-        });
-        await this.startNativePcmAudioStream();
-      } else {
-        this.stopNativePcmAudioStream();
+      if (isDesktopApp && this.captureSystemAudio) {
+        const hasExcludedApps = (this.audioFilterMode === 'selective' && this.disabledAudioApps.length > 0);
+        let targetApp = hasExcludedApps
+          ? (this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0])
+          : null;
+
+        const captureOpts = {
+          mode: targetApp ? 'exclude' : 'system',
+          pid: targetApp?.pid || null,
+          rootPid: targetApp?.rootPid || targetApp?.pid || null,
+          name: targetApp?.name || targetApp?.processName || '',
+          processName: targetApp?.processName || ''
+        };
+
+        if (this.isNativePcmActive && this.processAudioTrack && this.processAudioTrack.readyState === 'live') {
+          console.log('[MediaManager] Alternando modo do LoopbackCapture ao vivo para:', captureOpts.mode, captureOpts);
+          await window.desktopAPI.startLoopbackCapture(captureOpts);
+        } else {
+          // Desativa faixas de áudio residuais do Chromium para que apenas o loopback WASAPI filtrado seja ouvido
+          this.screenStream.getAudioTracks().forEach(t => {
+            t.enabled = false;
+            t.stop();
+          });
+          await this.startNativePcmAudioStream(captureOpts);
+        }
+
+        this.setupSystemAudioAnalyser();
+        this.buildCombinedStream();
       }
-
-      this.setupSystemAudioAnalyser();
-      this.buildCombinedStream();
     }
   }
 
@@ -807,8 +851,13 @@ export class MediaManager {
       this.systemDataArray = new Uint8Array(this.systemAnalyser.frequencyBinCount);
 
       if (this.isNativePcmActive && this.nativeAudioMixerNode) {
-        // Conexão direta e pura do áudio WASAPI filtrado ao analisador de VU meter (zero Discord)
+        // Conexão direta do áudio WASAPI filtrado ao analisador de VU meter
         this.nativeAudioMixerNode.connect(this.systemAnalyser);
+        // Conexão inaudível (0.00001) para forçar o Chromium/WebAudio a processar continuamente os buffers
+        const dummyGain = ctx.createGain();
+        dummyGain.gain.setValueAtTime(0.00001, ctx.currentTime);
+        this.systemAnalyser.connect(dummyGain);
+        dummyGain.connect(ctx.destination);
       } else {
         const track = this.getScreenAudioTrack();
         if (!track) {

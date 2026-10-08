@@ -174,16 +174,7 @@ namespace AudioSessionHelper {
                 var procs = Process.GetProcessesByName(pure);
                 if (procs.Length <= 1) return fallbackPid;
 
-                // 1. Prioriza processo com janela principal valida
-                foreach (var p in procs) {
-                    try {
-                        if (p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle)) {
-                            return (uint)p.Id;
-                        }
-                    } catch {}
-                }
-
-                // 2. Prioriza processo mais antigo da arvore (menor StartTime)
+                // 1. Prioriza processo mais antigo da arvore (menor StartTime = processo pai que iniciou primeiro)
                 uint oldestPid = fallbackPid;
                 DateTime oldestTime = DateTime.MaxValue;
                 foreach (var p in procs) {
@@ -194,7 +185,17 @@ namespace AudioSessionHelper {
                         }
                     } catch {}
                 }
-                return oldestPid;
+                if (oldestPid != fallbackPid) return oldestPid;
+
+                // 2. Fallback: processo com janela principal valida
+                foreach (var p in procs) {
+                    try {
+                        if (p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle)) {
+                            return (uint)p.Id;
+                        }
+                    } catch {}
+                }
+                return fallbackPid;
             } catch {
                 return fallbackPid;
             }

@@ -1892,7 +1892,7 @@ function setupSettingsModal() {
 
   function loadSavedAudioAppsState() {
     try {
-      const raw = localStorage.getItem('hyperstream_audio_apps_config');
+      const raw = localStorage.getItem('hyperstream_audio_apps_config') || localStorage.getItem('hyperstream_audio_apps_filter');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed.mode) audioAppsFilterMode = parsed.mode;
@@ -2018,6 +2018,9 @@ function setupSettingsModal() {
   function saveAudioAppsState() {
     try {
       const disabledApps = Array.from(disabledAudioAppsMap.values());
+      const disabledIds = Array.from(disabledAudioAppIds);
+      const enabledApps = (cachedAudioApps || []).filter(a => !disabledAudioAppIds.has(a.id));
+
       if (disabledApps.length > 0) {
         audioAppsFilterMode = 'selective';
         if (audioModeSelectiveApps) audioModeSelectiveApps.checked = true;
@@ -2027,21 +2030,24 @@ function setupSettingsModal() {
         if (audioModeAllApps) audioModeAllApps.checked = true;
         if (audioModeSelectiveApps) audioModeSelectiveApps.checked = false;
       }
-      localStorage.setItem('hyperstream_audio_apps_config', JSON.stringify({
+
+      const stateObj = {
         mode: audioAppsFilterMode,
-        disabledIds: Array.from(disabledAudioAppIds),
-        disabledApps
-      }));
-      localStorage.setItem('hyperstream_audio_apps_filter', JSON.stringify({
-        mode: audioAppsFilterMode,
-        disabledApps
-      }));
+        disabledIds,
+        disabledApps,
+        enabledApps
+      };
+
+      localStorage.setItem('hyperstream_audio_apps_config', JSON.stringify(stateObj));
+      localStorage.setItem('hyperstream_audio_apps_filter', JSON.stringify(stateObj));
 
       // Notifica imediatamente o MediaManager com os apps e PIDs excluídos
       if (media && typeof media.updateAudioAppFilter === 'function') {
         media.updateAudioAppFilter({
           mode: audioAppsFilterMode,
-          disabledApps
+          disabledIds,
+          disabledApps,
+          enabledApps
         }).then(() => {
           // Atualiza em tempo real as conexões WebRTC ativas com a nova faixa filtrada
           if (webrtc && typeof webrtc.syncLocalMedia === 'function' && roomState) {

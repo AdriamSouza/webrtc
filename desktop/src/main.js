@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, desktopCapturer, shell, session } from 'el
 import path from 'node:path';
 import fs from 'node:fs';
 import https from 'node:https';
-import { spawn, exec, execSync, execFile } from 'node:child_process';
+import { spawn, exec, execSync, execFile, execFileSync } from 'node:child_process';
 import util from 'node:util';
 import { fileURLToPath } from 'node:url';
 import loopbackModule from 'loopback-capture';
@@ -269,54 +269,76 @@ ipcMain.handle('desktop:get-capture-audio', () => {
   return captureAudioEnabled;
 });
 
-let activeLoopback = null;
+let activeLoopbacks = [];
 
-function getProcessListFast() {
+function stopAllActiveLoopbacks() {
+  if (Array.isArray(activeLoopbacks) && activeLoopbacks.length > 0) {
+    for (const cap of activeLoopbacks) {
+      try { cap.stop(); } catch (_) {}
+    }
+    activeLoopbacks = [];
+  }
+}
+
+function isPidAlive(pid) {
+  if (!pid || pid <= 0) return false;
   try {
-    const stdout = execSync('tasklist /fo csv', { encoding: 'utf8', timeout: 1500 });
-    const lines = stdout.trim().split(/\r?\n/);
-    const procs = [];
-    for (let i = 1; i < lines.length; i++) {
-      const m = lines[i].match(/^"([^"]*)","([^"]*)"/);
-      if (m) {
-        procs.push({ imageName: m[1], pid: parseInt(m[2], 10) });
+    process.kill(pid, 0);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function findLivePidsForApp(appItem) {
+  if (!appItem) return { rootPid: null, audioPid: null, allPids: [] };
+  const rawName = appItem.processName || appItem.name || (appItem.id ? appItem.id : '');
+  const clean = path.basename(rawName).replace(/\.exe$/i, '').toLowerCase();
+
+  // 1. Verifica no cache recente do mixer de áudio
+  if (Array.isArray(cachedMixerApps) && cachedMixerApps.length > 0) {
+    const match = cachedMixerApps.find(a => {
+      const aClean = path.basename(a.processName || a.name || '').replace(/\.exe$/i, '').toLowerCase();
+      return aClean === clean || (a.id && a.id.toLowerCase() === appItem.id?.toLowerCase());
+    });
+    if (match && match.rootPid && isPidAlive(match.rootPid)) {
+      return { rootPid: match.rootPid, audioPid: match.pid, allPids: [match.rootPid, match.pid] };
+    }
+  }
+
+  // 2. Busca processo no Windows via PowerShell / WMI em tempo real usando execFileSync para evitar conflitos de aspas
+  try {
+    const filter = `Name like '${clean}%.exe'`;
+    const stdout = execFileSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, ParentProcessId, Name | ConvertTo-Json`
+    ], { encoding: 'utf8', timeout: 3000 });
+    const parsed = JSON.parse(stdout.trim() || '[]');
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    if (list.length > 0) {
+      const pidSet = new Set(list.map(p => p.ProcessId));
+      const root = list.find(p => !pidSet.has(p.ParentProcessId)) || list[0];
+      if (root && root.ProcessId && isPidAlive(root.ProcessId)) {
+        return {
+          rootPid: root.ProcessId,
+          audioPid: appItem.pid || null,
+          allPids: list.map(p => p.ProcessId)
+        };
       }
     }
-    return procs;
-  } catch (e) {
-    return [];
-  }
-}
-
-function getProcessRootPid(imageName) {
-  try {
-    const cmd = `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \\"Name = '${imageName}' and not CommandLine like '%--type=%'\\" | Select-Object -ExpandProperty ProcessId"`;
-    const res = execSync(cmd, { encoding: 'utf8', timeout: 2000 }).trim();
-    const pid = parseInt(res, 10);
-    if (!isNaN(pid) && pid > 0) return pid;
-  } catch (_) {}
-  return null;
-}
-
-function findPidForAppName(name, cachedProcs) {
-  const lower = (name || '').toLowerCase();
-  
-  if (lower.includes('discord')) {
-    const rootPid = getProcessRootPid('Discord.exe');
-    if (rootPid) {
-      return { pid: rootPid, processName: 'Discord.exe' };
-    }
+  } catch (err) {
+    console.warn('[Desktop Main] Falha ao consultar PIDs em tempo real via WMI:', err.message);
   }
 
-  const procs = cachedProcs || getProcessListFast();
-  for (const p of procs) {
-    const base = p.imageName.replace(/\.exe$/i, '').toLowerCase();
-    if (base.length >= 3 && lower.includes(base)) {
-      const rootPid = getProcessRootPid(p.imageName) || p.pid;
-      return { pid: rootPid, processName: p.imageName };
-    }
-  }
-  return null;
+  // 3. Fallback
+  const fallbackRoot = appItem.rootPid || appItem.pid || null;
+  return {
+    rootPid: (fallbackRoot && isPidAlive(fallbackRoot)) ? fallbackRoot : fallbackRoot,
+    audioPid: appItem.pid || null,
+    allPids: []
+  };
 }
 
 const execFileAsync = util.promisify(execFile);
@@ -504,57 +526,124 @@ ipcMain.handle('desktop:get-audio-apps', async () => {
 // IPC: Inicia captura nativa de áudio do sistema com suporte a isolamento de processo (WASAPI Loopback)
 ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
   try {
-    if (activeLoopback) {
-      try { activeLoopback.stop(); } catch (_) {}
-      activeLoopback = null;
-      // Pausa defensiva de 60ms para Windows WASAPI liberar o endpoint e evitar colisão de stream
-      await new Promise(r => setTimeout(r, 60));
-    }
+    stopAllActiveLoopbacks();
+    await new Promise(r => setTimeout(r, 60));
 
     if (!LoopbackCapture) {
       throw new Error('Módulo LoopbackCapture nativo indisponível.');
     }
 
-    const capture = new LoopbackCapture();
-    const mode = opts.mode || 'system';
-    let targetPid = (mode === 'exclude' && opts.rootPid) ? Number(opts.rootPid) : (opts.pid ? Number(opts.pid) : null);
-
-    console.log(`[Desktop Main] Iniciando captura de loopback nativa: modo=${mode}, pid=${targetPid}, rootPid=${opts.rootPid}, name=${opts.name || opts.processName || ''}`);
-
-    const onChunk = (chunk) => {
+    const onChunk = (payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('desktop:audio-pcm-chunk', chunk);
+        mainWindow.webContents.send('desktop:audio-pcm-chunk', payload);
       }
     };
 
-    if (mode === 'exclude' && targetPid && targetPid > 0) {
-      // Exclui o processo alvo e toda sua árvore de processos (Chrome, Discord, etc.)
-      capture.start(targetPid, false, onChunk);
-    } else if (mode === 'include' && targetPid && targetPid > 0) {
-      capture.start(targetPid, true, onChunk);
-    } else {
-      // Captura todo o som do sistema usando VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK excluindo o próprio Hyperstream
-      // Isso garante captura sem interrupções de Chrome, jogos e Spotify, e evita auto-eco do Hyperstream
+    // Garante que o cache de sessões do mixer está pronto
+    if (!Array.isArray(cachedMixerApps) || cachedMixerApps.length === 0) {
       try {
-        capture.start(process.pid, false, onChunk);
+        await queryMixerAppsInBackground();
+      } catch (_) {}
+    }
+
+    const mode = opts.mode || 'all';
+    const disabledApps = Array.isArray(opts.disabledApps) ? opts.disabledApps : [];
+    const enabledApps = Array.isArray(opts.enabledApps) ? opts.enabledApps : [];
+
+    console.log(`[Desktop Main] Iniciar loopback: modo=${mode}, desativados=${disabledApps.length}, ativados=${enabledApps.length}`);
+
+    // Se o modo for 'all' ou nenhum aplicativo foi desmarcado:
+    if (mode === 'all' || disabledApps.length === 0) {
+      console.log('[Desktop Main] Modo Todos os Apps: capturando áudio global do sistema.');
+      const cap = new LoopbackCapture();
+      try {
+        cap.start(process.pid, false, (buf) => onChunk({ streamId: 0, chunk: buf }));
       } catch (_) {
-        capture.startSystemAudio(onChunk);
+        cap.startSystemAudio((buf) => onChunk({ streamId: 0, chunk: buf }));
+      }
+      activeLoopbacks.push(cap);
+      return { success: true, mode: 'all' };
+    }
+
+    // Modo seletivo com exatamente 1 aplicativo desmarcado:
+    // WASAPI EXCLUDE mode captura todo o som do sistema (jogos, Chrome, Spotify, etc.) EXCETO este aplicativo
+    if (disabledApps.length === 1) {
+      const targetApp = disabledApps[0];
+      const liveInfo = findLivePidsForApp(targetApp);
+      const targetPid = liveInfo.rootPid || targetApp.rootPid || targetApp.pid;
+
+      if (targetPid && targetPid > 0 && isPidAlive(targetPid)) {
+        console.log(`[Desktop Main] Excluindo aplicativo único via WASAPI: ${targetApp.name || targetApp.processName} (PID ${targetPid})`);
+        const cap = new LoopbackCapture();
+        cap.start(targetPid, false, (buf) => onChunk({ streamId: 0, chunk: buf }));
+        activeLoopbacks.push(cap);
+        return { success: true, mode: 'exclude', pid: targetPid };
+      } else {
+        console.warn(`[Desktop Main] PID do aplicativo desmarcado (${targetApp.name || targetApp.processName}) não encontrado ou inativo (PID ${targetPid}).`);
       }
     }
 
-    activeLoopback = capture;
-    return { success: true, mode, pid: targetPid };
+    // Modo seletivo com múltiplos aplicativos desmarcados:
+    // Captura exclusivamente os aplicativos marcados (INCLUDE mode) para garantir que NENHUM desmarcado vaze
+    const activeEnabled = enabledApps.length > 0
+      ? enabledApps
+      : (Array.isArray(cachedMixerApps)
+          ? cachedMixerApps.filter(a => !disabledApps.some(d => d.id === a.id || (d.processName && a.processName && d.processName.toLowerCase() === a.processName.toLowerCase())))
+          : []);
+
+    if (activeEnabled.length > 0) {
+      console.log(`[Desktop Main] Capturando exclusivamente ${activeEnabled.length} aplicativos marcados (include mode):`);
+      let startedCount = 0;
+      for (let idx = 0; idx < activeEnabled.length; idx++) {
+        const app = activeEnabled[idx];
+        const liveInfo = findLivePidsForApp(app);
+        const targetPid = liveInfo.rootPid || app.rootPid || app.pid;
+        if (targetPid && targetPid > 0 && isPidAlive(targetPid)) {
+          try {
+            console.log(`  -> Incluindo: ${app.name || app.processName} (PID ${targetPid}, Stream ${idx})`);
+            const cap = new LoopbackCapture();
+            const streamId = idx;
+            cap.start(targetPid, true, (buf) => onChunk({ streamId, chunk: buf }));
+            activeLoopbacks.push(cap);
+            startedCount++;
+          } catch (appErr) {
+            console.warn(`  [!] Falha ao incluir PID ${targetPid}:`, appErr.message);
+          }
+        }
+      }
+
+      if (startedCount > 0) {
+        return { success: true, mode: 'include_multiple', count: startedCount };
+      }
+    }
+
+    // Fallback: se nenhum marcado estava ativo ou detectado, tenta excluir o primeiro desmarcado
+    if (disabledApps.length > 0) {
+      const targetApp = disabledApps[0];
+      const liveInfo = findLivePidsForApp(targetApp);
+      const targetPid = liveInfo.rootPid || targetApp.rootPid || targetApp.pid;
+      if (targetPid && targetPid > 0 && isPidAlive(targetPid)) {
+        console.log(`[Desktop Main] Fallback: excluindo primeiro aplicativo ${targetApp.name || targetApp.processName} (PID ${targetPid})`);
+        const cap = new LoopbackCapture();
+        cap.start(targetPid, false, (buf) => onChunk({ streamId: 0, chunk: buf }));
+        activeLoopbacks.push(cap);
+        return { success: true, mode: 'exclude_fallback', pid: targetPid };
+      }
+    }
+
+    // Se todos os aplicativos forem desmarcados pelo usuário ou nenhum estiver ativo, silencia o loopback
+    console.log('[Desktop Main] Todos os aplicativos de áudio desmarcados ou inativos: áudio do sistema silenciado.');
+    return { success: true, mode: 'muted_all' };
   } catch (err) {
     console.error('[Desktop Main] Falha ao iniciar LoopbackCapture:', err);
-    // Fallback: tenta capturar áudio global do sistema
     try {
       const fallback = new LoopbackCapture();
-      fallback.startSystemAudio((chunk) => {
+      fallback.startSystemAudio((buf) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('desktop:audio-pcm-chunk', chunk);
+          mainWindow.webContents.send('desktop:audio-pcm-chunk', { streamId: 0, chunk: buf });
         }
       });
-      activeLoopback = fallback;
+      activeLoopbacks.push(fallback);
       return { success: true, mode: 'fallback_system' };
     } catch (fbErr) {
       console.error('[Desktop Main] Fallback de LoopbackCapture também falhou:', fbErr);
@@ -566,15 +655,12 @@ ipcMain.handle('desktop:start-loopback-capture', async (event, opts = {}) => {
 // IPC: Interrompe captura nativa de áudio do sistema
 ipcMain.handle('desktop:stop-loopback-capture', async () => {
   try {
-    if (activeLoopback) {
-      activeLoopback.stop();
-      activeLoopback = null;
-      console.log('[Desktop Main] LoopbackCapture nativo encerrado.');
-    }
+    stopAllActiveLoopbacks();
+    console.log('[Desktop Main] Loopbacks nativos encerrados.');
     return { success: true };
   } catch (err) {
     console.warn('[Desktop Main] Erro ao encerrar LoopbackCapture:', err.message);
-    activeLoopback = null;
+    activeLoopbacks = [];
     return { success: false, error: err.message };
   }
 });
@@ -888,10 +974,7 @@ app.on('before-quit', () => {
     clearTimeout(mixerQueryTimer);
     mixerQueryTimer = null;
   }
-  if (activeLoopback) {
-    try { activeLoopback.stop(); } catch (_) {}
-    activeLoopback = null;
-  }
+  stopAllActiveLoopbacks();
 });
 
 app.on('window-all-closed', () => {

@@ -51,16 +51,19 @@ export class MediaManager {
     this.nativeAudioMixerNode = null;
     this.isNativePcmActive = false;
     this.nextPcmPlayTime = 0;
+    this.nextPcmPlayTimes = new Map();
 
     // Filtro seletivo de apps carregado do localStorage
     const savedFilter = (() => {
       try {
-        const raw = localStorage.getItem('hyperstream_audio_apps_filter');
+        const raw = localStorage.getItem('hyperstream_audio_apps_filter') || localStorage.getItem('hyperstream_audio_apps_config');
         return raw ? JSON.parse(raw) : null;
       } catch (_) { return null; }
     })();
     this.audioFilterMode = savedFilter?.mode || 'all';
     this.disabledAudioApps = savedFilter?.disabledApps || [];
+    this.disabledAudioAppIds = savedFilter?.disabledIds || [];
+    this.enabledAudioApps = savedFilter?.enabledApps || [];
 
     // Configurações de qualidade de vídeo
     this.targetFps = (() => {
@@ -107,31 +110,27 @@ export class MediaManager {
 
     // Recarrega filtros salvos do localStorage para garantir sincronismo com o painel de configurações
     try {
-      const raw = localStorage.getItem('hyperstream_audio_apps_filter');
+      const raw = localStorage.getItem('hyperstream_audio_apps_filter') || localStorage.getItem('hyperstream_audio_apps_config');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed.mode) this.audioFilterMode = parsed.mode;
         if (Array.isArray(parsed.disabledApps)) this.disabledAudioApps = parsed.disabledApps;
+        if (Array.isArray(parsed.disabledIds)) this.disabledAudioAppIds = parsed.disabledIds;
+        if (Array.isArray(parsed.enabledApps)) this.enabledAudioApps = parsed.enabledApps;
       }
     } catch (_) {}
 
     const isDesktopApp = typeof window !== 'undefined' && Boolean(window.desktopAPI?.startLoopbackCapture);
-    const hasExcludedApps = (this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0);
+    const isSelective = (this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0);
 
     if (isDesktopApp && this.captureSystemAudio) {
       displayConstraints.audio = false; // Chromium não faz loopback interno (WASAPI captura tudo de forma nativa)
       try {
-        const mode = hasExcludedApps ? 'exclude' : 'system';
-        let targetApp = hasExcludedApps
-          ? (this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0])
-          : null;
-
         await this.startNativePcmAudioStream({
-          mode,
-          pid: targetApp?.pid || null,
-          rootPid: targetApp?.rootPid || targetApp?.pid || null,
-          name: targetApp?.name || targetApp?.processName || '',
-          processName: targetApp?.processName || ''
+          mode: isSelective ? 'selective' : 'all',
+          disabledApps: this.disabledAudioApps || [],
+          disabledIds: this.disabledAudioAppIds || [],
+          enabledApps: this.enabledAudioApps || []
         });
       } catch (nativeErr) {
         console.warn('[MediaManager] Falha ao iniciar WASAPI loopback, usando áudio Chromium:', nativeErr);
@@ -166,9 +165,10 @@ export class MediaManager {
 
     this.screenStream = stream;
 
-    // Se o áudio nativo filtrado estiver ativo, cancela qualquer track de áudio residual anexado pelo Chromium
-    if (this.isNativePcmActive && this.screenStream) {
+    // Se estiver no Desktop, desativa e encerra faixas de áudio nativas do Chromium para garantir que apenas o WASAPI filtrado seja ouvido
+    if (isDesktopApp && this.screenStream) {
       this.screenStream.getAudioTracks().forEach(t => {
+        console.log('[MediaManager] Silenciando faixa de áudio padrão do Chromium em favor do WASAPI filtrado:', t.label);
         t.enabled = false;
         t.stop();
       });
@@ -586,26 +586,25 @@ export class MediaManager {
       return null;
     }
 
-    const hasExcluded = (this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0);
-    const mode = initialOpts?.mode || (hasExcluded ? 'exclude' : 'system');
-    let targetApp = null;
-    if (mode === 'exclude') {
-      targetApp = (Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0)
-        ? (this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0])
-        : null;
+    if (initialOpts) {
+      if (initialOpts.mode) this.audioFilterMode = initialOpts.mode;
+      if (Array.isArray(initialOpts.disabledApps)) this.disabledAudioApps = initialOpts.disabledApps;
+      if (Array.isArray(initialOpts.disabledIds)) this.disabledAudioAppIds = initialOpts.disabledIds;
+      if (Array.isArray(initialOpts.enabledApps)) this.enabledAudioApps = initialOpts.enabledApps;
     }
 
+    const hasExcluded = (this.audioFilterMode === 'selective' && Array.isArray(this.disabledAudioApps) && this.disabledAudioApps.length > 0);
     const captureOpts = {
-      mode: targetApp ? 'exclude' : 'system',
-      pid: targetApp?.pid || initialOpts?.pid || null,
-      rootPid: targetApp?.rootPid || initialOpts?.rootPid || targetApp?.pid || null,
-      name: targetApp?.name || initialOpts?.name || '',
-      processName: targetApp?.processName || initialOpts?.processName || ''
+      mode: hasExcluded ? 'selective' : 'all',
+      disabledApps: this.disabledAudioApps || [],
+      disabledIds: this.disabledAudioAppIds || [],
+      enabledApps: this.enabledAudioApps || []
     };
 
     // Se o pipeline já existe e o track está vivo, apenas troca a captura nativa no Electron sem reiniciar Web Audio
     if (this.isNativePcmActive && this.processAudioTrack && this.processAudioTrack.readyState === 'live') {
       console.log('[MediaManager] Atualizando captura WASAPI dinamicamente ao vivo:', captureOpts);
+      if (this.nextPcmPlayTimes) this.nextPcmPlayTimes.clear();
       this.nextPcmPlayTime = 0;
       await window.desktopAPI.startLoopbackCapture(captureOpts);
       return this.processAudioTrack;
@@ -621,15 +620,19 @@ export class MediaManager {
     this.nativeAudioDestNode = ctx.createMediaStreamDestination();
     this.nativeAudioMixerNode = ctx.createGain();
     this.nativeAudioMixerNode.connect(this.nativeAudioDestNode);
+    if (!this.nextPcmPlayTimes) this.nextPcmPlayTimes = new Map();
+    this.nextPcmPlayTimes.clear();
     this.nextPcmPlayTime = 0;
 
     console.log('[MediaManager] Solicitando LoopbackCapture nativo com:', captureOpts);
     await window.desktopAPI.startLoopbackCapture(captureOpts);
 
-    this.nativePcmCleanup = window.desktopAPI.onAudioPcmChunk((chunk) => {
+    this.nativePcmCleanup = window.desktopAPI.onAudioPcmChunk((payload) => {
       if (this.systemAudioMuted || !this.captureSystemAudio || !this.nativeAudioMixerNode) return;
       try {
-        const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        const streamId = (payload && payload.streamId !== undefined) ? payload.streamId : 0;
+        const rawChunk = (payload && payload.chunk) ? payload.chunk : payload;
+        const bytes = rawChunk instanceof Uint8Array ? rawChunk : new Uint8Array(rawChunk);
         if (!bytes || bytes.length < 4) return;
 
         const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
@@ -649,13 +652,15 @@ export class MediaManager {
         sourceNode.buffer = audioBuf;
         sourceNode.connect(this.nativeAudioMixerNode);
 
+        let nextPlayTime = this.nextPcmPlayTimes.get(streamId) || 0;
         const now = ctx.currentTime;
-        if (this.nextPcmPlayTime < now || this.nextPcmPlayTime > now + 0.25) {
-          this.nextPcmPlayTime = now + 0.02;
+        if (nextPlayTime < now || nextPlayTime > now + 0.25) {
+          nextPlayTime = now + 0.02;
         }
 
-        sourceNode.start(this.nextPcmPlayTime);
-        this.nextPcmPlayTime += audioBuf.duration;
+        sourceNode.start(nextPlayTime);
+        nextPlayTime += audioBuf.duration;
+        this.nextPcmPlayTimes.set(streamId, nextPlayTime);
       } catch (err) {
         console.warn('[MediaManager] Erro ao agendar PCM nativo:', err);
       }
@@ -693,6 +698,9 @@ export class MediaManager {
       this.nativeAudioMixerNode = null;
     }
     this.nativeAudioDestNode = null;
+    if (this.nextPcmPlayTimes) {
+      this.nextPcmPlayTimes.clear();
+    }
     this.isNativePcmActive = false;
     this.nextPcmPlayTime = 0;
   }
@@ -700,9 +708,11 @@ export class MediaManager {
   /**
    * Atualiza configurações de filtro seletivo de aplicativos de forma 100% dinâmica em tempo real
    */
-  async updateAudioAppFilter({ mode, disabledApps }) {
+  async updateAudioAppFilter({ mode, disabledApps, disabledIds, enabledApps }) {
     this.audioFilterMode = mode || 'all';
-    this.disabledAudioApps = disabledApps || [];
+    this.disabledAudioApps = Array.isArray(disabledApps) ? disabledApps : [];
+    this.disabledAudioAppIds = Array.isArray(disabledIds) ? disabledIds : [];
+    this.enabledAudioApps = Array.isArray(enabledApps) ? enabledApps : [];
     console.log(`[MediaManager] Filtro de aplicativos atualizado: modo=${this.audioFilterMode}, desativados=${this.disabledAudioApps.length}`);
 
     // Se estiver transmitindo tela ao vivo no app desktop
@@ -711,16 +721,11 @@ export class MediaManager {
 
       if (isDesktopApp && this.captureSystemAudio) {
         const hasExcludedApps = (this.audioFilterMode === 'selective' && this.disabledAudioApps.length > 0);
-        let targetApp = hasExcludedApps
-          ? (this.disabledAudioApps.find(a => (a.name || a.processName || '').toLowerCase().includes('discord')) || this.disabledAudioApps[0])
-          : null;
-
         const captureOpts = {
-          mode: targetApp ? 'exclude' : 'system',
-          pid: targetApp?.pid || null,
-          rootPid: targetApp?.rootPid || targetApp?.pid || null,
-          name: targetApp?.name || targetApp?.processName || '',
-          processName: targetApp?.processName || ''
+          mode: hasExcludedApps ? 'selective' : 'all',
+          disabledApps: this.disabledAudioApps,
+          disabledIds: this.disabledAudioAppIds,
+          enabledApps: this.enabledAudioApps
         };
 
         if (this.isNativePcmActive && this.processAudioTrack && this.processAudioTrack.readyState === 'live') {

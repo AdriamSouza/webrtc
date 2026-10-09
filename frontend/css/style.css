@@ -833,6 +833,32 @@ body.dark-theme {
   transition: opacity 0.2s ease;
 }
 
+/* Rotação automática de vídeo em tela cheia no celular (modo retrato/vertical) */
+.stream-tile:fullscreen.fullscreen-mobile-rotated,
+.stream-tile.is-fullscreen.fullscreen-mobile-rotated {
+  overflow: hidden !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  background: #000 !important;
+  z-index: 99999 !important;
+}
+
+.stream-tile:fullscreen.fullscreen-mobile-rotated video,
+.stream-tile.is-fullscreen.fullscreen-mobile-rotated video {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 100dvh !important;
+  height: 100vw !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: translate(-50%, -50%) rotate(90deg) !important;
+  object-fit: contain !important;
+}
+
 .placeholder-actions {
   display: flex;
   gap: 8px;
@@ -2989,6 +3015,7 @@ body.dark-theme {
   align-items: center;
   gap: 10px;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -2999,13 +3026,37 @@ body.dark-theme {
   flex-shrink: 0;
 }
 
+.audio-app-text-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .audio-app-title {
+  display: block;
+  width: 100%;
   font-size: 0.86rem;
   font-weight: 500;
   color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.35;
+}
+
+.audio-app-subtitle {
+  display: block;
+  width: 100%;
+  font-size: 0.74rem;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.35;
+  margin-top: 1px;
 }
 
 .audio-app-pill {
@@ -3017,6 +3068,10 @@ body.dark-theme {
   color: #38bdf8;
   margin-left: 8px;
   flex-shrink: 0;
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .audio-app-pill.active {

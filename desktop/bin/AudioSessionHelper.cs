@@ -154,7 +154,7 @@ namespace AudioSessionHelper {
                     case '\r': sb.Append("\\r"); break;
                     case '\t': sb.Append("\\t"); break;
                     default:
-                        if (c < ' ') {
+                        if (c < ' ' || c > 127) {
                             sb.AppendFormat("\\u{0:x4}", (int)c);
                         } else {
                             sb.Append(c);
@@ -202,6 +202,10 @@ namespace AudioSessionHelper {
         }
 
         static void Main(string[] args) {
+            try {
+                Console.OutputEncoding = Encoding.UTF8;
+            } catch {}
+
             var map = new Dictionary<uint, AppAudioInfo>();
             uint excludePid = 0;
             if (args.Length > 0) {

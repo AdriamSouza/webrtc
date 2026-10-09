@@ -641,10 +641,39 @@ function toggleSpotlight(id) {
   }
 }
 
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && window.innerWidth <= 900);
+}
+
+function updateMobileFullscreenOrientation(tileEl) {
+  if (!tileEl) return;
+  const isMobile = isMobileDevice();
+  const isPortrait = window.innerHeight > window.innerWidth;
+
+  if (document.fullscreenElement && isMobile && isPortrait) {
+    const videoEl = tileEl.querySelector('video');
+    // Só rotaciona se o vídeo for horizontal/landscape (ou se ainda não tiver dimensões nativas)
+    const isLandscapeVideo = !videoEl || !videoEl.videoWidth || (videoEl.videoWidth >= videoEl.videoHeight);
+    if (isLandscapeVideo) {
+      tileEl.classList.add('fullscreen-mobile-rotated');
+    } else {
+      tileEl.classList.remove('fullscreen-mobile-rotated');
+    }
+  } else {
+    tileEl.classList.remove('fullscreen-mobile-rotated');
+  }
+}
+
 function toggleTileFullscreen(tileEl) {
   if (!document.fullscreenElement) {
+    if (isMobileDevice() && screen.orientation && typeof screen.orientation.lock === 'function') {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
     if (tileEl.requestFullscreen) {
-      tileEl.requestFullscreen().catch(err => {
+      tileEl.requestFullscreen().then(() => {
+        updateMobileFullscreenOrientation(tileEl);
+      }).catch(err => {
         // Fallback para Safari / navegadores mobile antigos
         const videoEl = tileEl.querySelector('video');
         if (videoEl && videoEl.webkitEnterFullscreen) {
@@ -710,18 +739,51 @@ document.addEventListener('fullscreenchange', () => {
       clearTimeout(fullscreenIdleTimer);
       fullscreenIdleTimer = null;
     }
+    if (screen.orientation && typeof screen.orientation.unlock === 'function') {
+      try { screen.orientation.unlock(); } catch (_) {}
+    }
     document.querySelectorAll('.stream-tile').forEach(tile => {
-      tile.classList.remove('fullscreen-idle', 'fullscreen-active', 'is-fullscreen');
+      tile.classList.remove('fullscreen-idle', 'fullscreen-active', 'is-fullscreen', 'fullscreen-mobile-rotated');
     });
   } else {
+    if (isMobileDevice() && screen.orientation && typeof screen.orientation.lock === 'function') {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
     const targetTile = fsEl.classList.contains('stream-tile')
       ? fsEl
       : (fsEl.querySelector('.stream-tile.is-spotlight') || fsEl.querySelector('.stream-tile'));
     if (targetTile) {
       targetTile.classList.add('is-fullscreen');
+      updateMobileFullscreenOrientation(targetTile);
       handleFullscreenActivity(targetTile);
     }
   }
+});
+
+window.addEventListener('resize', () => {
+  if (document.fullscreenElement) {
+    const fsEl = document.fullscreenElement;
+    const targetTile = fsEl.classList.contains('stream-tile')
+      ? fsEl
+      : (fsEl.querySelector('.stream-tile.is-spotlight') || fsEl.querySelector('.stream-tile'));
+    if (targetTile) {
+      updateMobileFullscreenOrientation(targetTile);
+    }
+  }
+});
+
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    if (document.fullscreenElement) {
+      const fsEl = document.fullscreenElement;
+      const targetTile = fsEl.classList.contains('stream-tile')
+        ? fsEl
+        : (fsEl.querySelector('.stream-tile.is-spotlight') || fsEl.querySelector('.stream-tile'));
+      if (targetTile) {
+        updateMobileFullscreenOrientation(targetTile);
+      }
+    }
+  }, 150);
 });
 
 // ========================================================
@@ -1278,6 +1340,9 @@ function setupEventListeners() {
   // Tela Cheia Geral
   btnFullscreen.addEventListener('click', () => {
     if (!document.fullscreenElement) {
+      if (isMobileDevice() && screen.orientation && typeof screen.orientation.lock === 'function') {
+        screen.orientation.lock('landscape').catch(() => {});
+      }
       videoWrapper.requestFullscreen().catch(err => console.warn(err));
     } else {
       document.exitFullscreen().catch(err => console.warn(err));
@@ -2051,7 +2116,13 @@ function appendChatMessage(author, text, timestamp, isSelf, image = null) {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function leaveCurrentRoom() {
@@ -2328,17 +2399,17 @@ function setupSettingsModal() {
       }
 
       const pillText = app.processName ? app.processName.replace(/\.exe$/i, '') : 'App';
-      const hasSubTitle = app.windowTitle && app.windowTitle.trim() !== '' && app.windowTitle !== app.name;
+      const hasSubTitle = Boolean(app.windowTitle && app.windowTitle.trim() !== '' && app.windowTitle !== app.name);
 
       item.innerHTML = `
         <div class="audio-app-info">
           ${iconHtml}
-          <div style="display: flex; flex-direction: column; min-width: 0; overflow: hidden;">
+          <div class="audio-app-text-group">
             <span class="audio-app-title" title="${escapeHtml(app.name)}">${escapeHtml(app.name)}</span>
-            ${hasSubTitle ? `<span style="font-size: 0.72rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(app.windowTitle)}">${escapeHtml(app.windowTitle)}</span>` : ''}
+            ${hasSubTitle ? `<span class="audio-app-subtitle" title="${escapeHtml(app.windowTitle)}">${escapeHtml(app.windowTitle)}</span>` : ''}
           </div>
           ${statusBadge}
-          <span class="audio-app-pill" style="opacity: 0.85; font-size: 0.7rem;">${escapeHtml(pillText)}</span>
+          <span class="audio-app-pill" style="opacity: 0.85; font-size: 0.7rem;" title="${escapeHtml(pillText)}">${escapeHtml(pillText)}</span>
         </div>
         <label class="toggle-switch" title="Capturar áudio deste aplicativo">
           <input type="checkbox" class="app-audio-toggle"

@@ -3,6 +3,7 @@ import http from 'http';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { config } from './config/config.js';
 import { roomManager } from './rooms/roomManager.js';
@@ -72,9 +73,27 @@ server.listen(config.port, config.host, () => {
     return typeof s.urls === 'string' && s.urls.startsWith('turn');
   });
 
+  // Identificação de IPs locais para acesso facilitado em celulares na mesma rede Wi-Fi
+  const localIps = [];
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          localIps.push(iface.address);
+        }
+      }
+    }
+  } catch (_) {}
+
   console.log(`====================================================`);
   console.log(`🚀 Servidor WebRTC P2P inicializado com sucesso!`);
-  console.log(`📡 URL Local:      ${scheme}://localhost:${config.port}`);
+  console.log(`📡 URL Local (PC): ${scheme}://localhost:${config.port}`);
+  if (localIps.length > 0) {
+    localIps.forEach(ip => {
+      console.log(`📱 Acesso Celular: ${scheme}://${ip}:${config.port}`);
+    });
+  }
   console.log(`🔒 Modo Seguro:    ${isHttps ? 'HTTPS ATIVO (Desbloqueia getDisplayMedia em todos dispositivos)' : 'HTTP'}`);
   console.log(`💬 WebSocket Path: ${wsScheme}://${config.host}:${config.port}/ws`);
   console.log(`🛡️ ICE Servers:    ${config.iceServers.length} configurados (${turnServers.length > 0 ? `TURN Relay Ativo (${turnServers.length} server)` : 'Apenas STUN - configure TURN no .env para CGNAT/4G'})`);

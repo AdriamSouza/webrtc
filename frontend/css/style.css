@@ -735,6 +735,104 @@ body.dark-theme {
   color: #fff;
 }
 
+/* Grupo de Volume e Slider Individual por Transmissão */
+.tile-volume-group {
+  display: flex;
+  align-items: center;
+  background: rgba(13, 13, 16, 0.9);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding-right: 6px;
+  gap: 2px;
+  transition: all 0.2s ease;
+}
+
+.tile-volume-group:hover,
+.tile-volume-group:focus-within {
+  border-color: var(--border-focus);
+}
+
+.tile-volume-group .tile-btn {
+  background: transparent;
+  border: none;
+}
+
+.tile-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 54px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tile-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-primary, #00d2ff);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 210, 255, 0.5);
+  transition: transform 0.1s ease;
+}
+
+.tile-volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+}
+
+.tile-volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-primary, #00d2ff);
+  cursor: pointer;
+  border: none;
+}
+
+.tile-volume-slider:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Tela Cheia (Fullscreen Auto-Hide) */
+.stream-tile:fullscreen,
+.stream-tile.is-fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  background: #000 !important;
+}
+
+/* Quando em tela cheia e inativo (idle): oculta cabeçalho (nome), ações (fechar, volume) e cursor */
+.stream-tile:fullscreen.fullscreen-idle,
+.stream-tile.is-fullscreen.fullscreen-idle {
+  cursor: none !important;
+}
+
+.stream-tile:fullscreen.fullscreen-idle .tile-header,
+.stream-tile:fullscreen.fullscreen-idle .tile-actions,
+.stream-tile.is-fullscreen.fullscreen-idle .tile-header,
+.stream-tile.is-fullscreen.fullscreen-idle .tile-actions {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.35s ease;
+}
+
+/* Quando ativo em tela cheia: exibe suavemente ao mover o mouse ou tocar */
+.stream-tile:fullscreen.fullscreen-active .tile-header,
+.stream-tile:fullscreen.fullscreen-active .tile-actions,
+.stream-tile.is-fullscreen.fullscreen-active .tile-header,
+.stream-tile.is-fullscreen.fullscreen-active .tile-actions {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transition: opacity 0.2s ease;
+}
+
 .placeholder-actions {
   display: flex;
   gap: 8px;
@@ -989,9 +1087,8 @@ body.dark-theme {
   overflow: hidden;
 }
 
-/* Modo Teatro ou Painel Lateral Ocultado */
-.room-body.sidebar-collapsed .room-sidebar,
-.room-body[data-layout="theater"] .room-sidebar {
+/* Painel Lateral Recolhido */
+.room-body.sidebar-collapsed .room-sidebar {
   width: 0 !important;
   min-width: 0 !important;
   border-left: none !important;
@@ -1103,6 +1200,7 @@ body.dark-theme {
   padding: 10px;
   border-top: 1px solid var(--border-color);
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
@@ -1119,6 +1217,155 @@ body.dark-theme {
 
 .chat-input-form input:focus {
   border-color: var(--border-focus);
+}
+
+.btn-chat-attach {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.btn-chat-attach:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+  background: var(--bg-active);
+}
+
+/* Prévia da Imagem Selecionada antes do Envio */
+.chat-image-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(18, 20, 29, 0.95);
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-subtle);
+  animation: fadeIn 0.15s ease;
+}
+
+.chat-image-preview.hidden {
+  display: none !important;
+}
+
+.chat-image-preview img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-focus);
+}
+
+.chat-preview-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-preview-filename {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-preview-note {
+  font-size: 0.68rem;
+  color: var(--accent-primary, #00d2ff);
+}
+
+/* Imagens em Mensagens do Chat */
+.chat-msg-image-wrap {
+  margin-top: 5px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  max-width: 240px;
+}
+
+.chat-msg-image {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  cursor: zoom-in;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.chat-msg-image:hover {
+  transform: scale(1.02);
+  border-color: var(--border-focus);
+}
+
+.tab-pane.drag-over {
+  outline: 2px dashed var(--accent-primary, #00d2ff);
+  outline-offset: -4px;
+}
+
+/* Lightbox Modal de Imagem Efêmera */
+.lightbox-card {
+  background: #09090b;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-md);
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85);
+  animation: scaleUp 0.15s ease-out;
+}
+
+.lightbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: #111218;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.lightbox-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.lightbox-note {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.lightbox-body {
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: #000;
+}
+
+.lightbox-body img {
+  max-width: 85vw;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
 }
 
 /* Participantes */
@@ -2875,6 +3122,270 @@ body.dark-theme {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ========================================================
+   RESPONSIVIDADE E PRIORIZAÇÃO MOBILE (CELULARES & TABLETS)
+   Prioriza a visualização da transmissão no celular
+   ======================================================== */
+
+@media (max-width: 768px) {
+  html, body {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .app-container {
+    height: 100dvh;
+    width: 100vw;
+  }
+
+  /* Lobby no Celular */
+  .lobby-card {
+    width: 94vw;
+    max-width: 420px;
+    padding: 24px 18px;
+    margin: auto;
+  }
+
+  /* Previne zoom automático indesejado no iOS Safari */
+  input[type="text"],
+  input[type="password"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Cabeçalho da Sala no Celular */
+  .room-header {
+    padding: 6px 10px;
+    min-height: 48px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .room-title {
+    font-size: 0.8rem;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #btnCopyLink span#copyLinkText {
+    display: none;
+  }
+
+  #desktopAppBadge {
+    display: none !important;
+  }
+
+  .btn-layout .label {
+    display: none;
+  }
+
+  .layout-selector-group {
+    padding: 2px;
+  }
+
+  .btn-layout {
+    padding: 5px 8px;
+  }
+
+  #userCountBadge {
+    font-size: 0.72rem;
+    padding: 4px 8px;
+  }
+
+  #btnToggleHud span,
+  #btnOpenSettings span {
+    display: none;
+  }
+
+  /* PRIORIDADE 1: Visualização da Transmissão no Celular */
+  .room-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .stream-viewport {
+    width: 100% !important;
+    height: 100% !important;
+    flex: 1;
+    position: relative;
+  }
+
+  .video-wrapper {
+    width: 100%;
+    height: 100%;
+    background: #000;
+  }
+
+  .video-grid {
+    width: 100%;
+    height: 100%;
+    gap: 6px;
+    padding: 4px;
+  }
+
+  .video-grid[data-count="1"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .stream-tile {
+    width: 100%;
+    height: 100%;
+    min-height: 180px;
+  }
+
+  .stream-tile video {
+    object-fit: contain;
+    background: #000;
+  }
+
+  /* No celular, ações do tile são sempre visíveis ou facilmente tocáveis */
+  .stream-tile .tile-actions {
+    opacity: 0.88;
+  }
+
+  .stream-tile:hover .tile-actions,
+  .stream-tile:focus-within .tile-actions {
+    opacity: 1;
+  }
+
+  .tile-volume-slider {
+    width: 44px;
+  }
+
+  /* Painel Lateral (Chat/Participantes) como Gaveta Deslizante (Overlay) */
+  /* Impede que o chat aperte ou esprema a transmissão */
+  .room-sidebar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
+    max-width: 330px !important;
+    min-width: 0 !important;
+    z-index: 500;
+    background: var(--bg-secondary);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.85);
+    border-left: 1px solid var(--border-color);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-tabs {
+    min-width: 0 !important;
+  }
+
+  .room-body.sidebar-collapsed .room-sidebar {
+    transform: translateX(100%) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    box-shadow: none;
+  }
+
+  /* Barra de Controles Inferior no Celular */
+  .controls-toolbar {
+    padding: 6px 10px;
+    gap: 6px;
+    justify-content: center;
+    background: rgba(9, 9, 11, 0.96);
+    border-top: 1px solid var(--border-color);
+  }
+
+  .btn-control {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 4px 8px;
+  }
+
+  .btn-control .label {
+    font-size: 0.65rem;
+  }
+
+  .btn-control .icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Banner de áudio móvel */
+  .unmute-banner {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    text-align: center;
+    justify-content: center;
+    padding: 10px 14px;
+    font-size: 0.82rem;
+  }
+
+  /* Dock local no celular */
+  .local-dock {
+    width: 140px;
+    bottom: 65px;
+    right: 10px;
+  }
+
+  /* Modais no Celular */
+  .settings-modal-card,
+  .source-picker-card,
+  .lightbox-card {
+    width: 95vw;
+    max-width: 95vw;
+    max-height: 92dvh;
+    padding: 14px;
+  }
+
+  .preset-cards-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .settings-grid-2col {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
+/* Modo Paisagem no Celular (Imersão total ao assistir vídeos) */
+@media (max-width: 920px) and (orientation: landscape) and (max-height: 500px) {
+  .room-header {
+    min-height: 38px;
+    padding: 4px 8px;
+  }
+
+  .controls-toolbar {
+    padding: 4px 6px;
+  }
+
+  .btn-control {
+    min-height: 36px;
+    min-width: 36px;
+    padding: 2px 6px;
+  }
+
+  .btn-control .label {
+    display: none;
+  }
+
+  .stream-tile {
+    min-height: 120px;
+  }
+
+  .room-sidebar {
+    max-width: 280px !important;
+  }
 }
 
 

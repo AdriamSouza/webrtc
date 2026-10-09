@@ -71,10 +71,21 @@ export const Icons = {
     <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
   `, size),
 
+  volume1: (size = 18) => createSvg(`
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+  `, size),
+
   volumeX: (size = 18) => createSvg(`
     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
     <line x1="22" x2="16" y1="9" y2="15"/>
     <line x1="16" x2="22" y1="9" y2="15"/>
+  `, size),
+
+  image: (size = 16) => createSvg(`
+    <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+    <circle cx="9" cy="9" r="2"/>
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
   `, size),
 
   // Layouts

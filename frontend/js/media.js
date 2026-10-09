@@ -17,6 +17,10 @@ export class MediaManager {
     this.captureSystemAudio = (() => {
       try { return localStorage.getItem('hyperstream_capture_system_audio') !== 'false'; } catch (_) { return true; }
     })();
+    // Áudio da câmera desativado por padrão para evitar duplicação e captura não solicitada de microfone
+    this.captureCameraAudio = (() => {
+      try { return localStorage.getItem('hyperstream_capture_camera_audio') === 'true'; } catch (_) { return false; }
+    })();
     this.selectedMicDeviceId = (() => {
       try { return localStorage.getItem('hyperstream_mic_device') || 'default'; } catch (_) { return 'default'; }
     })();
@@ -418,7 +422,8 @@ export class MediaManager {
       return { active: false, stream: null };
     }
 
-    console.log('[MediaManager] Solicitando acesso à câmera e microfone...');
+    const captureAudio = Boolean(this.captureCameraAudio);
+    console.log(`[MediaManager] Solicitando acesso à câmera (áudio da câmera: ${captureAudio ? 'ativado' : 'desativado por padrão'})...`);
     try {
       this.cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -426,7 +431,7 @@ export class MediaManager {
           height: { ideal: 720, max: 1080 },
           frameRate: { ideal: 30, max: 60 }
         },
-        audio: true
+        audio: captureAudio
       });
 
       const videoTracks = this.cameraStream.getVideoTracks();
@@ -448,7 +453,7 @@ export class MediaManager {
    */
   stopCamera() {
     if (this.cameraStream) {
-      this.cameraStream.getVideoTracks().forEach(track => track.stop());
+      this.cameraStream.getTracks().forEach(track => track.stop());
       this.cameraStream = null;
       console.log('[MediaManager] Câmera desativada.');
     }
@@ -478,12 +483,14 @@ export class MediaManager {
       const camVideoTracks = this.cameraStream.getVideoTracks();
       if (camVideoTracks.length > 0) tracks.push(camVideoTracks[0]);
 
-      const camAudio = this.cameraStream.getAudioTracks();
-      if (camAudio.length > 0) tracks.push(...camAudio);
+      if (this.captureCameraAudio) {
+        const camAudio = this.cameraStream.getAudioTracks();
+        if (camAudio.length > 0) tracks.push(...camAudio);
+      }
     }
 
-    // Microfone isolado (se não tiver pego pela câmera)
-    if (this.micStream && (!this.cameraStream || this.cameraStream.getAudioTracks().length === 0)) {
+    // Microfone isolado (se não tiver pego pela câmera ou se áudio da câmera estiver desativado)
+    if (this.micStream && (!this.cameraStream || !this.captureCameraAudio || this.cameraStream.getAudioTracks().length === 0)) {
       const micAudio = this.micStream.getAudioTracks();
       if (micAudio.length > 0) tracks.push(...micAudio);
     }
@@ -1070,9 +1077,20 @@ export class MediaManager {
   }
 
   getCameraAudioTrack() {
-    if (!this.cameraStream) return null;
+    if (!this.cameraStream || !this.captureCameraAudio) return null;
     const tracks = this.cameraStream.getAudioTracks();
     return tracks.length > 0 ? tracks[0] : null;
+  }
+
+  setCaptureCameraAudio(enabled) {
+    this.captureCameraAudio = Boolean(enabled);
+    try { localStorage.setItem('hyperstream_capture_camera_audio', this.captureCameraAudio); } catch (_) {}
+    if (this.cameraStream) {
+      this.cameraStream.getAudioTracks().forEach(track => {
+        track.enabled = this.captureCameraAudio;
+      });
+    }
+    this.buildCombinedStream();
   }
 
   getScreenVideoTrack() {
@@ -1112,7 +1130,7 @@ export class MediaManager {
     if (screenAudio) {
       tracks.push(screenAudio);
     }
-    if (this.cameraStream) {
+    if (this.cameraStream && this.captureCameraAudio) {
       tracks.push(...this.cameraStream.getAudioTracks());
     }
     if (this.micStream) {

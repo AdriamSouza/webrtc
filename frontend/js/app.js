@@ -52,7 +52,6 @@ const telemetryHud = document.getElementById('telemetryHud');
 const layoutSelectorGroup = document.getElementById('layoutSelectorGroup');
 const btnLayoutGrid = document.getElementById('btnLayoutGrid');
 const btnLayoutStage = document.getElementById('btnLayoutStage');
-const btnLayoutTheater = document.getElementById('btnLayoutTheater');
 const btnToggleSidebar = document.getElementById('btnToggleSidebar');
 const sidebarBtnLabel = document.getElementById('sidebarBtnLabel');
 const roomBody = document.getElementById('roomBody');
@@ -91,6 +90,16 @@ const tabParticipants = document.getElementById('tabParticipants');
 const chatMessages = document.getElementById('chatMessages');
 const chatForm = document.getElementById('chatForm');
 const chatInput = document.getElementById('chatInput');
+const chatImageInput = document.getElementById('chatImageInput');
+const btnAttachImage = document.getElementById('btnAttachImage');
+const chatImagePreview = document.getElementById('chatImagePreview');
+const chatPreviewThumb = document.getElementById('chatPreviewThumb');
+const chatPreviewName = document.getElementById('chatPreviewName');
+const btnRemoveChatImage = document.getElementById('btnRemoveChatImage');
+const imageLightboxModal = document.getElementById('imageLightboxModal');
+const lightboxImg = document.getElementById('lightboxImg');
+const lightboxAuthor = document.getElementById('lightboxAuthor');
+const btnCloseLightbox = document.getElementById('btnCloseLightbox');
 const participantsList = document.getElementById('participantsList');
 const tabUserCount = document.getElementById('tabUserCount');
 
@@ -118,42 +127,42 @@ const peerRetryCounts = new Map(); // Map<userId, number> - Contador de tentativ
 
 // Estado de Layout (Sincronizado entre Web e Desktop)
 let currentLayoutMode = (() => {
-  try { return localStorage.getItem('webrtc_layout_mode') || 'grid'; } catch (_) { return 'grid'; }
+  try {
+    const saved = localStorage.getItem('webrtc_layout_mode');
+    return saved === 'stage' ? 'stage' : 'grid';
+  } catch (_) { return 'grid'; }
 })();
 let isSidebarCollapsed = (() => {
-  try { return localStorage.getItem('webrtc_sidebar_collapsed') === 'true'; } catch (_) { return false; }
+  try {
+    const saved = localStorage.getItem('webrtc_sidebar_collapsed');
+    if (saved !== null) return saved === 'true';
+    // No celular, inicia recolhido para priorizar visualização em tela cheia da transmissão
+    return typeof window !== 'undefined' && window.innerWidth <= 768;
+  } catch (_) { return typeof window !== 'undefined' && window.innerWidth <= 768; }
 })();
 
 /**
- * Define o modo de layout ativo: 'grid' (Mosaico), 'stage' (Palco) ou 'theater' (Teatro)
+ * Define o modo de layout ativo: 'grid' (Mosaico) ou 'stage' (Palco)
  */
 function setLayoutMode(mode) {
-  currentLayoutMode = mode;
-  try { localStorage.setItem('webrtc_layout_mode', mode); } catch (_) {}
+  currentLayoutMode = mode === 'stage' ? 'stage' : 'grid';
+  try { localStorage.setItem('webrtc_layout_mode', currentLayoutMode); } catch (_) {}
 
   // Atualiza estado visual dos botões de controle de layout
-  if (btnLayoutGrid) btnLayoutGrid.classList.toggle('active', mode === 'grid');
-  if (btnLayoutStage) btnLayoutStage.classList.toggle('active', mode === 'stage');
-  if (btnLayoutTheater) btnLayoutTheater.classList.toggle('active', mode === 'theater');
+  if (btnLayoutGrid) btnLayoutGrid.classList.toggle('active', currentLayoutMode === 'grid');
+  if (btnLayoutStage) btnLayoutStage.classList.toggle('active', currentLayoutMode === 'stage');
 
   if (roomBody) {
-    roomBody.dataset.layout = mode;
-    // No modo teatro, a barra lateral fica recolhida para foco máximo
-    if (mode === 'theater') {
-      roomBody.classList.add('sidebar-collapsed');
-    } else {
-      roomBody.classList.toggle('sidebar-collapsed', isSidebarCollapsed);
-    }
+    roomBody.dataset.layout = currentLayoutMode;
+    roomBody.classList.toggle('sidebar-collapsed', isSidebarCollapsed);
   }
 
-  if (mode === 'stage') {
+  if (currentLayoutMode === 'stage') {
     videoGrid.classList.add('stage-layout');
     ensureSpotlightSelected();
   } else {
     videoGrid.classList.remove('stage-layout');
-    if (mode === 'grid') {
-      clearSpotlight();
-    }
+    clearSpotlight();
   }
 
   updateGridLayout();
@@ -209,10 +218,7 @@ function clearSpotlight() {
 }
 
 function toggleSidebar(forceState = null) {
-  if (currentLayoutMode === 'theater') {
-    setLayoutMode('grid');
-    isSidebarCollapsed = false;
-  } else if (forceState !== null) {
+  if (forceState !== null) {
     isSidebarCollapsed = forceState;
   } else {
     isSidebarCollapsed = !isSidebarCollapsed;
@@ -315,15 +321,73 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
     toggleTileFullscreen(tileEl);
   });
 
+  // Grupo de Volume com Slider Integrado
+  const volumeGroup = document.createElement('div');
+  volumeGroup.className = 'tile-volume-group';
+
   const btnMute = document.createElement('button');
   btnMute.className = 'tile-btn btn-mute';
   btnMute.title = 'Mutar / Desmutar áudio';
   btnMute.innerHTML = isLocal ? Icons.volumeX(14) : Icons.volume2(14);
+
+  const volumeSlider = document.createElement('input');
+  volumeSlider.type = 'range';
+  volumeSlider.className = 'tile-volume-slider';
+  volumeSlider.min = '0';
+  volumeSlider.max = '1';
+  volumeSlider.step = '0.02';
+  volumeSlider.value = isLocal ? '0' : '1';
+  volumeSlider.title = 'Ajustar volume da transmissão (0 a 100%)';
+  if (isLocal) {
+    volumeSlider.disabled = true;
+    volumeSlider.title = 'Prévia local com som silenciado para evitar eco';
+  }
+
+  let lastVolume = 1.0;
+
+  const updateVolumeUi = () => {
+    if (videoEl.muted || videoEl.volume === 0) {
+      btnMute.innerHTML = Icons.volumeX(14);
+      volumeSlider.value = '0';
+    } else {
+      btnMute.innerHTML = videoEl.volume > 0.4 ? Icons.volume2(14) : Icons.volume1(14);
+      volumeSlider.value = String(videoEl.volume);
+    }
+  };
+
+  volumeSlider.addEventListener('input', (e) => {
+    e.stopPropagation();
+    const val = parseFloat(volumeSlider.value);
+    if (val === 0) {
+      videoEl.muted = true;
+      videoEl.volume = 0;
+    } else {
+      videoEl.muted = false;
+      videoEl.volume = val;
+      lastVolume = val;
+    }
+    updateVolumeUi();
+  });
+
+  volumeSlider.addEventListener('click', (e) => e.stopPropagation());
+  volumeSlider.addEventListener('pointerdown', (e) => e.stopPropagation());
+  volumeSlider.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+
   btnMute.addEventListener('click', (e) => {
     e.stopPropagation();
-    videoEl.muted = !videoEl.muted;
-    btnMute.innerHTML = videoEl.muted ? Icons.volumeX(14) : Icons.volume2(14);
+    if (isLocal) return;
+    if (videoEl.muted || videoEl.volume === 0) {
+      videoEl.muted = false;
+      videoEl.volume = lastVolume > 0 ? lastVolume : 1.0;
+    } else {
+      lastVolume = videoEl.volume > 0 ? videoEl.volume : lastVolume;
+      videoEl.muted = true;
+    }
+    updateVolumeUi();
   });
+
+  volumeGroup.appendChild(btnMute);
+  volumeGroup.appendChild(volumeSlider);
 
   const btnClose = document.createElement('button');
   btnClose.className = 'tile-btn btn-close';
@@ -341,14 +405,18 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
 
   actionsEl.appendChild(btnFocus);
   actionsEl.appendChild(btnFull);
-  actionsEl.appendChild(btnMute);
+  actionsEl.appendChild(volumeGroup);
   actionsEl.appendChild(btnClose);
 
   const videoEl = document.createElement('video');
   videoEl.autoplay = true;
   videoEl.playsInline = true;
+  videoEl.setAttribute('playsinline', '');
+  videoEl.setAttribute('webkit-playsinline', '');
+  videoEl.setAttribute('x5-playsinline', '');
   if (isLocal) {
     videoEl.muted = true;
+    videoEl.volume = 0;
   }
 
   videoEl.srcObject = stream;
@@ -358,9 +426,12 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
   tileEl.appendChild(videoEl);
   videoGrid.appendChild(tileEl);
 
+  // Configura comportamento de auto-hide em tela cheia para este tile
+  setupTileFullscreenBehavior(tileEl);
+
   // Ao clicar em uma miniatura secundária no modo Palco, promove ela para o palco principal
   tileEl.addEventListener('click', (e) => {
-    if (e.target.closest('.tile-btn')) return;
+    if (e.target.closest('.tile-btn') || e.target.closest('.tile-volume-group')) return;
     if (currentLayoutMode === 'stage' || videoGrid.classList.contains('stage-layout')) {
       if (currentSpotlightId !== id) {
         applySpotlightTile(id);
@@ -373,7 +444,7 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
     playPromise.catch((err) => {
       console.warn('[TileManager] Autoplay com som bloqueado, mutando...', err.message);
       videoEl.muted = true;
-      btnMute.innerHTML = Icons.volumeX(14);
+      updateVolumeUi();
       videoEl.play().catch(e => console.error(e));
       if (unmuteBanner) unmuteBanner.classList.remove('hidden');
     });
@@ -571,11 +642,86 @@ function toggleSpotlight(id) {
 
 function toggleTileFullscreen(tileEl) {
   if (!document.fullscreenElement) {
-    tileEl.requestFullscreen().catch(err => console.warn(err));
+    if (tileEl.requestFullscreen) {
+      tileEl.requestFullscreen().catch(err => {
+        // Fallback para Safari / navegadores mobile antigos
+        const videoEl = tileEl.querySelector('video');
+        if (videoEl && videoEl.webkitEnterFullscreen) {
+          videoEl.webkitEnterFullscreen();
+        } else {
+          console.warn('[Fullscreen]', err);
+        }
+      });
+    } else {
+      const videoEl = tileEl.querySelector('video');
+      if (videoEl && videoEl.webkitEnterFullscreen) {
+        videoEl.webkitEnterFullscreen();
+      }
+    }
   } else {
-    document.exitFullscreen().catch(err => console.warn(err));
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(err => console.warn('[Fullscreen]', err));
+    }
   }
 }
+
+// ========================================================
+// CONTROLE DE AUTO-HIDE EM TELA CHEIA (INATIVIDADE 2.5s)
+// Oculta nome, fechar e controles até que o usuário mexa o mouse ou clique
+// ========================================================
+let fullscreenIdleTimer = null;
+
+function handleFullscreenActivity(tileEl) {
+  if (!document.fullscreenElement) return;
+  tileEl.classList.remove('fullscreen-idle');
+  tileEl.classList.add('fullscreen-active');
+
+  if (fullscreenIdleTimer) {
+    clearTimeout(fullscreenIdleTimer);
+  }
+
+  fullscreenIdleTimer = setTimeout(() => {
+    if (document.fullscreenElement) {
+      tileEl.classList.remove('fullscreen-active');
+      tileEl.classList.add('fullscreen-idle');
+    }
+  }, 2500);
+}
+
+function setupTileFullscreenBehavior(tileEl) {
+  const onActivity = () => {
+    if (document.fullscreenElement) {
+      if (document.fullscreenElement === tileEl || document.fullscreenElement.contains(tileEl) || tileEl.contains(document.fullscreenElement)) {
+        handleFullscreenActivity(tileEl);
+      }
+    }
+  };
+
+  tileEl.addEventListener('mousemove', onActivity);
+  tileEl.addEventListener('pointerdown', onActivity);
+  tileEl.addEventListener('touchstart', onActivity, { passive: true });
+}
+
+document.addEventListener('fullscreenchange', () => {
+  const fsEl = document.fullscreenElement;
+  if (!fsEl) {
+    if (fullscreenIdleTimer) {
+      clearTimeout(fullscreenIdleTimer);
+      fullscreenIdleTimer = null;
+    }
+    document.querySelectorAll('.stream-tile').forEach(tile => {
+      tile.classList.remove('fullscreen-idle', 'fullscreen-active', 'is-fullscreen');
+    });
+  } else {
+    const targetTile = fsEl.classList.contains('stream-tile')
+      ? fsEl
+      : (fsEl.querySelector('.stream-tile.is-spotlight') || fsEl.querySelector('.stream-tile'));
+    if (targetTile) {
+      targetTile.classList.add('is-fullscreen');
+      handleFullscreenActivity(targetTile);
+    }
+  }
+});
 
 // ========================================================
 // GERENCIADOR DE PRÉVIA LOCAL (SELF-VIEW FLUTUANTE & DISCRETO)
@@ -841,13 +987,6 @@ function init() {
   // Configuração Inicial de Layout e Painel Lateral
   if (btnLayoutGrid) btnLayoutGrid.addEventListener('click', () => setLayoutMode('grid'));
   if (btnLayoutStage) btnLayoutStage.addEventListener('click', () => setLayoutMode('stage'));
-  if (btnLayoutTheater) btnLayoutTheater.addEventListener('click', () => {
-    if (currentLayoutMode === 'theater') {
-      setLayoutMode('grid');
-    } else {
-      setLayoutMode('theater');
-    }
-  });
   if (btnToggleSidebar) btnToggleSidebar.addEventListener('click', () => toggleSidebar());
 
   setLayoutMode(currentLayoutMode);
@@ -1028,13 +1167,159 @@ function setupEventListeners() {
     });
   });
 
+  // ========================================================
+  // ENVIO DE IMAGENS EFÊMERAS NO CHAT & LIGHTBOX
+  // ========================================================
+  let pendingChatImage = null; // { dataUrl, filename }
+
+  function clearPendingChatImage() {
+    pendingChatImage = null;
+    if (chatImagePreview) chatImagePreview.classList.add('hidden');
+    if (chatPreviewThumb) chatPreviewThumb.src = '';
+    if (chatImageInput) chatImageInput.value = '';
+  }
+
+  function compressImage(dataUrl, maxDimension, quality, callback) {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressed = canvas.toDataURL('image/jpeg', quality);
+      callback(compressed);
+    };
+    img.onerror = () => callback(dataUrl);
+    img.src = dataUrl;
+  }
+
+  function handleChatImageFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const rawDataUrl = e.target.result;
+      compressImage(rawDataUrl, 1280, 0.82, (optimizedDataUrl) => {
+        pendingChatImage = {
+          dataUrl: optimizedDataUrl,
+          filename: file.name
+        };
+        if (chatPreviewThumb) chatPreviewThumb.src = optimizedDataUrl;
+        if (chatPreviewName) chatPreviewName.textContent = file.name;
+        if (chatImagePreview) chatImagePreview.classList.remove('hidden');
+        if (chatInput) chatInput.focus();
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  if (btnAttachImage && chatImageInput) {
+    btnAttachImage.addEventListener('click', () => {
+      chatImageInput.click();
+    });
+    chatImageInput.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        handleChatImageFile(file);
+      }
+    });
+  }
+
+  if (btnRemoveChatImage) {
+    btnRemoveChatImage.addEventListener('click', clearPendingChatImage);
+  }
+
+  // Suporte a Colar Imagens diretamente da Área de Transferência (Ctrl+V)
+  if (chatInput) {
+    chatInput.addEventListener('paste', (e) => {
+      const items = (e.clipboardData || window.clipboardData)?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            handleChatImageFile(file);
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  // Suporte a Arrastar e Soltar (Drag & Drop) imagens no chat
+  if (tabChat) {
+    tabChat.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      tabChat.classList.add('drag-over');
+    });
+    tabChat.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      tabChat.classList.remove('drag-over');
+    });
+    tabChat.addEventListener('drop', (e) => {
+      e.preventDefault();
+      tabChat.classList.remove('drag-over');
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0 && files[0].type.startsWith('image/')) {
+        handleChatImageFile(files[0]);
+      }
+    });
+  }
+
+  // Lightbox Modal para visualizar imagem ampliada
+  function openImageLightbox(src, author) {
+    if (!imageLightboxModal || !lightboxImg) return;
+    lightboxImg.src = src;
+    if (lightboxAuthor) lightboxAuthor.textContent = author || 'Imagem';
+    imageLightboxModal.classList.remove('hidden');
+    imageLightboxModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeImageLightbox() {
+    if (!imageLightboxModal) return;
+    imageLightboxModal.classList.add('hidden');
+    imageLightboxModal.setAttribute('aria-hidden', 'true');
+    if (lightboxImg) lightboxImg.src = '';
+  }
+
+  if (btnCloseLightbox) {
+    btnCloseLightbox.addEventListener('click', closeImageLightbox);
+  }
+  if (imageLightboxModal) {
+    imageLightboxModal.addEventListener('click', (e) => {
+      if (e.target === imageLightboxModal) closeImageLightbox();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && imageLightboxModal && !imageLightboxModal.classList.contains('hidden')) {
+      closeImageLightbox();
+    }
+  });
+
   chatForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const text = chatInput.value.trim();
-    if (!text) return;
+    const image = pendingChatImage ? pendingChatImage.dataUrl : null;
+    if (!text && !image) return;
 
-    signaling.send('CHAT_MESSAGE', { text });
+    signaling.send('CHAT_MESSAGE', { text, image });
     chatInput.value = '';
+    clearPendingChatImage();
   });
 
   // Botões de Iniciar Mídia
@@ -1659,8 +1944,8 @@ function setupSignalingEvents() {
   });
 
   signaling.on('CHAT_MESSAGE', (msg) => {
-    const { author, userId, text, timestamp } = msg.data;
-    appendChatMessage(author, text, timestamp, userId === roomState.myUserId);
+    const { author, userId, text, timestamp, image } = msg.data;
+    appendChatMessage(author, text, timestamp, userId === roomState.myUserId, image);
   });
 
   signaling.on('ERROR', (msg) => {
@@ -1719,17 +2004,38 @@ function appendSystemChat(text) {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function appendChatMessage(author, text, timestamp, isSelf) {
+function appendChatMessage(author, text, timestamp, isSelf, image = null) {
   const timeStr = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const div = document.createElement('div');
   div.className = 'chat-message-item';
+
+  let bodyHtml = '';
+  if (text) {
+    bodyHtml += `<div class="chat-msg-body">${escapeHtml(text)}</div>`;
+  }
+  if (image) {
+    bodyHtml += `
+      <div class="chat-msg-image-wrap">
+        <img src="${image}" class="chat-msg-image" alt="Imagem efêmera enviada por ${escapeHtml(author)}" title="Clique para ampliar">
+      </div>
+    `;
+  }
+
   div.innerHTML = `
     <div class="chat-msg-header">
-      <span class="chat-msg-author ${isSelf ? 'is-self' : ''}">${author}</span>
+      <span class="chat-msg-author ${isSelf ? 'is-self' : ''}">${escapeHtml(author)}</span>
       <span class="chat-msg-time">${timeStr}</span>
     </div>
-    <div class="chat-msg-body">${escapeHtml(text)}</div>
+    ${bodyHtml}
   `;
+
+  const imgEl = div.querySelector('.chat-msg-image');
+  if (imgEl && image) {
+    imgEl.addEventListener('click', () => {
+      openImageLightbox(image, author);
+    });
+  }
+
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -1773,6 +2079,15 @@ function leaveCurrentRoom() {
   videoGrid.classList.remove('spotlight-active');
 
   if (unmuteBanner) unmuteBanner.classList.add('hidden');
+  clearPendingChatImage();
+  closeImageLightbox();
+  if (chatMessages) {
+    chatMessages.innerHTML = `
+      <div class="system-message">
+        <span>Bem-vindo à sala! O tráfego de mídia é transmitido via P2P direto.</span>
+      </div>
+    `;
+  }
   roomState.reset();
 
   roomScreen.classList.remove('active');
@@ -2389,6 +2704,23 @@ function setupSettingsModal() {
     });
   }
 
+  // --- CONTROLE DE ÁUDIO DA CÂMERA (WEBCAM - Desativado por padrão) ---
+  const settingCaptureCameraAudio = document.getElementById('settingCaptureCameraAudio');
+  if (settingCaptureCameraAudio) {
+    settingCaptureCameraAudio.checked = Boolean(media.captureCameraAudio);
+    settingCaptureCameraAudio.addEventListener('change', async () => {
+      const enabled = settingCaptureCameraAudio.checked;
+      media.setCaptureCameraAudio(enabled);
+      if (webrtc && typeof webrtc.syncLocalMedia === 'function' && roomState) {
+        const otherIds = typeof roomState.getOtherParticipantIds === 'function'
+          ? roomState.getOtherParticipantIds()
+          : [];
+        await webrtc.syncLocalMedia(media, otherIds);
+      }
+      saveSettingsState();
+    });
+  }
+
   if (btnMuteSystemAudio) {
     btnMuteSystemAudio.addEventListener('click', () => {
       isSystemAudioMuted = !isSystemAudioMuted;
@@ -2624,6 +2956,7 @@ function setupSettingsModal() {
         minBitrate: settingMinBitrate ? settingMinBitrate.value : '4000000',
         codec: settingPreferredCodec ? settingPreferredCodec.value : 'auto',
         captureSystemAudio: settingCaptureSystemAudio ? settingCaptureSystemAudio.checked : true,
+        captureCameraAudio: settingCaptureCameraAudio ? settingCaptureCameraAudio.checked : false,
         micDeviceId: settingMicDeviceSelect ? settingMicDeviceSelect.value : '',
         echo: filterEcho ? filterEcho.checked : true,
         noise: filterNoise ? filterNoise.checked : true,
@@ -2640,6 +2973,10 @@ function setupSettingsModal() {
         if (settingCaptureSystemAudio) {
           settingCaptureSystemAudio.checked = true;
           media.setCaptureSystemAudio(true);
+        }
+        if (settingCaptureCameraAudio) {
+          settingCaptureCameraAudio.checked = false;
+          media.setCaptureCameraAudio(false);
         }
         return;
       }
@@ -2677,6 +3014,13 @@ function setupSettingsModal() {
       } else if (settingCaptureSystemAudio) {
         settingCaptureSystemAudio.checked = true;
         media.setCaptureSystemAudio(true);
+      }
+      if (s.captureCameraAudio !== undefined && settingCaptureCameraAudio) {
+        settingCaptureCameraAudio.checked = Boolean(s.captureCameraAudio);
+        media.setCaptureCameraAudio(Boolean(s.captureCameraAudio));
+      } else if (settingCaptureCameraAudio) {
+        settingCaptureCameraAudio.checked = false;
+        media.setCaptureCameraAudio(false);
       }
       if (s.echo !== undefined && filterEcho) filterEcho.checked = s.echo;
       if (s.noise !== undefined && filterNoise) filterNoise.checked = s.noise;

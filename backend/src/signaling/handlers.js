@@ -197,17 +197,29 @@ export function handleChatMessage(user, message, roomManager) {
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
-  const text = data?.text?.trim();
-  if (!text) return;
+  const text = (typeof data?.text === 'string') ? data.text.trim().slice(0, 500) : '';
+  let image = null;
+
+  // Validação segura de imagem efêmera em Base64 (data URL)
+  if (data?.image && typeof data.image === 'string' && data.image.startsWith('data:image/')) {
+    // Limite defensivo de até 7 MB para manter performance do WebSocket
+    if (data.image.length <= 7 * 1024 * 1024) {
+      image = data.image;
+    }
+  }
+
+  // Ignora se não houver texto nem imagem
+  if (!text && !image) return;
 
   const chatPayload = {
     author: user.name,
     userId: user.id,
-    text: text.slice(0, 500), // limite defensivo de caracteres
+    text,
+    image,
     timestamp: Date.now()
   };
 
-  // Chat passa diretamente pelo WebSocket e distribui para toda a sala
+  // Chat e imagens trafegam exclusivamente em memória via WebSocket e não são persistidos em disco
   room.broadcast(
     createMessage(MessageTypes.CHAT_MESSAGE, roomId, user.id, null, chatPayload)
   );

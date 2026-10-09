@@ -205,12 +205,6 @@
               </svg>
               <span class="label">Palco</span>
             </button>
-            <button type="button" id="btnLayoutTheater" class="btn-layout" title="Modo Teatro (Expandido sem painel lateral)" data-layout="theater">
-              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect width="20" height="15" x="2" y="4.5" rx="2"/><line x1="2" x2="22" y1="9" y2="9"/>
-              </svg>
-              <span class="label">Teatro</span>
-            </button>
           </div>
 
           <!-- Botão para Recolher / Expandir Painel Lateral -->
@@ -455,8 +449,25 @@
                 <span>Bem-vindo à sala! O tráfego de mídia é transmitido via P2P direto.</span>
               </div>
             </div>
+            <!-- Prévia de imagem selecionada (efêmera) -->
+            <div id="chatImagePreview" class="chat-image-preview hidden">
+              <img id="chatPreviewThumb" src="" alt="Prévia">
+              <div class="chat-preview-info">
+                <span id="chatPreviewName" class="chat-preview-filename">imagem.png</span>
+                <span class="chat-preview-note">Efêmera • Não armazenada</span>
+              </div>
+              <button type="button" id="btnRemoveChatImage" class="btn-icon-close" title="Remover imagem">&times;</button>
+            </div>
             <form id="chatForm" class="chat-input-form">
-              <input type="text" id="chatInput" placeholder="Digite uma mensagem..." maxlength="300" autocomplete="off">
+              <input type="file" id="chatImageInput" accept="image/*" style="display: none;">
+              <button type="button" id="btnAttachImage" class="btn-chat-attach" title="Enviar imagem (efêmera, sem armazenar)">
+                <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+                  <circle cx="9" cy="9" r="2"/>
+                  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+                </svg>
+              </button>
+              <input type="text" id="chatInput" placeholder="Mensagem ou cole imagem (Ctrl+V)..." maxlength="300" autocomplete="off">
               <button type="submit" class="btn btn-primary btn-sm">Enviar</button>
             </form>
           </div>
@@ -926,6 +937,25 @@
             </div>
           </div>
 
+          <!-- Card de Áudio da Câmera (Webcam - Desativado por padrão para evitar duplicação) -->
+          <div class="audio-source-card" style="margin-top: 14px;">
+            <div class="audio-source-header">
+              <div class="audio-source-info">
+                <div class="audio-source-title">
+                  <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+                  </svg>
+                  <span>Áudio da Câmera (Microfone Integrado)</span>
+                </div>
+                <span class="audio-source-help">Vem desativado por padrão para evitar eco e áudio duplicado com seu microfone. Ative apenas se quiser capturar o som da webcam.</span>
+              </div>
+              <label class="toggle-switch" title="Ativar ou desativar captura de áudio da câmera">
+                <input type="checkbox" id="settingCaptureCameraAudio">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
         </div>
 
         <!-- ABA 4: ATUALIZAÇÕES DO APP -->
@@ -934,7 +964,7 @@
             <div class="update-card-header">
               <div class="app-version-badge">
                 <span class="version-label">Versão Instalada:</span>
-                <strong id="currentAppVersionDisplay">v1.1.4</strong>
+                <strong id="currentAppVersionDisplay">v1.1.5</strong>
               </div>
               <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
                 <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -998,6 +1028,22 @@
 
       <div class="settings-modal-footer">
         <button type="button" id="btnSaveCloseSettings" class="btn btn-primary">Salvar e Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Lightbox de Imagem do Chat (Efêmera) -->
+  <div id="imageLightboxModal" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="lightbox-card">
+      <div class="lightbox-header">
+        <div class="lightbox-info">
+          <strong id="lightboxAuthor">Usuário</strong>
+          <span class="lightbox-note">• Imagem efêmera (não armazenada no servidor)</span>
+        </div>
+        <button id="btnCloseLightbox" class="btn-icon-close" title="Fechar">&times;</button>
+      </div>
+      <div class="lightbox-body">
+        <img id="lightboxImg" src="" alt="Imagem ampliada">
       </div>
     </div>
   </div>

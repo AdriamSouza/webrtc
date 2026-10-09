@@ -39,8 +39,8 @@ export class RoomState {
     return user;
   }
 
-  addChatMessage(author, text, timestamp = Date.now(), isSelf = false) {
-    const msg = { author, text, timestamp, isSelf };
+  addChatMessage(author, text, timestamp = Date.now(), isSelf = false, image = null) {
+    const msg = { author, text, timestamp, isSelf, image };
     this.chatMessages.push(msg);
     return msg;
   }

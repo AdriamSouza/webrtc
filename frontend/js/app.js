@@ -82,6 +82,7 @@ const micIcon = document.getElementById('micIcon');
 const micLabel = document.getElementById('micLabel');
 const btnFullscreen = document.getElementById('btnFullscreen');
 const btnLeaveRoom = document.getElementById('btnLeaveRoom');
+const btnLeaveRoomHeader = document.getElementById('btnLeaveRoomHeader');
 
 // Elementos do DOM - Sidebar (Chat & Participantes)
 const sidebarTabs = document.querySelectorAll('.sidebar-tabs .tab-btn');
@@ -1170,63 +1171,6 @@ function setupEventListeners() {
   // ========================================================
   // ENVIO DE IMAGENS EFÊMERAS NO CHAT & LIGHTBOX
   // ========================================================
-  let pendingChatImage = null; // { dataUrl, filename }
-
-  function clearPendingChatImage() {
-    pendingChatImage = null;
-    if (chatImagePreview) chatImagePreview.classList.add('hidden');
-    if (chatPreviewThumb) chatPreviewThumb.src = '';
-    if (chatImageInput) chatImageInput.value = '';
-  }
-
-  function compressImage(dataUrl, maxDimension, quality, callback) {
-    const img = new Image();
-    img.onload = () => {
-      let width = img.width;
-      let height = img.height;
-
-      if (width > maxDimension || height > maxDimension) {
-        if (width > height) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        } else {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
-        }
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, width, height);
-      const compressed = canvas.toDataURL('image/jpeg', quality);
-      callback(compressed);
-    };
-    img.onerror = () => callback(dataUrl);
-    img.src = dataUrl;
-  }
-
-  function handleChatImageFile(file) {
-    if (!file || !file.type.startsWith('image/')) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const rawDataUrl = e.target.result;
-      compressImage(rawDataUrl, 1280, 0.82, (optimizedDataUrl) => {
-        pendingChatImage = {
-          dataUrl: optimizedDataUrl,
-          filename: file.name
-        };
-        if (chatPreviewThumb) chatPreviewThumb.src = optimizedDataUrl;
-        if (chatPreviewName) chatPreviewName.textContent = file.name;
-        if (chatImagePreview) chatImagePreview.classList.remove('hidden');
-        if (chatInput) chatInput.focus();
-      });
-    };
-    reader.readAsDataURL(file);
-  }
-
   if (btnAttachImage && chatImageInput) {
     btnAttachImage.addEventListener('click', () => {
       chatImageInput.click();
@@ -1279,22 +1223,6 @@ function setupEventListeners() {
         handleChatImageFile(files[0]);
       }
     });
-  }
-
-  // Lightbox Modal para visualizar imagem ampliada
-  function openImageLightbox(src, author) {
-    if (!imageLightboxModal || !lightboxImg) return;
-    lightboxImg.src = src;
-    if (lightboxAuthor) lightboxAuthor.textContent = author || 'Imagem';
-    imageLightboxModal.classList.remove('hidden');
-    imageLightboxModal.setAttribute('aria-hidden', 'false');
-  }
-
-  function closeImageLightbox() {
-    if (!imageLightboxModal) return;
-    imageLightboxModal.classList.add('hidden');
-    imageLightboxModal.setAttribute('aria-hidden', 'true');
-    if (lightboxImg) lightboxImg.src = '';
   }
 
   if (btnCloseLightbox) {
@@ -1356,10 +1284,17 @@ function setupEventListeners() {
     }
   });
 
-  // Sair da Sala
-  btnLeaveRoom.addEventListener('click', () => {
-    leaveCurrentRoom();
-  });
+  // Sair da Sala (Barra inferior e Barra superior)
+  if (btnLeaveRoom) {
+    btnLeaveRoom.addEventListener('click', () => {
+      leaveCurrentRoom();
+    });
+  }
+  if (btnLeaveRoomHeader) {
+    btnLeaveRoomHeader.addEventListener('click', () => {
+      leaveCurrentRoom();
+    });
+  }
 
   media.onStreamEnded = () => {
     handleStreamEnded();
@@ -2004,6 +1939,81 @@ function appendSystemChat(text) {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+// ========================================================
+// 7. ENVIO DE IMAGENS EFÊMERAS NO CHAT & LIGHTBOX
+// ========================================================
+let pendingChatImage = null; // { dataUrl, filename }
+
+function clearPendingChatImage() {
+  pendingChatImage = null;
+  if (chatImagePreview) chatImagePreview.classList.add('hidden');
+  if (chatPreviewThumb) chatPreviewThumb.src = '';
+  if (chatImageInput) chatImageInput.value = '';
+}
+
+function compressImage(dataUrl, maxDimension, quality, callback) {
+  const img = new Image();
+  img.onload = () => {
+    let width = img.width;
+    let height = img.height;
+
+    if (width > maxDimension || height > maxDimension) {
+      if (width > height) {
+        height = Math.round((height * maxDimension) / width);
+        width = maxDimension;
+      } else {
+        width = Math.round((width * maxDimension) / height);
+        height = maxDimension;
+      }
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+    const compressed = canvas.toDataURL('image/jpeg', quality);
+    callback(compressed);
+  };
+  img.onerror = () => callback(dataUrl);
+  img.src = dataUrl;
+}
+
+function handleChatImageFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const rawDataUrl = e.target.result;
+    compressImage(rawDataUrl, 1280, 0.82, (optimizedDataUrl) => {
+      pendingChatImage = {
+        dataUrl: optimizedDataUrl,
+        filename: file.name
+      };
+      if (chatPreviewThumb) chatPreviewThumb.src = optimizedDataUrl;
+      if (chatPreviewName) chatPreviewName.textContent = file.name;
+      if (chatImagePreview) chatImagePreview.classList.remove('hidden');
+      if (chatInput) chatInput.focus();
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function openImageLightbox(src, author) {
+  if (!imageLightboxModal || !lightboxImg) return;
+  lightboxImg.src = src;
+  if (lightboxAuthor) lightboxAuthor.textContent = author || 'Imagem';
+  imageLightboxModal.classList.remove('hidden');
+  imageLightboxModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeImageLightbox() {
+  if (!imageLightboxModal) return;
+  imageLightboxModal.classList.add('hidden');
+  imageLightboxModal.setAttribute('aria-hidden', 'true');
+  if (lightboxImg) lightboxImg.src = '';
+}
+
 function appendChatMessage(author, text, timestamp, isSelf, image = null) {
   const timeStr = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const div = document.createElement('div');
@@ -2045,53 +2055,92 @@ function escapeHtml(str) {
 }
 
 function leaveCurrentRoom() {
-  currentAttemptedPin = null;
-  hideLobbyAlert();
-  qualityController.stop();
-  media.stopCamera();
-  media.stopScreenCapture();
-  webrtc.closeAllPeers();
-  signaling.send('LEAVE_ROOM', {});
-  signaling.disconnect();
+  console.log('[App] Executando saída da sala...');
+  try {
+    currentAttemptedPin = null;
+    hideLobbyAlert();
+    try { qualityController.stop(); } catch (e) { console.warn('[App] Erro qualityController.stop:', e); }
+    try { media.stopCamera(); } catch (e) { console.warn('[App] Erro media.stopCamera:', e); }
+    try { media.stopScreenCapture(); } catch (e) { console.warn('[App] Erro media.stopScreenCapture:', e); }
+    try { media.stopMicrophone(); } catch (e) { console.warn('[App] Erro media.stopMicrophone:', e); }
+    try { webrtc.closeAllPeers(); } catch (e) { console.warn('[App] Erro webrtc.closeAllPeers:', e); }
 
-  peerSyncTimers.forEach(t => clearTimeout(t));
-  peerSyncTimers.clear();
-  peerRetryCounts.clear();
+    try { signaling.send('LEAVE_ROOM', {}); } catch (e) {}
+    try { signaling.disconnect(); } catch (e) {}
 
-  removeLocalPreview('screen');
-  removeLocalPreview('camera');
-  localPreviews.clear();
-  remoteUserMedia.clear();
-  updateLocalDockVisibility();
+    peerSyncTimers.forEach(t => clearTimeout(t));
+    peerSyncTimers.clear();
+    peerRetryCounts.clear();
 
-  activeTiles.forEach(({ videoEl }) => {
-    if (videoEl) {
-      try {
-        videoEl.pause();
-        videoEl.srcObject = null;
-        videoEl.load();
-      } catch (_) {}
+    try { removeLocalPreview('screen'); } catch (e) {}
+    try { removeLocalPreview('camera'); } catch (e) {}
+    localPreviews.clear();
+    remoteUserMedia.clear();
+    try { updateLocalDockVisibility(); } catch (e) {}
+
+    activeTiles.forEach(({ videoEl }) => {
+      if (videoEl) {
+        try {
+          videoEl.pause();
+          videoEl.srcObject = null;
+          videoEl.load();
+        } catch (_) {}
+      }
+    });
+    activeTiles.clear();
+    if (videoGrid) {
+      videoGrid.innerHTML = '';
+      videoGrid.classList.remove('spotlight-active');
     }
-  });
-  activeTiles.clear();
-  videoGrid.innerHTML = '';
-  currentSpotlightId = null;
-  videoGrid.classList.remove('spotlight-active');
+    currentSpotlightId = null;
 
-  if (unmuteBanner) unmuteBanner.classList.add('hidden');
-  clearPendingChatImage();
-  closeImageLightbox();
-  if (chatMessages) {
-    chatMessages.innerHTML = `
-      <div class="system-message">
-        <span>Bem-vindo à sala! O tráfego de mídia é transmitido via P2P direto.</span>
-      </div>
-    `;
+    if (unmuteBanner) unmuteBanner.classList.add('hidden');
+    try { clearPendingChatImage(); } catch (_) {}
+    try { closeImageLightbox(); } catch (_) {}
+    if (chatMessages) {
+      chatMessages.innerHTML = `
+        <div class="system-message">
+          <span>Bem-vindo à sala! O tráfego de mídia é transmitido via P2P direto.</span>
+        </div>
+      `;
+    }
+    try { roomState.reset(); } catch (e) { console.warn('[App] Erro roomState.reset:', e); }
+
+    // Redefinir botões e ícones da toolbar
+    if (btnShareScreen) {
+      btnShareScreen.classList.remove('active');
+      const lbl = btnShareScreen.querySelector('.label');
+      if (lbl) lbl.textContent = 'Compartilhar Tela';
+    }
+    if (btnToggleCamera) {
+      btnToggleCamera.classList.remove('active');
+      if (cameraIcon) cameraIcon.innerHTML = Icons.videoOff(18);
+      if (cameraLabel) cameraLabel.textContent = 'Câmera';
+    }
+    if (btnToggleAudio) {
+      btnToggleAudio.classList.remove('active');
+      if (micIcon) micIcon.innerHTML = Icons.mic(18);
+      if (micLabel) micLabel.textContent = 'Microfone';
+    }
+    if (document.fullscreenElement) {
+      try { document.exitFullscreen().catch(() => {}); } catch (_) {}
+    }
+
+    // Limpar parâmetros da URL (remover ?room= e ?pin= do navegador)
+    try {
+      if (window.location.search) {
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+      }
+    } catch (_) {}
+
+  } catch (err) {
+    console.error('[App] Erro durante saída da sala:', err);
+  } finally {
+    // Garante sem exceção a transição visual para o Lobby
+    if (roomScreen) roomScreen.classList.remove('active');
+    if (lobbyScreen) lobbyScreen.classList.add('active');
   }
-  roomState.reset();
-
-  roomScreen.classList.remove('active');
-  lobbyScreen.classList.add('active');
 }
 
 // ========================================================

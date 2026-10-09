@@ -1452,6 +1452,18 @@ body.dark-theme {
   border-color: var(--border-focus);
 }
 
+.btn-danger {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: #f87171;
+}
+
+.btn-danger:hover {
+  background: var(--danger-color);
+  color: #ffffff;
+  border-color: var(--danger-color);
+}
+
 .btn-sm {
   padding: 5px 10px;
   font-size: 0.74rem;

@@ -94,11 +94,13 @@ export class SignalingClient {
   }
 
   attemptReconnect() {
+    if (!this.roomId) return;
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
       console.log(`[SignalingClient] Tentando reconectar em ${delay}ms (Tentativa ${this.reconnectAttempts})...`);
       setTimeout(() => {
+        if (!this.roomId) return;
         this.connect().catch(() => {});
       }, delay);
     }
@@ -161,9 +163,14 @@ export class SignalingClient {
   }
 
   disconnect() {
+    this.roomId = null;
+    this.reconnectAttempts = this.maxReconnectAttempts;
     if (this.ws) {
-      this.ws.close();
+      try {
+        this.ws.close();
+      } catch (_) {}
       this.ws = null;
     }
+    this.isConnected = false;
   }
 }

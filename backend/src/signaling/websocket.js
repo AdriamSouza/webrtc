@@ -14,7 +14,10 @@ import {
   handleMute,
   handleMediaState,
   handleChatMessage,
-  handleDisconnect
+  handleDisconnect,
+  handleStreamList,
+  handleSubscribeStream,
+  handleUnsubscribeStream
 } from './handlers.js';
 
 /**
@@ -122,6 +125,18 @@ export function setupWebSocketServer(httpServer) {
 
           case MessageTypes.LEAVE_ROOM:
             handleDisconnect(user, roomManager);
+            break;
+
+          case MessageTypes.STREAM_LIST:
+            handleStreamList(user, message, roomManager);
+            break;
+
+          case MessageTypes.SUBSCRIBE_STREAM:
+            handleSubscribeStream(user, message, roomManager);
+            break;
+
+          case MessageTypes.UNSUBSCRIBE_STREAM:
+            handleUnsubscribeStream(user, message, roomManager);
             break;
 
           case MessageTypes.PING:

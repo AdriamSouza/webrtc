@@ -10,6 +10,7 @@ export class Room {
     this.hostToken = metadata.hostToken || null;
     this.password = metadata.password ? String(metadata.password).trim() : null;
     this.users = new Map(); // Map<userId, User>
+    this.streams = new Map(); // Map<streamId, StreamInfo> (Catálogo efêmero de transmissões)
     this.status = 'idle'; // 'idle' | 'streaming' | 'closed'
     this.metadata = metadata;
     this.createdAt = new Date();
@@ -76,6 +77,71 @@ export class Room {
     return user;
   }
 
+  /**
+   * Registra uma nova transmissão publicada na sala
+   */
+  publishStream(user, sourceType = 'desktop', customTitle = null) {
+    const streamId = `${user.id}-${sourceType}`;
+    const defaultTitle = (sourceType === 'desktop' || sourceType === 'screen')
+      ? `Área de Trabalho de ${user.name}`
+      : `Câmera de ${user.name}`;
+
+    const streamInfo = {
+      streamId,
+      roomId: this.id,
+      hostId: user.id,
+      hostName: user.name,
+      sourceType: (sourceType === 'screen') ? 'desktop' : sourceType,
+      title: customTitle || defaultTitle,
+      status: 'live',
+      publishedAt: Date.now()
+    };
+
+    this.streams.set(streamId, streamInfo);
+    this.status = 'streaming';
+    this.lastActiveAt = new Date();
+    return streamInfo;
+  }
+
+  /**
+   * Remove uma transmissão publicada (por tipo específico ou todas do usuário)
+   */
+  unpublishStream(userId, sourceType = null) {
+    const removed = [];
+    if (sourceType) {
+      const typeKey = (sourceType === 'screen') ? 'desktop' : sourceType;
+      const streamId = `${userId}-${typeKey}`;
+      const altStreamId = `${userId}-${sourceType}`;
+      [streamId, altStreamId].forEach(id => {
+        if (this.streams.has(id)) {
+          removed.push(this.streams.get(id));
+          this.streams.delete(id);
+        }
+      });
+    } else {
+      for (const [streamId, info] of this.streams.entries()) {
+        if (info.hostId === userId) {
+          removed.push(info);
+          this.streams.delete(streamId);
+        }
+      }
+    }
+
+    if (this.streams.size === 0) {
+      this.status = 'idle';
+    }
+    this.lastActiveAt = new Date();
+    return removed;
+  }
+
+  getStream(streamId) {
+    return this.streams.get(streamId) || null;
+  }
+
+  getAllStreams() {
+    return Array.from(this.streams.values());
+  }
+
   getUser(userId) {
     return this.users.get(userId);
   }
@@ -131,6 +197,7 @@ export class Room {
       status: this.status,
       userCount: this.users.size,
       users: this.getAllUsers().map(u => u.toJSON()),
+      streams: this.getAllStreams(),
       createdAt: this.createdAt
     };
   }

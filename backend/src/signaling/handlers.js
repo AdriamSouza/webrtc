@@ -40,7 +40,8 @@ export function handleJoinRoom(user, message, roomManager, config) {
         userId: user.id,
         username: user.name,
         iceServers: config.iceServers,
-        users: room.getAllUsers().map(u => u.toJSON())
+        users: room.getAllUsers().map(u => u.toJSON()),
+        streams: room.getAllStreams()
       })
     );
 
@@ -126,13 +127,28 @@ export function handleStartStream(user, message, roomManager) {
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
-  user.isScreenSharing = true;
+  const sourceType = data?.type || 'desktop';
+  const customTitle = data?.title || null;
+  const streamInfo = room.publishStream(user, sourceType, customTitle);
+
+  user.isScreenSharing = (sourceType === 'desktop' || sourceType === 'screen');
+  if (sourceType === 'camera') user.isCameraActive = true;
   if (!user.mediaState) user.mediaState = {};
-  user.mediaState.screen = { active: true, ...data };
+  user.mediaState[sourceType] = { active: true, ...data };
   room.status = 'streaming';
 
+  console.log(`[Catalog] Transmissão publicada por ${user.name}: ${streamInfo.streamId} (${streamInfo.title})`);
+
+  // 1. Mensagem clássica para compatibilidade de clientes legados
   room.broadcast(
-    createMessage(MessageTypes.START_STREAM, roomId, user.id, null, data || {})
+    createMessage(MessageTypes.START_STREAM, roomId, user.id, null, { ...data, streamInfo })
+  );
+
+  // 2. Anúncio formal no Catálogo de Transmissões da Sala
+  room.broadcast(
+    createMessage(MessageTypes.STREAM_PUBLISHED, roomId, user.id, null, {
+      stream: streamInfo
+    })
   );
 }
 
@@ -141,16 +157,32 @@ export function handleStopStream(user, message, roomManager) {
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
-  user.isScreenSharing = false;
+  const sourceType = message.data?.type || 'desktop';
+  const removed = room.unpublishStream(user.id, sourceType);
+
+  if (sourceType === 'desktop' || sourceType === 'screen') user.isScreenSharing = false;
+  if (sourceType === 'camera') user.isCameraActive = false;
   if (!user.mediaState) user.mediaState = {};
-  user.mediaState.screen = { active: false };
-  room.status = 'idle';
+  user.mediaState[sourceType] = { active: false };
+
+  console.log(`[Catalog] Transmissão encerrada por ${user.name}: tipo=${sourceType}`);
 
   room.broadcast(
     createMessage(MessageTypes.STOP_STREAM, roomId, user.id, null, {
-      userId: user.id
+      userId: user.id,
+      type: sourceType
     })
   );
+
+  removed.forEach(streamInfo => {
+    room.broadcast(
+      createMessage(MessageTypes.STREAM_ENDED, roomId, user.id, null, {
+        streamId: streamInfo.streamId,
+        hostId: user.id,
+        sourceType: streamInfo.sourceType
+      })
+    );
+  });
 }
 
 export function handleMute(user, message, roomManager) {
@@ -158,11 +190,11 @@ export function handleMute(user, message, roomManager) {
   const room = roomManager.getRoom(roomId);
   if (!room) return;
 
-  const isMuted = Boolean(data?.muted);
+  const isMuted = Boolean(message.data?.muted);
   user.isMuted = isMuted;
 
   room.broadcast(
-    createMessage(isMuted ? MessageTypes.MUTE : MessageTypes.UNMUTE, roomId, user.id, null, data)
+    createMessage(isMuted ? MessageTypes.MUTE : MessageTypes.UNMUTE, roomId, user.id, null, message.data)
   );
 }
 
@@ -172,15 +204,37 @@ export function handleMediaState(user, message, roomManager) {
   if (!room) return;
 
   const data = message.data || {};
-  if (data?.type === 'screen') {
+  const sourceType = data?.type;
+  if (!sourceType) return;
+
+  if (sourceType === 'screen' || sourceType === 'desktop') {
     user.isScreenSharing = Boolean(data.active);
-  } else if (data?.type === 'camera') {
+  } else if (sourceType === 'camera') {
     user.isCameraActive = Boolean(data.active);
   }
 
   if (!user.mediaState) user.mediaState = {};
-  if (data?.type) {
-    user.mediaState[data.type] = data;
+  user.mediaState[sourceType] = data;
+
+  // Atualização sincronizada no catálogo da sala
+  if (data.active) {
+    const streamInfo = room.publishStream(user, sourceType, data.title || null);
+    room.broadcast(
+      createMessage(MessageTypes.STREAM_PUBLISHED, roomId, user.id, null, {
+        stream: streamInfo
+      })
+    );
+  } else {
+    const removed = room.unpublishStream(user.id, sourceType);
+    removed.forEach(streamInfo => {
+      room.broadcast(
+        createMessage(MessageTypes.STREAM_ENDED, roomId, user.id, null, {
+          streamId: streamInfo.streamId,
+          hostId: user.id,
+          sourceType: streamInfo.sourceType
+        })
+      );
+    });
   }
 
   room.broadcast(
@@ -190,6 +244,62 @@ export function handleMediaState(user, message, roomManager) {
     }),
     user.id
   );
+}
+
+export function handleStreamList(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  user.send(
+    createMessage(MessageTypes.STREAM_LIST, roomId, 'server', user.id, {
+      streams: room.getAllStreams()
+    })
+  );
+}
+
+export function handleSubscribeStream(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  const { streamId } = message.data || {};
+  const streamInfo = room.getStream(streamId);
+  if (!streamInfo) return;
+
+  console.log(`[Subscription] Usuário ${user.name} (${user.id}) assinou transmissão: ${streamId}`);
+  const host = room.getUser(streamInfo.hostId);
+  if (host && host.id !== user.id) {
+    host.send(
+      createMessage(MessageTypes.SUBSCRIBE_STREAM, roomId, user.id, host.id, {
+        streamId,
+        subscriberId: user.id,
+        subscriberName: user.name
+      })
+    );
+  }
+}
+
+export function handleUnsubscribeStream(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  const { streamId } = message.data || {};
+  const streamInfo = room.getStream(streamId);
+  if (!streamInfo) return;
+
+  console.log(`[Subscription] Usuário ${user.name} (${user.id}) desinscreveu de: ${streamId}`);
+  const host = room.getUser(streamInfo.hostId);
+  if (host && host.id !== user.id) {
+    host.send(
+      createMessage(MessageTypes.UNSUBSCRIBE_STREAM, roomId, user.id, host.id, {
+        streamId,
+        subscriberId: user.id,
+        subscriberName: user.name
+      })
+    );
+  }
 }
 
 export function handleChatMessage(user, message, roomManager) {
@@ -227,6 +337,20 @@ export function handleChatMessage(user, message, roomManager) {
 
 export function handleDisconnect(user, roomManager) {
   console.log(`[Signaling] Conexão encerrada: ${user.name} (${user.id})`);
+
+  const room = roomManager.getRoom(user.roomId);
+  if (room) {
+    const removedStreams = room.unpublishStream(user.id);
+    removedStreams.forEach(streamInfo => {
+      room.broadcast(
+        createMessage(MessageTypes.STREAM_ENDED, room.id, user.id, null, {
+          streamId: streamInfo.streamId,
+          hostId: user.id,
+          sourceType: streamInfo.sourceType
+        })
+      );
+    });
+  }
 
   const result = roomManager.leaveRoom(user);
   if (result && result.room) {

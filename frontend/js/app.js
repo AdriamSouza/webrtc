@@ -84,10 +84,13 @@ const btnFullscreen = document.getElementById('btnFullscreen');
 const btnLeaveRoom = document.getElementById('btnLeaveRoom');
 const btnLeaveRoomHeader = document.getElementById('btnLeaveRoomHeader');
 
-// Elementos do DOM - Sidebar (Chat & Participantes)
+// Elementos do DOM - Sidebar (Chat, Transmissões & Participantes)
 const sidebarTabs = document.querySelectorAll('.sidebar-tabs .tab-btn');
 const tabChat = document.getElementById('tabChat');
+const tabStreams = document.getElementById('tabStreams');
 const tabParticipants = document.getElementById('tabParticipants');
+const streamsList = document.getElementById('streamsList');
+const tabStreamCount = document.getElementById('tabStreamCount');
 const chatMessages = document.getElementById('chatMessages');
 const chatForm = document.getElementById('chatForm');
 const chatInput = document.getElementById('chatInput');
@@ -400,7 +403,7 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
       if (type === 'screen') handleToggleScreenShare();
       if (type === 'camera') handleToggleCamera();
     } else {
-      removeTile(id);
+      toggleStreamSubscription(id, false);
     }
   });
 
@@ -514,9 +517,10 @@ function syncRemotePeerTiles(userId) {
 
   let pendingTrack = false;
 
-  // 1. Sincroniza Transmissão de Tela
+  // 1. Sincroniza Transmissão de Tela (Sob Demanda via Assinatura)
   const screenTileId = `${userId}-screen`;
-  if (userMedia.screen) {
+  const isScreenSubscribed = roomState.isSubscribed(screenTileId);
+  if (userMedia.screen && isScreenSubscribed) {
     const screenStream = webrtc.getRemoteStreamForTile(userId, 'screen');
     const screenVideoTrack = webrtc.getRemoteVideoTrack(userId, 'screen');
 
@@ -547,9 +551,10 @@ function syncRemotePeerTiles(userId) {
     removeTile(screenTileId);
   }
 
-  // 2. Sincroniza Transmissão de Câmera
+  // 2. Sincroniza Transmissão de Câmera (Sob Demanda via Assinatura)
   const cameraTileId = `${userId}-camera`;
-  if (userMedia.camera) {
+  const isCameraSubscribed = roomState.isSubscribed(cameraTileId);
+  if (userMedia.camera && isCameraSubscribed) {
     const cameraStream = webrtc.getRemoteStreamForTile(userId, 'camera');
     const cameraVideoTrack = webrtc.getRemoteVideoTrack(userId, 'camera');
 
@@ -950,8 +955,12 @@ function updateGridLayout() {
     streamPlaceholder.classList.remove('hidden');
     const isSharingScreen = media.hasActiveScreenStream();
     const isSharingCamera = media.hasActiveCamera();
+    const availableRemoteStreams = roomState.getAllStreams().filter(s => s.hostId !== roomState.myUserId);
 
-    if (isSharingScreen && isSharingCamera) {
+    if (availableRemoteStreams.length > 0 && !isSharingScreen && !isSharingCamera) {
+      placeholderNotice.textContent = `${availableRemoteStreams.length} transmissão(ões) disponível(is) na sala. Abra a aba "Transmissões" no painel lateral para assistir sob demanda.`;
+      updateConnectionStatus('connected', `${availableRemoteStreams.length} Transmissão${availableRemoteStreams.length > 1 ? 'ões' : ''} no Catálogo`);
+    } else if (isSharingScreen && isSharingCamera) {
       placeholderNotice.textContent = 'Você está transmitindo sua tela (60 FPS) e sua câmera. Aguardando outros participantes.';
       updateConnectionStatus('connected', 'Transmitindo Tela + Câmera');
     } else if (isSharingScreen) {
@@ -1194,12 +1203,12 @@ function setupEventListeners() {
       tab.classList.add('active');
 
       const target = tab.dataset.tab;
-      if (target === 'chat') {
-        tabChat.classList.add('active');
-        tabParticipants.classList.remove('active');
-      } else {
-        tabChat.classList.remove('active');
-        tabParticipants.classList.add('active');
+      if (tabChat) tabChat.classList.toggle('active', target === 'chat');
+      if (tabStreams) tabStreams.classList.toggle('active', target === 'streams');
+      if (tabParticipants) tabParticipants.classList.toggle('active', target === 'participants');
+
+      if (target === 'streams') {
+        renderStreamCatalogUI();
       }
     });
   });
@@ -1768,13 +1777,14 @@ function setupSignalingEvents() {
     }
 
     const roomId = msg.roomId || msg.data?.roomId || signaling.roomId;
-    const { userId, username, isHost, users, iceServers, hostToken, hasPassword } = msg.data || {};
+    const { userId, username, isHost, users, iceServers, hostToken, hasPassword, streams } = msg.data || {};
     signaling.userId = userId;
 
     roomState.setRoomInfo(roomId, userId, username, isHost, users, {
       hostToken,
       hasPassword,
-      roomPin: currentAttemptedPin
+      roomPin: currentAttemptedPin,
+      initialStreams: streams || []
     });
     webrtc.setIceServers(iceServers);
 
@@ -1792,6 +1802,8 @@ function setupSignalingEvents() {
     updateConnectionStatus('connected', 'Sala Pronta');
 
     updateParticipantsUI();
+    updateStreamCatalogBadge();
+    renderStreamCatalogUI();
 
     // Registra mídias de usuários já presentes na sala
     if (Array.isArray(users)) {
@@ -1857,9 +1869,13 @@ function setupSignalingEvents() {
     // Remove todos os tiles pertencentes a este usuário do grid
     removeTile(`${userId}-screen`);
     removeTile(`${userId}-camera`);
+    removeTile(`${userId}-desktop`);
     remoteUserMedia.delete(userId);
 
     updateParticipantsUI();
+    updateStreamCatalogBadge();
+    renderStreamCatalogUI();
+    updateGridLayout();
     appendSystemChat(`${username || 'Um usuário'} saiu da sala.`);
   });
 
@@ -1935,6 +1951,45 @@ function setupSignalingEvents() {
         webrtc.updatePeerMediaState(uid, 'screen', false);
         removeTile(`${uid}-screen`);
       });
+      updateGridLayout();
+    }
+  });
+
+  signaling.on('STREAM_LIST', (msg) => {
+    const streams = msg.data?.streams || [];
+    roomState.setStreams(streams);
+    updateStreamCatalogBadge();
+    renderStreamCatalogUI();
+    updateGridLayout();
+  });
+
+  signaling.on('STREAM_PUBLISHED', (msg) => {
+    const streamInfo = msg.data;
+    if (!streamInfo) return;
+    roomState.addStream(streamInfo);
+    updateStreamCatalogBadge();
+    renderStreamCatalogUI();
+
+    if (streamInfo.hostId !== roomState.myUserId) {
+      appendSystemChat(`${streamInfo.hostName} iniciou uma transmissão: "${streamInfo.title}".`);
+      // Auto-subscrição por conveniência quando há apenas 2 pessoas na sala (chamada direta 1-a-1)
+      if (roomState.participants.size <= 2 && roomState.subscribedStreamIds.size === 0) {
+        toggleStreamSubscription(streamInfo.streamId, true);
+      }
+    }
+    updateGridLayout();
+  });
+
+  signaling.on('STREAM_ENDED', (msg) => {
+    const { streamId, hostId, sourceType } = msg.data || {};
+    if (streamId) {
+      roomState.removeStream(streamId);
+      removeTile(streamId);
+      if (sourceType) {
+        removeTile(`${hostId}-${sourceType === 'desktop' ? 'screen' : sourceType}`);
+      }
+      updateStreamCatalogBadge();
+      renderStreamCatalogUI();
       updateGridLayout();
     }
   });
@@ -2017,6 +2072,121 @@ function updateParticipantsUI() {
     `;
     participantsList.appendChild(li);
   }
+}
+
+function updateStreamCatalogBadge() {
+  if (tabStreamCount) {
+    tabStreamCount.textContent = roomState.availableStreams.size;
+  }
+}
+
+function toggleStreamSubscription(streamId, forceSubscribe = null) {
+  if (!streamId) return;
+  const currentSubscribed = roomState.isSubscribed(streamId);
+  const shouldSubscribe = (forceSubscribe !== null) ? forceSubscribe : !currentSubscribed;
+  const streamInfo = roomState.availableStreams.get(streamId);
+
+  if (shouldSubscribe) {
+    roomState.subscribe(streamId);
+    signaling.send('SUBSCRIBE_STREAM', { streamId });
+    if (streamInfo && streamInfo.hostId) {
+      syncRemotePeerTiles(streamInfo.hostId);
+    }
+  } else {
+    roomState.unsubscribe(streamId);
+    signaling.send('UNSUBSCRIBE_STREAM', { streamId });
+    removeTile(streamId);
+    if (streamId.endsWith('-screen')) removeTile(streamId.replace(/-screen$/, '-desktop'));
+    if (streamId.endsWith('-desktop')) removeTile(streamId.replace(/-desktop$/, '-screen'));
+  }
+
+  renderStreamCatalogUI();
+  updateGridLayout();
+}
+
+function renderStreamCatalogUI() {
+  if (!streamsList) return;
+  updateStreamCatalogBadge();
+  streamsList.innerHTML = '';
+
+  const streams = roomState.getAllStreams();
+  if (streams.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'stream-catalog-empty';
+    emptyDiv.innerHTML = `
+      <svg class="icon-svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect width="20" height="14" x="2" y="3" rx="2"/>
+        <line x1="8" x2="16" y1="21" y2="21"/>
+        <line x1="12" x2="12" y1="17" y2="21"/>
+      </svg>
+      <p>Nenhuma transmissão ativa nesta sala.<br>Quando alguém compartilhar tela ou câmera, ela aparecerá aqui.</p>
+    `;
+    streamsList.appendChild(emptyDiv);
+    return;
+  }
+
+  streams.forEach((stream) => {
+    const isSelf = stream.hostId === roomState.myUserId;
+    const isSubscribed = roomState.isSubscribed(stream.streamId);
+    const isScreen = stream.sourceType === 'desktop' || stream.sourceType === 'screen';
+
+    const card = document.createElement('div');
+    card.className = `stream-catalog-card ${isSubscribed ? 'subscribed' : ''}`;
+
+    const iconSvg = isScreen ? Icons.monitor(16) : Icons.video(16);
+    const hostLabel = isSelf ? `${escapeHtml(stream.hostName)} <em>(Você)</em>` : escapeHtml(stream.hostName);
+
+    card.innerHTML = `
+      <div class="stream-card-top">
+        <div class="stream-card-info">
+          <div class="stream-source-icon">
+            ${iconSvg}
+          </div>
+          <div class="stream-card-meta">
+            <span class="stream-card-title" title="${escapeHtml(stream.title)}">${escapeHtml(stream.title)}</span>
+            <span class="stream-card-host">Transmitido por: ${hostLabel}</span>
+          </div>
+        </div>
+        <div class="stream-card-badges">
+          <span class="badge-live">
+            <span class="badge-live-dot"></span> AO VIVO
+          </span>
+        </div>
+      </div>
+      <div class="stream-card-bottom">
+        <span class="stream-status-label">${isSelf ? 'Sua transmissão' : (isSubscribed ? 'Assistindo (Ativo)' : 'Disponível')}</span>
+        ${isSelf ? `
+          <span class="stream-self-badge" style="font-size:0.7rem; color:var(--text-muted);">Prévia Local</span>
+        ` : `
+          <button type="button" class="btn-stream-action ${isSubscribed ? 'btn-stream-unsubscribe' : 'btn-stream-subscribe'}" data-stream-id="${stream.streamId}">
+            ${isSubscribed ? `
+              <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              <span>Parar</span>
+            ` : `
+              <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span>Assistir</span>
+            `}
+          </button>
+        `}
+      </div>
+    `;
+
+    if (!isSelf) {
+      const btnAction = card.querySelector('.btn-stream-action');
+      if (btnAction) {
+        btnAction.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleStreamSubscription(stream.streamId);
+        });
+      }
+    }
+
+    streamsList.appendChild(card);
+  });
 }
 
 function appendSystemChat(text) {
@@ -2264,7 +2434,11 @@ function leaveCurrentRoom() {
         </div>
       `;
     }
-    try { roomState.reset(); } catch (e) { console.warn('[App] Erro roomState.reset:', e); }
+    try {
+      roomState.reset();
+      updateStreamCatalogBadge();
+      renderStreamCatalogUI();
+    } catch (e) { console.warn('[App] Erro roomState.reset:', e); }
 
     // Redefinir botões e ícones da toolbar
     if (btnShareScreen) {

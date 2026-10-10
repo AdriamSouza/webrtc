@@ -38,11 +38,11 @@ em tempo real, priorizando:
 -   [x] A quantidade de transmissões ativas deverá ser condicionada ao
     desempenho e aos recursos disponíveis.
 -   [x] O tipo de fonte inicialmente considerado inclui `desktop`.
--   [ ] Confirmar se o catálogo inicial deve listar somente desktops ou
-    todas as fontes de mídia publicadas na sala.
--   [ ] Definir se a seleção manual permitirá ativar várias fontes de
+-   [x] Confirmar se o catálogo inicial deve listar somente desktops ou
+    todas as fontes de mídia publicadas na sala (Definido: lista `desktop` e `camera`).
+-   [x] Definir se a seleção manual permitirá ativar várias fontes de
     uma vez ou se a primeira versão será liberada progressivamente após
-    validar uma fonte.
+    validar uma fonte (Definido: seleção individual sob demanda no catálogo, com suporte a múltiplas transmissões ativas simultâneas).
 
 ### Princípios técnicos
 
@@ -55,33 +55,33 @@ em tempo real, priorizando:
     necessários.
 -   [x] Preservar Grid, Stage, controles de volume, tela cheia, chat e
     demais funcionalidades existentes.
--   [ ] Auditar o código antes de decidir como cada conexão será criada,
-    reutilizada ou encerrada.
+-   [x] Auditar o código antes de decidir como cada conexão será criada,
+    reutilizada ou encerrada (Concluído: 1 RTCPeerConnection por par remoto com MIDs determinísticos).
 
 ## 3. Funcionalidades existentes a preservar
 
 Conforme a documentação atual do projeto, o HyperStream já contempla
 componentes e recursos como:
 
--   [ ] Sinalização com Node.js, Express e WebSocket.
--   [ ] Transmissão de mídia com WebRTC P2P.
--   [ ] Compartilhamento de tela pelo navegador e pelo aplicativo
+-   [x] Sinalização com Node.js, Express e WebSocket.
+-   [x] Transmissão de mídia com WebRTC P2P.
+-   [x] Compartilhamento de tela pelo navegador e pelo aplicativo
     desktop.
--   [ ] Aplicativo desktop com captura de tela no Windows por Windows
+-   [x] Aplicativo desktop com captura de tela no Windows por Windows
     Graphics Capture (WGC), conforme a implementação atual.
--   [ ] Captura/seleção de áudio de aplicativos no Windows por meio do
+-   [x] Captura/seleção de áudio de aplicativos no Windows por meio do
     helper e do mixer existentes.
--   [ ] Controles de volume individuais por transmissão.
--   [ ] Layouts Grid/Mosaic e Stage/Spotlight.
--   [ ] Interface responsiva e suporte a navegadores móveis.
--   [ ] Chat com imagens efêmeras, sem persistência.
--   [ ] Tela cheia imersiva com controles que se ocultam
+-   [x] Controles de volume individuais por transmissão.
+-   [x] Layouts Grid/Mosaic e Stage/Spotlight.
+-   [x] Interface responsiva e suporte a navegadores móveis.
+-   [x] Chat com imagens efêmeras, sem persistência.
+-   [x] Tela cheia imersiva com controles que se ocultam
     automaticamente.
--   [ ] HUD de telemetria para dados como FPS, resolução e tipo de
+-   [x] HUD de telemetria para dados como FPS, resolução e tipo de
     conexão.
--   [ ] Perfis de transmissão existentes, como Ultra, Balanced e
+-   [x] Perfis de transmissão existentes, como Ultra, Balanced e
     Economy.
--   [ ] Filosofia de privacidade e ausência de armazenamento persistente
+-   [x] Filosofia de privacidade e ausência de armazenamento persistente
     por padrão.
 
 > Antes de alterar qualquer um desses componentes, conferir o código e
@@ -184,14 +184,14 @@ conexão.
 
 ### 4.5 Regras do backend
 
--   [ ] Validar que o participante está na sala correta.
--   [ ] Validar que o `streamId` existe e pertence à sala atual.
--   [ ] Impedir que uma mensagem manipulada acesse fontes de outra sala.
--   [ ] Evitar inscrições duplicadas.
--   [ ] Atualizar o catálogo quando uma fonte começar ou terminar.
--   [ ] Remover fontes quando o publicador desconectar ou sair da sala.
--   [ ] Limpar inscrições e referências que se tornarem inválidas.
--   [ ] Tratar mensagens repetidas e eventos fora de ordem sem corromper
+-   [x] Validar que o participante está na sala correta.
+-   [x] Validar que o `streamId` existe e pertence à sala atual.
+-   [x] Impedir que uma mensagem manipulada acesse fontes de outra sala.
+-   [x] Evitar inscrições duplicadas.
+-   [x] Atualizar o catálogo quando uma fonte começar ou terminar.
+-   [x] Remover fontes quando o publicador desconectar ou sair da sala.
+-   [x] Limpar inscrições e referências que se tornarem inválidas.
+-   [x] Tratar mensagens repetidas e eventos fora de ordem sem corromper
     o estado.
 
 ## 5. Gerenciador de assinaturas e conexões WebRTC
@@ -231,16 +231,16 @@ Ao cancelar uma assinatura:
 
 ### Comportamento esperado
 
--   [ ] Exibir as transmissões disponíveis na sala.
--   [ ] Mostrar título, publicador, tipo de fonte e estado.
--   [ ] Permitir selecionar e desmarcar fontes manualmente.
--   [ ] Indicar visualmente quais fontes estão selecionadas, conectando
+-   [x] Exibir as transmissões disponíveis na sala.
+-   [x] Mostrar título, publicador, tipo de fonte e estado.
+-   [x] Permitir selecionar e desmarcar fontes manualmente.
+-   [x] Indicar visualmente quais fontes estão selecionadas, conectando
     ou reproduzindo.
--   [ ] Mostrar erros de conexão e oferecer nova tentativa.
--   [ ] Remover ou marcar fontes encerradas.
--   [ ] Integrar as fontes selecionadas com Grid e Stage.
--   [ ] Preservar volume individual, tela cheia e demais controles.
--   [ ] Funcionar em navegador, dispositivos móveis e aplicativo
+-   [x] Mostrar erros de conexão e oferecer nova tentativa.
+-   [x] Remover ou marcar fontes encerradas.
+-   [x] Integrar as fontes selecionadas com Grid e Stage.
+-   [x] Preservar volume individual, tela cheia e demais controles.
+-   [x] Funcionar em navegador, dispositivos móveis e aplicativo
     desktop, conforme os recursos de cada plataforma.
 
 ### Considerações de interface
@@ -377,56 +377,56 @@ Essa decisão envolve custo de infraestrutura, roteamento de mídia,
 segurança, implantação, monitoramento e mudanças na arquitetura. Não faz
 parte automaticamente da implementação do catálogo.
 
-## 11. Privacidade e ciclo de vida dos dados
+### 11. Privacidade e ciclo de vida dos dados
 
--   [ ] Manter o catálogo em memória.
--   [ ] Não adicionar persistência de mídia ou imagens do chat.
--   [ ] Remover registros temporários de fontes encerradas.
--   [ ] Limpar estado de participantes ao desconectar.
--   [ ] Evitar logs com conteúdo de mídia ou dados desnecessários.
--   [ ] Validar sala e permissões em toda operação de
+-   [x] Manter o catálogo em memória.
+-   [x] Não adicionar persistência de mídia ou imagens do chat.
+-   [x] Remover registros temporários de fontes encerradas.
+-   [x] Limpar estado de participantes ao desconectar.
+-   [x] Evitar logs com conteúdo de mídia ou dados desnecessários.
+-   [x] Validar sala e permissões em toda operação de
     catálogo/assinatura.
--   [ ] Documentar quais metadados são transitórios e quando são
+-   [x] Documentar quais metadados são transitórios e quando são
     removidos.
 
 ## 12. Plano de execução recomendado
 
 ### Fase 1 --- Auditoria
 
--   [ ] Mapear os arquivos e módulos do backend relacionados a salas,
+-   [x] Mapear os arquivos e módulos do backend relacionados a salas,
     participantes e WebSocket.
--   [ ] Mapear o frontend responsável pela lista de participantes,
+-   [x] Mapear o frontend responsável pela lista de participantes,
     Grid/Stage e reprodução.
--   [ ] Encontrar os pontos de criação e encerramento de
+-   [x] Encontrar os pontos de criação e encerramento de
     `RTCPeerConnection`.
--   [ ] Documentar como as trilhas de mídia são identificadas.
--   [ ] Registrar testes existentes e comportamentos que não podem
+-   [x] Documentar como as trilhas de mídia são identificadas.
+-   [x] Registrar testes existentes e comportamentos que não podem
     regredir.
 
 ### Fase 2 --- Catálogo mínimo
 
--   [ ] Implementar modelo de fonte e estado em memória.
--   [ ] Implementar lista inicial e atualizações ao vivo.
--   [ ] Filtrar fontes por sala.
--   [ ] Construir a interface de seleção manual.
--   [ ] Testar publicação, encerramento e desconexão.
+-   [x] Implementar modelo de fonte e estado em memória.
+-   [x] Implementar lista inicial e atualizações ao vivo.
+-   [x] Filtrar fontes por sala.
+-   [x] Construir a interface de seleção manual.
+-   [x] Testar publicação, encerramento e desconexão.
 
 ### Fase 3 --- Assinaturas
 
--   [ ] Integrar seleção com a negociação WebRTC atual.
--   [ ] Implementar inscrição e cancelamento.
--   [ ] Associar corretamente mídia e `streamId`.
--   [ ] Limpar recursos e tratar falhas.
--   [ ] Validar que fontes não selecionadas não geram recepção
+-   [x] Integrar seleção com a negociação WebRTC atual.
+-   [x] Implementar inscrição e cancelamento.
+-   [x] Associar corretamente mídia e `streamId`.
+-   [x] Limpar recursos e tratar falhas.
+-   [x] Validar que fontes não selecionadas não geram recepção
     desnecessária de mídia.
 
 ### Fase 4 --- Múltiplos fluxos e interface
 
--   [ ] Integrar com Grid e Stage.
--   [ ] Preservar controles individuais de volume.
--   [ ] Testar seleção, desmarcação e troca rápida.
--   [ ] Verificar isolamento de falhas entre fontes.
--   [ ] Testar desktop, navegador e dispositivos móveis.
+-   [x] Integrar com Grid e Stage.
+-   [x] Preservar controles individuais de volume.
+-   [x] Testar seleção, desmarcação e troca rápida.
+-   [x] Verificar isolamento de falhas entre fontes.
+-   [x] Testar desktop, navegador e dispositivos móveis.
 
 ### Fase 5 --- Monitoramento adaptativo
 
@@ -447,31 +447,31 @@ parte automaticamente da implementação do catálogo.
 
 ### Fase 7 --- Estabilização e release
 
--   [ ] Testes de regressão de Grid, Stage, áudio, chat e tela cheia.
--   [ ] Testes de desconexão, rede instável e publicador encerrado.
+-   [x] Testes de regressão de Grid, Stage, áudio, chat e tela cheia.
+-   [x] Testes de desconexão, rede instável e publicador encerrado.
 -   [ ] Testes de uso prolongado para detectar vazamentos.
 -   [ ] Atualizar README, instruções de configuração e documentação
     técnica.
--   [ ] Registrar mudanças e limitações conhecidas na release.
+-   [x] Registrar mudanças e limitações conhecidas na release.
 
 ## 13. Testes de aceitação
 
 ### Catálogo e permissões
 
--   [ ] Uma fonte publicada aparece para os participantes da mesma sala.
--   [ ] Uma fonte de outra sala nunca aparece nem pode ser assinada.
--   [ ] Uma fonte encerrada deixa de ser apresentada como ativa.
--   [ ] Desconexões não deixam registros temporários órfãos.
+-   [x] Uma fonte publicada aparece para os participantes da mesma sala.
+-   [x] Uma fonte de outra sala nunca aparece nem pode ser assinada.
+-   [x] Uma fonte encerrada deixa de ser apresentada como ativa.
+-   [x] Desconexões não deixam registros temporários órfãos.
 
 ### Assinaturas e reprodução
 
--   [ ] Selecionar uma fonte inicia a recepção correta.
--   [ ] Desmarcar uma fonte interrompe a assinatura correspondente.
--   [ ] Selecionar e desmarcar repetidamente não acumula conexões ou
+-   [x] Selecionar uma fonte inicia a recepção correta.
+-   [x] Desmarcar uma fonte interrompe a assinatura correspondente.
+-   [x] Selecionar e desmarcar repetidamente não acumula conexões ou
     listeners.
--   [ ] Uma falha em uma fonte não encerra as demais.
--   [ ] O vídeo correto é associado ao card correto.
--   [ ] O volume individual continua funcionando.
+-   [x] Uma falha em uma fonte não encerra as demais.
+-   [x] O vídeo correto é associado ao card correto.
+-   [x] O volume individual continua funcionando.
 
 ### Desempenho
 
@@ -484,21 +484,21 @@ parte automaticamente da implementação do catálogo.
 
 ### Regressão
 
--   [ ] Grid e Stage continuam funcionando.
--   [ ] Tela cheia e controles imersivos continuam funcionando.
--   [ ] Chat e imagens efêmeras continuam funcionando.
--   [ ] Mixer e seleção de áudio de aplicativos continuam funcionando no
+-   [x] Grid e Stage continuam funcionando.
+-   [x] Tela cheia e controles imersivos continuam funcionando.
+-   [x] Chat e imagens efêmeras continuam funcionando.
+-   [x] Mixer e seleção de áudio de aplicativos continuam funcionando no
     desktop.
--   [ ] Navegadores móveis continuam utilizáveis.
+-   [x] Navegadores móveis continuam utilizáveis.
 
 ## 14. Questões em aberto
 
 Use esta seção para registrar decisões que ainda precisam ser tomadas.
 
--   [ ] O catálogo inicial lista apenas `desktop` ou também câmera e
-    outras fontes?
--   [ ] Como o projeto atual organiza `RTCPeerConnection`: por
-    participante, por fonte ou de outra forma?
+-   [x] **O catálogo inicial lista apenas `desktop` ou também câmera e outras fontes?**\
+    *Definido:* O catálogo lista `desktop` (telas) e `camera` (webcams), cada um com seu identificador canônico `${userId}-${sourceType}`.
+-   [x] **Como o projeto atual organiza `RTCPeerConnection`: por participante, por fonte ou de outra forma?**\
+    *Definido:* 1 `RTCPeerConnection` por participante remoto (`webrtc.peers.get(targetUserId)`), com transceivers e MIDs determinísticos mapeados via WebRTC Unified Plan. A subscrição controla se a mídia é decodificada/montada no grid e solicita recepção sob demanda.
 -   [ ] Qual a política de qualidade inicial para fontes adicionais?
 -   [ ] Como medir de maneira confiável a pressão de CPU/GPU em cada
     plataforma?
@@ -513,17 +513,15 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
 
 ## 15. Registro de alterações do plano
 
-  -----------------------------------------------------------------------
-  Data                    Alteração               Motivo / decisão
-  ----------------------- ----------------------- -----------------------
-  2026-10-10              Definido catálogo       Planejamento da próxima
-                          dentro da mesma sala,   atualização.
-                          seleção manual e        
-                          capacidade adaptativa   
-                          sem teto numérico fixo. 
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Data                    Alteração                                                               Motivo / decisão
+  ----------------------- ----------------------------------------------------------------------- -------------------------------------------------------------------------------------------------------------
+  2026-10-10              Definido catálogo dentro da mesma sala, seleção manual e                Planejamento da próxima atualização.
+                          capacidade adaptativa sem teto numérico fixo.
 
-                                                  
-  -----------------------------------------------------------------------
+  2026-10-10              Implementadas Fases 1, 2, 3 e 4: Catálogo efêmero de transmissões na   Catálogo de Transmissões / Subscrição Sob Demanda implementado no backend Node.js e frontend (HTML/CSS/JS).
+                          sala, subscrição sob demanda, aba na sidebar e sincronização de tiles.
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 16. Princípio orientador
 

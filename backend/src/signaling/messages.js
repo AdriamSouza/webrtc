@@ -27,6 +27,8 @@ export const MessageTypes = Object.freeze({
   MEDIA_STATE: 'MEDIA_STATE',
   CHAT_MESSAGE: 'CHAT_MESSAGE',
   LEAVE_ROOM: 'LEAVE_ROOM',
+  PING: 'PING',
+  PONG: 'PONG',
   ERROR: 'ERROR'
 });
 
@@ -69,8 +71,8 @@ export function validateMessage(rawJson) {
     return { valid: false, error: `Tipo de evento desconhecido: ${type}` };
   }
 
-  // Eventos de sala devem obrigatoriamente conter roomId
-  if (!roomId && type !== MessageTypes.ERROR) {
+  // Eventos de sala devem obrigatoriamente conter roomId (exceto mensagens globais de sinalização / keepalive)
+  if (!roomId && type !== MessageTypes.ERROR && type !== MessageTypes.PING && type !== MessageTypes.PONG) {
     return { valid: false, error: 'roomId é obrigatório para mensagens de controle de sala' };
   }
 

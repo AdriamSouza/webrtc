@@ -48,6 +48,14 @@ Este documento consolida o histórico completo de melhorias, refatorações e ot
    - Correção de quebra de linha e elipse CSS (`display: block`, `flex: 1`, `min-width: 0`), eliminando o corte de caracteres no nome e descrição dos apps.
    - Codificação de saída do utilitário C# (`AudioSessionHelper.cs`) em UTF-8 estrito com escape JSON `\uXXXX` para caracteres acentuados.
 
+9. **Correção de Imagens no Chat & Prevenção de Congelamento em Background** *(v1.1.8)*:
+   - Captura global de imagens coladas via Ctrl+V e arquivos copiados diretamente do Windows Explorer.
+   - Compressão Canvas com suporte limpo a transparência WebP e envio assíncrono sincronizado.
+   - Preservação de estado WebRTC ao silenciar/desmutar tracks em background sem remoção destrutiva de tiles.
+   - Watchdog e recuperação de reprodução instantânea ao restaurar a janela em primeiro plano (`visibilitychange` / `window.focus`).
+   - Reconexão resiliente com auto-rejoin de sala e ICE Restart completo conforme RFC 8829.
+   - Flags Chromium contra congelamento de janelas ocluídas no desktop.
+
 ---
 
 ## 🛠️ Status das Etapas de Implementação
@@ -60,4 +68,5 @@ Este documento consolida o histórico completo de melhorias, refatorações e ot
 - [x] **Etapa 6**: Responsividade e priorização mobile completa (touch, drawer e IPs locais).
 - [x] **Etapa 7**: Correção do fluxo de saída de sala e botão no cabeçalho (v1.1.6).
 - [x] **Etapa 8**: Rotação automática de tela cheia vertical no celular e renderização correta de nomes de apps no mixer (v1.1.7).
-- [x] **Etapa 9**: Atualização da documentação do GitHub e empacotamento do release executável.
+- [x] **Etapa 9**: Correção de imagens no chat (Ctrl+V/anexo) e prevenção de congelamento em background (v1.1.8).
+- [x] **Etapa 10**: Empacotamento do release executável desktop e sincronização no Git.

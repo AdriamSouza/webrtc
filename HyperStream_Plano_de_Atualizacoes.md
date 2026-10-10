@@ -1,0 +1,534 @@
+# HyperStream --- Plano de próximas atualizações
+
+> Documento de planejamento vivo. Edite, reorganize e marque os itens
+> conforme as decisões e a implementação evoluírem.
+>
+> **Status:** rascunho de planejamento\
+> **Projeto:** HyperStream --- transmissão de tela e áudio via WebRTC\
+> **Repositório:** https://github.com/AdriamSouza/webrtc
+
+## 1. Objetivo do projeto
+
+Evoluir o HyperStream como uma plataforma de transmissão de tela e áudio
+em tempo real, priorizando:
+
+-   Baixa carga de processamento para quem transmite.
+-   Reprodução fluida para quem assiste, com o mínimo possível de
+    quadros perdidos.
+-   Seleção explícita das transmissões que o espectador deseja receber.
+-   Suporte a mais de uma transmissão simultânea, com gerenciamento
+    adaptativo de recursos.
+-   Privacidade: evitar armazenamento persistente de dados quando não
+    for necessário.
+-   Compatibilidade entre navegador, dispositivos móveis e aplicativo
+    desktop.
+-   Aproveitamento da arquitetura e dos componentes já existentes,
+    evitando reescrever partes funcionais sem necessidade.
+
+## 2. Diretrizes e decisões já definidas
+
+### Catálogo de transmissões selecionáveis
+
+-   [x] O escopo inicial do catálogo será **somente dentro da mesma
+    sala**.
+-   [x] A seleção de transmissões será **manual**: o usuário escolhe
+    quais quer assistir.
+-   [x] O limite de transmissões simultâneas **não será um número fixo
+    codificado**.
+-   [x] A quantidade de transmissões ativas deverá ser condicionada ao
+    desempenho e aos recursos disponíveis.
+-   [x] O tipo de fonte inicialmente considerado inclui `desktop`.
+-   [ ] Confirmar se o catálogo inicial deve listar somente desktops ou
+    todas as fontes de mídia publicadas na sala.
+-   [ ] Definir se a seleção manual permitirá ativar várias fontes de
+    uma vez ou se a primeira versão será liberada progressivamente após
+    validar uma fonte.
+
+### Princípios técnicos
+
+-   [x] Reaproveitar o WebRTC e a sinalização existentes.
+-   [x] Manter o catálogo efêmero/em memória no backend, sem adicionar
+    banco de dados apenas para essa funcionalidade.
+-   [x] Não criar conexões WebRTC para todas as fontes só porque
+    aparecem no catálogo.
+-   [x] Encerrar assinaturas e liberar recursos que deixarem de ser
+    necessários.
+-   [x] Preservar Grid, Stage, controles de volume, tela cheia, chat e
+    demais funcionalidades existentes.
+-   [ ] Auditar o código antes de decidir como cada conexão será criada,
+    reutilizada ou encerrada.
+
+## 3. Funcionalidades existentes a preservar
+
+Conforme a documentação atual do projeto, o HyperStream já contempla
+componentes e recursos como:
+
+-   [ ] Sinalização com Node.js, Express e WebSocket.
+-   [ ] Transmissão de mídia com WebRTC P2P.
+-   [ ] Compartilhamento de tela pelo navegador e pelo aplicativo
+    desktop.
+-   [ ] Aplicativo desktop com captura de tela no Windows por Windows
+    Graphics Capture (WGC), conforme a implementação atual.
+-   [ ] Captura/seleção de áudio de aplicativos no Windows por meio do
+    helper e do mixer existentes.
+-   [ ] Controles de volume individuais por transmissão.
+-   [ ] Layouts Grid/Mosaic e Stage/Spotlight.
+-   [ ] Interface responsiva e suporte a navegadores móveis.
+-   [ ] Chat com imagens efêmeras, sem persistência.
+-   [ ] Tela cheia imersiva com controles que se ocultam
+    automaticamente.
+-   [ ] HUD de telemetria para dados como FPS, resolução e tipo de
+    conexão.
+-   [ ] Perfis de transmissão existentes, como Ultra, Balanced e
+    Economy.
+-   [ ] Filosofia de privacidade e ausência de armazenamento persistente
+    por padrão.
+
+> Antes de alterar qualquer um desses componentes, conferir o código e
+> os testes atuais. Esta lista é um inventário de referência baseado na
+> documentação do projeto, não uma auditoria do estado atual de cada
+> função.
+
+## 4. Atualização prioritária: catálogo e seleção de transmissões
+
+### 4.1 Comportamento esperado
+
+1.  Um participante inicia uma transmissão.
+2.  O backend registra temporariamente a fonte na sala.
+3.  O catálogo dos participantes da sala é atualizado.
+4.  O espectador escolhe manualmente uma ou mais fontes.
+5.  O gerenciador de assinaturas solicita e coordena a recepção das
+    fontes selecionadas.
+6.  A interface mostra o estado de conexão e, quando disponível,
+    reproduz a mídia.
+7.  Ao cancelar a seleção, a assinatura é encerrada e os recursos
+    desnecessários são liberados.
+8.  Quando uma transmissão termina ou seu publicador sai, o catálogo e
+    as assinaturas relacionadas são atualizados.
+
+### 4.2 Modelo de transmissão proposto
+
+Os nomes e campos abaixo são uma proposta inicial e devem ser adaptados
+às convenções reais do código:
+
+``` js
+{
+  streamId: "identificador-unico",
+  roomId: "identificador-da-sala",
+  hostId: "identificador-do-publicador",
+  sourceType: "desktop",
+  title: "Área de trabalho",
+  status: "live",
+  publishedAt: 0
+}
+```
+
+Regras:
+
+-   `streamId` deve ser único; não usar apenas `desktop`, pois vários
+    participantes podem publicar o mesmo tipo de fonte.
+-   O backend deve determinar ou validar `roomId`, `hostId`, status e
+    horário.
+-   O catálogo deve incluir somente fontes da sala atual.
+-   Não persistir o catálogo em disco por padrão.
+-   Uma fonte listada não deve ser considerada automaticamente
+    conectada.
+
+### 4.3 Estados de assinatura
+
+Ciclo de vida sugerido:
+
+`idle → subscribing → active → unsubscribing → idle`
+
+Estado adicional de falha:
+
+`failed`
+
+A interface deve diferenciar, pelo menos:
+
+-   Disponível.
+-   Conectando.
+-   Em reprodução.
+-   Encerrando assinatura.
+-   Falha/reconexão.
+-   Transmissão encerrada.
+
+### 4.4 Mensagens de sinalização a avaliar
+
+Os nomes abaixo são sugestões. Reutilizar mensagens existentes quando já
+houver equivalente.
+
+  -----------------------------------------------------------------------
+  Mensagem                            Responsabilidade
+  ----------------------------------- -----------------------------------
+  `LIST_STREAMS`                      Solicitar o catálogo atual da sala.
+
+  `STREAM_LIST`                       Receber a lista inicial de fontes.
+
+  `STREAM_PUBLISHED`                  Anunciar uma fonte nova.
+
+  `STREAM_ENDED`                      Informar que uma fonte foi
+                                      encerrada.
+
+  `SUBSCRIBE_STREAM`                  Solicitar assinatura de uma fonte.
+
+  `UNSUBSCRIBE_STREAM`                Cancelar uma assinatura.
+
+  `SUBSCRIPTION_STATUS`               Informar aceitação, recusa, falha
+                                      ou mudança de estado.
+  -----------------------------------------------------------------------
+
+As mensagens WebRTC já existentes, como `OFFER`, `ANSWER` e
+`ICE_CANDIDATE`, devem continuar sendo usadas para a negociação da
+conexão.
+
+### 4.5 Regras do backend
+
+-   [ ] Validar que o participante está na sala correta.
+-   [ ] Validar que o `streamId` existe e pertence à sala atual.
+-   [ ] Impedir que uma mensagem manipulada acesse fontes de outra sala.
+-   [ ] Evitar inscrições duplicadas.
+-   [ ] Atualizar o catálogo quando uma fonte começar ou terminar.
+-   [ ] Remover fontes quando o publicador desconectar ou sair da sala.
+-   [ ] Limpar inscrições e referências que se tornarem inválidas.
+-   [ ] Tratar mensagens repetidas e eventos fora de ordem sem corromper
+    o estado.
+
+## 5. Gerenciador de assinaturas e conexões WebRTC
+
+Criar ou adaptar um `SubscriptionManager` para coordenar as seleções do
+usuário.
+
+Responsabilidades esperadas:
+
+-   Manter a lista de fontes selecionadas pelo espectador.
+-   Solicitar e cancelar assinaturas.
+-   Acompanhar o estado de cada assinatura.
+-   Associar trilhas de mídia ao `streamId` correto.
+-   Integrar com Grid/Stage e controles de volume.
+-   Evitar conexões, trilhas e listeners órfãos.
+-   Recuperar-se de falhas sem deixar a interface em um estado falso.
+
+### Decisão técnica obrigatória antes da implementação
+
+Auditar se a implementação atual utiliza uma conexão `RTCPeerConnection`
+por participante, por transmissão ou outra organização. Não escolher
+automaticamente uma conexão por fonte sem verificar a arquitetura
+existente.
+
+Ao cancelar uma assinatura:
+
+-   Encerrar a conexão somente se ela não for mais necessária.
+-   Se uma conexão transportar outras trilhas ainda utilizadas, remover
+    apenas os recursos associados à assinatura cancelada, conforme o
+    modelo atual.
+-   Não interromper a captura do publicador se outros espectadores ainda
+    estiverem usando a mesma fonte.
+-   Limpar elementos de vídeo, referências, eventos e estatísticas
+    associados à assinatura encerrada.
+
+## 6. Interface do catálogo
+
+### Comportamento esperado
+
+-   [ ] Exibir as transmissões disponíveis na sala.
+-   [ ] Mostrar título, publicador, tipo de fonte e estado.
+-   [ ] Permitir selecionar e desmarcar fontes manualmente.
+-   [ ] Indicar visualmente quais fontes estão selecionadas, conectando
+    ou reproduzindo.
+-   [ ] Mostrar erros de conexão e oferecer nova tentativa.
+-   [ ] Remover ou marcar fontes encerradas.
+-   [ ] Integrar as fontes selecionadas com Grid e Stage.
+-   [ ] Preservar volume individual, tela cheia e demais controles.
+-   [ ] Funcionar em navegador, dispositivos móveis e aplicativo
+    desktop, conforme os recursos de cada plataforma.
+
+### Considerações de interface
+
+-   Não conectar automaticamente a todas as fontes listadas.
+-   Não confundir uma miniatura visualmente pequena com economia de
+    banda: reduzir o tamanho por CSS não reduz, por si só, o bitrate nem
+    o custo de decodificação.
+-   Evitar que a falha de uma fonte derrube a reprodução das demais.
+-   Manter estados e mensagens compreensíveis durante conexão, reconexão
+    e encerramento.
+
+## 7. Escalabilidade adaptativa e desempenho
+
+A meta é não estabelecer um teto fixo de transmissões selecionadas. Na
+prática, a capacidade será limitada por rede, decodificação, GPU/CPU,
+memória, resolução e características do dispositivo.
+
+### 7.1 Métricas a avaliar
+
+-   FPS efetivos de reprodução.
+-   Quadros decodificados e descartados.
+-   Bitrate recebido por fonte.
+-   Pacotes perdidos e jitter.
+-   RTT estimado da conexão.
+-   Estado ICE e estado da conexão.
+-   Uso de CPU/GPU e memória, quando houver uma forma confiável de
+    medi-los.
+-   Carga de codificação no computador publicador.
+-   Resolução e taxa de quadros de cada transmissão.
+
+Usar `RTCPeerConnection.getStats()` e métricas de reprodução disponíveis
+na plataforma. Nem todas as plataformas expõem dados de CPU/GPU com a
+mesma precisão.
+
+### 7.2 Estados de desempenho
+
+Proposta inicial, com limiares configuráveis a validar em testes:
+
+-   **Normal:** manter a qualidade solicitada e continuar monitorando.
+-   **Degradado:** detectar degradação persistente; reduzir qualidade
+    quando possível e avisar o usuário.
+-   **Crítico:** evitar novas ativações que agravem o problema e
+    recomendar reduzir fluxos selecionados.
+
+Não tratar uma única métrica como prova definitiva da causa de uma queda
+de desempenho. Perda de pacotes, jitter, FPS baixo e quadros descartados
+podem ter causas diferentes.
+
+### 7.3 Política adaptativa sugerida
+
+1.  Detectar degradação persistente em vez de reagir a picos
+    momentâneos.
+2.  Reduzir resolução ou FPS de fontes secundárias quando o protocolo e
+    o publicador permitirem.
+3.  Usar camadas de vídeo ou controle de bitrate, se a arquitetura atual
+    suportar isso.
+4.  Evitar novas assinaturas quando a estimativa de capacidade estiver
+    esgotada.
+5.  Exibir aviso quando a experiência continuar degradada.
+6.  Restaurar qualidade gradualmente depois de um período estável.
+7.  Não remover silenciosamente fontes selecionadas pelo usuário.
+
+Importante: em P2P mesh, cada novo espectador pode aumentar o upload do
+publicador. É necessário avaliar o impacto da quantidade de receptores,
+não apenas o desempenho do computador que assiste. Se uma codificação
+for compartilhada entre receptores, a adaptação por espectador pode
+exigir decisões específicas para não duplicar desnecessariamente o
+trabalho de codificação.
+
+## 8. Metas de qualidade do projeto
+
+-   [ ] Baixa carga de CPU/GPU no publicador.
+-   [ ] Reprodução fluida, com o mínimo possível de quadros descartados.
+-   [ ] Latência baixa e estável.
+-   [ ] Seleção e cancelamento sem vazamentos de recursos.
+-   [ ] Falha de uma transmissão isolada das demais.
+-   [ ] Catálogo e assinaturas consistentes após desconexões.
+-   [ ] Privacidade preservada e sem persistência desnecessária.
+-   [ ] Compatibilidade com funcionalidades existentes.
+-   [ ] Comportamento previsível em redes ruins e dispositivos modestos.
+
+Essas metas precisam ser transformadas em benchmarks com cenários,
+hardware, resolução, bitrate e critérios de aprovação documentados.
+
+## 9. Captura e codificação de vídeo no desktop
+
+Objetivo futuro: manter a captura de tela eficiente e investigar opções
+de codificação acelerada por hardware para reduzir a carga do
+publicador.
+
+### Tecnologias a avaliar
+
+-   **NVIDIA NVENC:** codificação por hardware em GPUs NVIDIA
+    compatíveis.
+-   **AMD AMF:** codificação por hardware em GPUs AMD compatíveis.
+-   **Intel Quick Sync Video (QSV):** codificação por hardware em
+    plataformas Intel compatíveis.
+-   **Codecs:** H.264 como opção de ampla compatibilidade; avaliar AV1
+    quando hardware, navegador, sistema operacional e caminho WebRTC
+    suportarem o codec adequadamente.
+
+### Cuidados
+
+-   Não assumir que todos os codecs ou codificadores estão disponíveis
+    em todos os computadores.
+-   Detectar compatibilidade e oferecer fallback.
+-   Medir qualidade visual, bitrate, latência, carga de CPU/GPU e
+    estabilidade.
+-   Verificar como a aplicação Electron, o navegador e a pilha WebRTC
+    atual expõem codificação por hardware.
+-   Não prometer suporte a NVENC/AMF/QSV apenas por selecionar um codec
+    no frontend; o caminho de codificação precisa realmente utilizar o
+    backend compatível.
+-   Priorizar uma experiência estável antes de adicionar opções
+    avançadas à interface.
+
+## 10. P2P mesh e possível evolução para SFU
+
+### Nesta atualização
+
+-   Manter a arquitetura P2P existente.
+-   Medir o custo de upload do publicador à medida que aumenta o número
+    de espectadores.
+-   Evitar introduzir uma infraestrutura SFU antes de haver evidência de
+    que ela é necessária.
+
+### Possível evolução futura
+
+Avaliar um SFU se o modelo mesh limitar a quantidade de espectadores ou
+elevar excessivamente o upload e a carga de codificação do publicador.
+
+Essa decisão envolve custo de infraestrutura, roteamento de mídia,
+segurança, implantação, monitoramento e mudanças na arquitetura. Não faz
+parte automaticamente da implementação do catálogo.
+
+## 11. Privacidade e ciclo de vida dos dados
+
+-   [ ] Manter o catálogo em memória.
+-   [ ] Não adicionar persistência de mídia ou imagens do chat.
+-   [ ] Remover registros temporários de fontes encerradas.
+-   [ ] Limpar estado de participantes ao desconectar.
+-   [ ] Evitar logs com conteúdo de mídia ou dados desnecessários.
+-   [ ] Validar sala e permissões em toda operação de
+    catálogo/assinatura.
+-   [ ] Documentar quais metadados são transitórios e quando são
+    removidos.
+
+## 12. Plano de execução recomendado
+
+### Fase 1 --- Auditoria
+
+-   [ ] Mapear os arquivos e módulos do backend relacionados a salas,
+    participantes e WebSocket.
+-   [ ] Mapear o frontend responsável pela lista de participantes,
+    Grid/Stage e reprodução.
+-   [ ] Encontrar os pontos de criação e encerramento de
+    `RTCPeerConnection`.
+-   [ ] Documentar como as trilhas de mídia são identificadas.
+-   [ ] Registrar testes existentes e comportamentos que não podem
+    regredir.
+
+### Fase 2 --- Catálogo mínimo
+
+-   [ ] Implementar modelo de fonte e estado em memória.
+-   [ ] Implementar lista inicial e atualizações ao vivo.
+-   [ ] Filtrar fontes por sala.
+-   [ ] Construir a interface de seleção manual.
+-   [ ] Testar publicação, encerramento e desconexão.
+
+### Fase 3 --- Assinaturas
+
+-   [ ] Integrar seleção com a negociação WebRTC atual.
+-   [ ] Implementar inscrição e cancelamento.
+-   [ ] Associar corretamente mídia e `streamId`.
+-   [ ] Limpar recursos e tratar falhas.
+-   [ ] Validar que fontes não selecionadas não geram recepção
+    desnecessária de mídia.
+
+### Fase 4 --- Múltiplos fluxos e interface
+
+-   [ ] Integrar com Grid e Stage.
+-   [ ] Preservar controles individuais de volume.
+-   [ ] Testar seleção, desmarcação e troca rápida.
+-   [ ] Verificar isolamento de falhas entre fontes.
+-   [ ] Testar desktop, navegador e dispositivos móveis.
+
+### Fase 5 --- Monitoramento adaptativo
+
+-   [ ] Coletar métricas por conexão e por fonte.
+-   [ ] Definir estados de desempenho.
+-   [ ] Implementar avisos e política de novas ativações.
+-   [ ] Implementar redução/restauração gradual da qualidade, se
+    suportada.
+-   [ ] Calibrar limiares por benchmark.
+
+### Fase 6 --- Otimização do desktop
+
+-   [ ] Medir carga de captura e codificação.
+-   [ ] Investigar NVENC, AMF e QSV.
+-   [ ] Comparar H.264 e AV1 nos equipamentos compatíveis.
+-   [ ] Implementar detecção de capacidade e fallback.
+-   [ ] Documentar resultados e limitações.
+
+### Fase 7 --- Estabilização e release
+
+-   [ ] Testes de regressão de Grid, Stage, áudio, chat e tela cheia.
+-   [ ] Testes de desconexão, rede instável e publicador encerrado.
+-   [ ] Testes de uso prolongado para detectar vazamentos.
+-   [ ] Atualizar README, instruções de configuração e documentação
+    técnica.
+-   [ ] Registrar mudanças e limitações conhecidas na release.
+
+## 13. Testes de aceitação
+
+### Catálogo e permissões
+
+-   [ ] Uma fonte publicada aparece para os participantes da mesma sala.
+-   [ ] Uma fonte de outra sala nunca aparece nem pode ser assinada.
+-   [ ] Uma fonte encerrada deixa de ser apresentada como ativa.
+-   [ ] Desconexões não deixam registros temporários órfãos.
+
+### Assinaturas e reprodução
+
+-   [ ] Selecionar uma fonte inicia a recepção correta.
+-   [ ] Desmarcar uma fonte interrompe a assinatura correspondente.
+-   [ ] Selecionar e desmarcar repetidamente não acumula conexões ou
+    listeners.
+-   [ ] Uma falha em uma fonte não encerra as demais.
+-   [ ] O vídeo correto é associado ao card correto.
+-   [ ] O volume individual continua funcionando.
+
+### Desempenho
+
+-   [ ] Testar diferentes quantidades de fontes, resoluções e FPS.
+-   [ ] Medir upload do publicador e download do espectador.
+-   [ ] Medir FPS e quadros descartados.
+-   [ ] Simular jitter, perda de pacotes e banda limitada.
+-   [ ] Confirmar que a política adaptativa não oscila agressivamente.
+-   [ ] Verificar recuperação depois de um período degradado.
+
+### Regressão
+
+-   [ ] Grid e Stage continuam funcionando.
+-   [ ] Tela cheia e controles imersivos continuam funcionando.
+-   [ ] Chat e imagens efêmeras continuam funcionando.
+-   [ ] Mixer e seleção de áudio de aplicativos continuam funcionando no
+    desktop.
+-   [ ] Navegadores móveis continuam utilizáveis.
+
+## 14. Questões em aberto
+
+Use esta seção para registrar decisões que ainda precisam ser tomadas.
+
+-   [ ] O catálogo inicial lista apenas `desktop` ou também câmera e
+    outras fontes?
+-   [ ] Como o projeto atual organiza `RTCPeerConnection`: por
+    participante, por fonte ou de outra forma?
+-   [ ] Qual a política de qualidade inicial para fontes adicionais?
+-   [ ] Como medir de maneira confiável a pressão de CPU/GPU em cada
+    plataforma?
+-   [ ] Quais limites de FPS, perda, jitter e bitrate serão usados nos
+    estados de desempenho?
+-   [ ] A adaptação será automática por padrão ou configurável pelo
+    usuário?
+-   [ ] Quais codecs estarão habilitados inicialmente em cada
+    plataforma?
+-   [ ] Quais benchmarks serão exigidos para considerar a atualização
+    pronta?
+
+## 15. Registro de alterações do plano
+
+  -----------------------------------------------------------------------
+  Data                    Alteração               Motivo / decisão
+  ----------------------- ----------------------- -----------------------
+  2026-10-10              Definido catálogo       Planejamento da próxima
+                          dentro da mesma sala,   atualização.
+                          seleção manual e        
+                          capacidade adaptativa   
+                          sem teto numérico fixo. 
+
+                                                  
+  -----------------------------------------------------------------------
+
+## 16. Princípio orientador
+
+**Implementar primeiro a correção do ciclo de vida das transmissões e
+assinaturas; depois otimizar a quantidade e a qualidade dos fluxos.** O
+objetivo não é simplesmente colocar mais vídeos na tela, mas permitir
+que o usuário escolha o que recebe, com consumo de recursos controlado,
+reprodução fluida e sem comprometer as funcionalidades já existentes.

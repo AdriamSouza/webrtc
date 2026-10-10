@@ -520,7 +520,7 @@ function syncRemotePeerTiles(userId) {
     const screenStream = webrtc.getRemoteStreamForTile(userId, 'screen');
     const screenVideoTrack = webrtc.getRemoteVideoTrack(userId, 'screen');
 
-    if (screenVideoTrack && screenVideoTrack.readyState === 'live' && !screenVideoTrack.muted) {
+    if (screenVideoTrack && screenVideoTrack.readyState === 'live') {
       addOrUpdateTile({
         id: screenTileId,
         title: `${participantName} (Tela 60 FPS)`,
@@ -537,22 +537,9 @@ function syncRemotePeerTiles(userId) {
         }
       };
 
-      screenVideoTrack.onmute = () => {
-        setTimeout(() => {
-          if (screenVideoTrack.muted) {
-            const um = remoteUserMedia.get(userId);
-            if (!um || !um.screen) {
-              removeTile(screenTileId);
-            }
-          }
-        }, 300);
-      };
-
       screenVideoTrack.onended = () => {
         removeTile(screenTileId);
       };
-    } else if (screenVideoTrack && screenVideoTrack.muted) {
-      removeTile(screenTileId);
     } else {
       pendingTrack = true;
     }
@@ -566,7 +553,7 @@ function syncRemotePeerTiles(userId) {
     const cameraStream = webrtc.getRemoteStreamForTile(userId, 'camera');
     const cameraVideoTrack = webrtc.getRemoteVideoTrack(userId, 'camera');
 
-    if (cameraVideoTrack && cameraVideoTrack.readyState === 'live' && !cameraVideoTrack.muted) {
+    if (cameraVideoTrack && cameraVideoTrack.readyState === 'live') {
       addOrUpdateTile({
         id: cameraTileId,
         title: `${participantName} (Câmera)`,
@@ -583,22 +570,9 @@ function syncRemotePeerTiles(userId) {
         }
       };
 
-      cameraVideoTrack.onmute = () => {
-        setTimeout(() => {
-          if (cameraVideoTrack.muted) {
-            const um = remoteUserMedia.get(userId);
-            if (!um || !um.camera) {
-              removeTile(cameraTileId);
-            }
-          }
-        }, 300);
-      };
-
       cameraVideoTrack.onended = () => {
         removeTile(cameraTileId);
       };
-    } else if (cameraVideoTrack && cameraVideoTrack.muted) {
-      removeTile(cameraTileId);
     } else {
       pendingTrack = true;
     }
@@ -1249,23 +1223,38 @@ function setupEventListeners() {
     btnRemoveChatImage.addEventListener('click', clearPendingChatImage);
   }
 
-  // Suporte a Colar Imagens diretamente da Área de Transferência (Ctrl+V)
+  // Suporte a Colar Imagens diretamente da Área de Transferência (Ctrl+V) no input de chat
   if (chatInput) {
     chatInput.addEventListener('paste', (e) => {
-      const items = (e.clipboardData || window.clipboardData)?.items;
-      if (!items) return;
-      for (const item of items) {
-        if (item.type.indexOf('image') !== -1) {
-          const file = item.getAsFile();
-          if (file) {
-            e.preventDefault();
-            handleChatImageFile(file);
-            break;
-          }
-        }
+      const file = extractImageFileFromClipboard(e);
+      if (file) {
+        e.preventDefault();
+        handleChatImageFile(file);
       }
     });
   }
+
+  // Suporte global a Colar Imagens (Ctrl+V) em qualquer lugar da tela da sala quando o chat estiver acessível
+  document.addEventListener('paste', (e) => {
+    const target = e.target;
+    if (target === chatInput) return; // Já tratado pelo listener específico
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') && target.id !== 'chatInput') {
+      return; // Não intercepta outros campos de formulário (ex: PIN)
+    }
+
+    if (roomScreen && roomScreen.classList.contains('active')) {
+      const file = extractImageFileFromClipboard(e);
+      if (file) {
+        e.preventDefault();
+        // Se a aba do chat não estiver ativa, ativa a aba do chat
+        const tabBtnChat = document.querySelector('.sidebar-tabs .tab-btn[data-tab="chat"]');
+        if (tabBtnChat && !tabBtnChat.classList.contains('active')) {
+          tabBtnChat.click();
+        }
+        handleChatImageFile(file);
+      }
+    }
+  });
 
   // Suporte a Arrastar e Soltar (Drag & Drop) imagens no chat
   if (tabChat) {
@@ -1281,7 +1270,7 @@ function setupEventListeners() {
       e.preventDefault();
       tabChat.classList.remove('drag-over');
       const files = e.dataTransfer?.files;
-      if (files && files.length > 0 && files[0].type.startsWith('image/')) {
+      if (files && files.length > 0 && isImageFile(files[0])) {
         handleChatImageFile(files[0]);
       }
     });
@@ -1301,8 +1290,18 @@ function setupEventListeners() {
     }
   });
 
-  chatForm.addEventListener('submit', (e) => {
+  chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    // Se a imagem ainda estiver sendo comprimida, aguarda brevemente a conclusão
+    if (isProcessingChatImage) {
+      let attempts = 0;
+      while (isProcessingChatImage && attempts < 25) {
+        await new Promise(r => setTimeout(r, 100));
+        attempts++;
+      }
+    }
+
     const text = chatInput.value.trim();
     const image = pendingChatImage ? pendingChatImage.dataUrl : null;
     if (!text && !image) return;
@@ -1709,22 +1708,12 @@ function setupWebRTCEvents() {
     syncRemotePeerTiles(fromUserId);
   };
 
-  // Callback acionado quando um track remoto é mutado (o transmissor encerrou a captura ou replaceTrack(null))
+  // Callback acionado quando um track remoto é mutado (o transmissor minimizou a janela ou pacotes pausaram)
   webrtc.onRemoteTrackMuted = (track, fromUserId) => {
     console.log(`[App] onRemoteTrackMuted recebido de ${fromUserId}: kind=${track.kind}`);
-    if (track.kind === 'video') {
-      setTimeout(() => {
-        if (track.muted) {
-          const userMedia = remoteUserMedia.get(fromUserId);
-          const screenTrack = webrtc.getRemoteVideoTrack(fromUserId, 'screen');
-          if (screenTrack === track && (!userMedia || !userMedia.screen || track.muted)) {
-            console.log(`[App] Track de tela de ${fromUserId} continua mutado. Removendo tile congelado.`);
-            if (userMedia) userMedia.screen = false;
-            removeTile(`${fromUserId}-screen`);
-          }
-        }
-      }, 300);
-    }
+    // Não remove o tile nem destrói o estado remoto (userMedia) ao mutar temporariamente em background.
+    // O WebRTC muta tracks automaticamente quando em segundo plano ou oscilação de rede;
+    // O tile será retomado assim que novos frames chegarem (onunmute) ou o usuário focar a janela.
   };
 
   // Callback acionado quando um track remoto é finalizado
@@ -1732,8 +1721,15 @@ function setupWebRTCEvents() {
     console.log(`[App] onRemoteTrackEnded recebido de ${fromUserId}: kind=${track.kind}`);
     if (track.kind === 'video') {
       const userMedia = remoteUserMedia.get(fromUserId);
-      if (userMedia) userMedia.screen = false;
-      removeTile(`${fromUserId}-screen`);
+      const screenTrack = webrtc.getRemoteVideoTrack(fromUserId, 'screen');
+      if (screenTrack === track) {
+        if (userMedia) userMedia.screen = false;
+        removeTile(`${fromUserId}-screen`);
+      } else {
+        if (userMedia) userMedia.camera = false;
+        removeTile(`${fromUserId}-camera`);
+      }
+      updateGridLayout();
     }
   };
 
@@ -1967,6 +1963,33 @@ function setupSignalingEvents() {
       alert(`Aviso do Servidor: ${errorMsg}`);
     }
   });
+
+  signaling.on('connection_change', async ({ status }) => {
+    console.log(`[App] Status da conexão de sinalização: ${status}`);
+    if (status === 'connected' && roomState.roomId) {
+      console.log(`[App] WebSocket de sinalização reconectado. Re-ingressando na sala ${roomState.roomId}...`);
+      signaling.roomId = roomState.roomId;
+      signaling.send('JOIN_ROOM', {
+        roomId: roomState.roomId,
+        username: roomState.myUserName,
+        pin: roomState.roomPin
+      });
+
+      // Aguarda 1s para renegociar túneis de mídia com os demais participantes
+      setTimeout(async () => {
+        try {
+          const otherIds = roomState.getOtherParticipantIds();
+          if (otherIds.length > 0) {
+            console.log(`[App] Re-sincronizando mídias locais com ${otherIds.length} participantes após reconexão...`);
+            await webrtc.syncLocalMedia(media, otherIds);
+            await webrtc.renegotiateAllPeers(otherIds);
+          }
+        } catch (syncErr) {
+          console.warn('[App] Erro na renegociação pós-reconexão WebSocket:', syncErr);
+        }
+      }, 1000);
+    }
+  });
 }
 
 // ========================================================
@@ -2007,10 +2030,46 @@ function appendSystemChat(text) {
 // ========================================================
 // 7. ENVIO DE IMAGENS EFÊMERAS NO CHAT & LIGHTBOX
 // ========================================================
+// 7. ENVIO DE IMAGENS EFÊMERAS NO CHAT & LIGHTBOX
+// ========================================================
 let pendingChatImage = null; // { dataUrl, filename }
+let isProcessingChatImage = false;
+
+function isImageFile(file) {
+  if (!file) return false;
+  if (file.type && file.type.startsWith('image/')) return true;
+  return /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name || '');
+}
+
+function extractImageFileFromClipboard(e) {
+  const cd = e.clipboardData || window.clipboardData;
+  if (!cd) return null;
+
+  // 1. Arquivos na área de transferência (ex: Ctrl+C em arquivo no Windows Explorer)
+  if (cd.files && cd.files.length > 0) {
+    for (let i = 0; i < cd.files.length; i++) {
+      const file = cd.files[i];
+      if (isImageFile(file)) return file;
+    }
+  }
+
+  // 2. Itens na área de transferência (ex: PrintScreen, Win+Shift+S, Copiar Imagem do navegador)
+  if (cd.items && cd.items.length > 0) {
+    for (let i = 0; i < cd.items.length; i++) {
+      const item = cd.items[i];
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file && isImageFile(file)) return file;
+      }
+    }
+  }
+
+  return null;
+}
 
 function clearPendingChatImage() {
   pendingChatImage = null;
+  isProcessingChatImage = false;
   if (chatImagePreview) chatImagePreview.classList.add('hidden');
   if (chatPreviewThumb) chatPreviewThumb.src = '';
   if (chatImageInput) chatImageInput.value = '';
@@ -2036,16 +2095,41 @@ function compressImage(dataUrl, maxDimension, quality, callback) {
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, width, height);
-    const compressed = canvas.toDataURL('image/jpeg', quality);
-    callback(compressed);
+
+    // Tenta exportar para WebP mantendo canal alfa/transparência limpa
+    try {
+      ctx.drawImage(img, 0, 0, width, height);
+      const webpData = canvas.toDataURL('image/webp', quality);
+      if (webpData && webpData.startsWith('data:image/webp')) {
+        return callback(webpData);
+      }
+    } catch (_) {}
+
+    // Fallback: se JPEG for utilizado, preenche fundo branco para não escurecer transparência
+    const fallbackCanvas = document.createElement('canvas');
+    fallbackCanvas.width = width;
+    fallbackCanvas.height = height;
+    const fbCtx = fallbackCanvas.getContext('2d');
+    fbCtx.fillStyle = '#ffffff';
+    fbCtx.fillRect(0, 0, width, height);
+    fbCtx.drawImage(img, 0, 0, width, height);
+    const jpegData = fallbackCanvas.toDataURL('image/jpeg', quality);
+    callback(jpegData);
   };
   img.onerror = () => callback(dataUrl);
   img.src = dataUrl;
 }
 
 function handleChatImageFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
+  if (!isImageFile(file)) return;
+
+  const fileName = file.name || `imagem_${Date.now()}.png`;
+  isProcessingChatImage = true;
+
+  if (chatImagePreview) {
+    chatImagePreview.classList.remove('hidden');
+    if (chatPreviewName) chatPreviewName.textContent = `Carregando ${fileName}...`;
+  }
 
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -2053,13 +2137,18 @@ function handleChatImageFile(file) {
     compressImage(rawDataUrl, 1280, 0.82, (optimizedDataUrl) => {
       pendingChatImage = {
         dataUrl: optimizedDataUrl,
-        filename: file.name
+        filename: fileName
       };
+      isProcessingChatImage = false;
       if (chatPreviewThumb) chatPreviewThumb.src = optimizedDataUrl;
-      if (chatPreviewName) chatPreviewName.textContent = file.name;
+      if (chatPreviewName) chatPreviewName.textContent = fileName;
       if (chatImagePreview) chatImagePreview.classList.remove('hidden');
       if (chatInput) chatInput.focus();
     });
+  };
+  reader.onerror = () => {
+    isProcessingChatImage = false;
+    clearPendingChatImage();
   };
   reader.readAsDataURL(file);
 }
@@ -3156,6 +3245,52 @@ function setupSettingsModal() {
   }
 
   loadSettingsState();
+
+  // ========================================================
+  // WATCHDOG & RECUPERAÇÃO DE REPRODUÇÃO EM SEGUNDO PLANO
+  // ========================================================
+  function resumeAllActiveVideos() {
+    activeTiles.forEach((entry, tileId) => {
+      if (entry.videoEl) {
+        if (entry.videoEl.paused) {
+          console.log(`[App Watchdog] Retomando reprodução pausada no tile: ${tileId}`);
+          entry.videoEl.play().catch(err => {
+            console.warn(`[App Watchdog] Erro ao retomar reprodução do tile ${tileId}:`, err.message);
+          });
+        }
+      }
+    });
+
+    localPreviews.forEach((preview) => {
+      if (preview.videoEl && preview.videoEl.paused && !preview.isHidden) {
+        preview.videoEl.play().catch(() => {});
+      }
+    });
+  }
+
+  // 1. Recuperação imediata quando o aplicativo volta do segundo plano
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      console.log('[App] Janela voltou a ficar visível. Executando recuperação defensiva de transmissões...');
+      resumeAllActiveVideos();
+      if (roomState.roomId) {
+        roomState.getOtherParticipantIds().forEach(uid => {
+          syncRemotePeerTiles(uid);
+        });
+      }
+    }
+  });
+
+  window.addEventListener('focus', () => {
+    resumeAllActiveVideos();
+  });
+
+  // 2. Watchdog periódico leve (a cada 3.5 segundos) para manter streams fluindo sem congelamento
+  setInterval(() => {
+    if (roomState.roomId) {
+      resumeAllActiveVideos();
+    }
+  }, 3500);
 
   // Verificação silenciosa de atualização ao abrir em desktop
   if (window.desktopAPI) {

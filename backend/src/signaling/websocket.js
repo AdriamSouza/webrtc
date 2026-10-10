@@ -124,6 +124,14 @@ export function setupWebSocketServer(httpServer) {
             handleDisconnect(user, roomManager);
             break;
 
+          case MessageTypes.PING:
+            user.send(createMessage(MessageTypes.PONG, null, 'server', user.id, {}));
+            break;
+
+          case MessageTypes.PONG:
+            // Keepalive acknowledgment
+            break;
+
           default:
             console.warn(`[WebSocket] Evento não mapeado: ${message.type}`);
             break;

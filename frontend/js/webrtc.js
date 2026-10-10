@@ -38,6 +38,7 @@ export class WebRTCManager {
     })();
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
     this.targetMaxFps = 60; // 60 FPS padrão
+    this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
   }
 
   setIceServers(servers) {
@@ -645,8 +646,8 @@ export class WebRTCManager {
         this.onConnectionStateChange(targetUserId, pc.connectionState);
       }
       if (pc.connectionState === 'failed') {
-        console.warn(`[WebRTC] Conexão com ${targetUserId} falhou. Tentando reconexão ICE...`);
-        pc.restartIce();
+        console.warn(`[WebRTC] Conexão com ${targetUserId} falhou. Disparando ICE Restart...`);
+        this.restartPeerConnection(targetUserId);
       } else if (pc.connectionState === 'closed') {
         this.closePeer(targetUserId);
       }
@@ -655,9 +656,32 @@ export class WebRTCManager {
     pc.oniceconnectionstatechange = () => {
       console.log(`[WebRTC] ICE state com ${targetUserId}: ${pc.iceConnectionState}`);
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        if (this.iceDisconnectTimers.has(targetUserId)) {
+          clearTimeout(this.iceDisconnectTimers.get(targetUserId));
+          this.iceDisconnectTimers.delete(targetUserId);
+        }
         if (this.onConnectionStateChange) {
           this.onConnectionStateChange(targetUserId, 'connected');
         }
+      } else if (pc.iceConnectionState === 'disconnected') {
+        // Se a conexão ICE permanecer desconectada por mais de 5s, força ICE restart defensivo
+        if (!this.iceDisconnectTimers.has(targetUserId)) {
+          const timer = setTimeout(() => {
+            this.iceDisconnectTimers.delete(targetUserId);
+            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+              console.warn(`[WebRTC] ICE permaneceu desconectado com ${targetUserId}. Disparando ICE Restart...`);
+              this.restartPeerConnection(targetUserId);
+            }
+          }, 5000);
+          this.iceDisconnectTimers.set(targetUserId, timer);
+        }
+      } else if (pc.iceConnectionState === 'failed') {
+        if (this.iceDisconnectTimers.has(targetUserId)) {
+          clearTimeout(this.iceDisconnectTimers.get(targetUserId));
+          this.iceDisconnectTimers.delete(targetUserId);
+        }
+        console.warn(`[WebRTC] ICE falhou com ${targetUserId}. Disparando ICE Restart...`);
+        this.restartPeerConnection(targetUserId);
       }
     };
 
@@ -776,10 +800,28 @@ export class WebRTCManager {
   }
 
   /**
+   * Executa reinicialização completa de ICE gerando nova oferta SDP conforme RFC 8829
+   */
+  async restartPeerConnection(targetUserId) {
+    const pc = this.peers.get(targetUserId);
+    if (!pc || pc.signalingState === 'closed') return;
+
+    try {
+      console.log(`[WebRTC] Disparando ICE Restart completo para peer ${targetUserId}...`);
+      if (typeof pc.restartIce === 'function') {
+        pc.restartIce();
+      }
+      await this.createOfferForPeer(targetUserId, { iceRestart: true });
+    } catch (err) {
+      console.warn(`[WebRTC] Falha ao executar restartPeerConnection para ${targetUserId}:`, err.message);
+    }
+  }
+
+  /**
    * Inicia o processo de oferta SDP (Host para Viewer)
    * Inclui mapeamento de MIDs para diferenciação determinística de transmissões
    */
-  async createOfferForPeer(targetUserId) {
+  async createOfferForPeer(targetUserId, options = {}) {
     const pc = this.getOrCreatePeer(targetUserId);
 
     try {
@@ -804,10 +846,13 @@ export class WebRTCManager {
 
       if (pc.signalingState === 'closed') return;
 
-      const offer = await pc.createOffer({
+      const offerOptions = {
         offerToReceiveAudio: true,
-        offerToReceiveVideo: true
-      });
+        offerToReceiveVideo: true,
+        ...options
+      };
+
+      const offer = await pc.createOffer(offerOptions);
 
       if (pc.signalingState === 'closed') return;
 
@@ -820,7 +865,7 @@ export class WebRTCManager {
         camera: this.mediaManager?.cameraStream?.id || null
       };
 
-      console.log(`[WebRTC] SDP Offer gerada para ${targetUserId}. MIDs:`, mediaMids);
+      console.log(`[WebRTC] SDP Offer gerada para ${targetUserId}${options.iceRestart ? ' (ICE Restart)' : ''}. MIDs:`, mediaMids);
       this.signaling.send('OFFER', {
         type: pc.localDescription.type,
         sdp: pc.localDescription.sdp,

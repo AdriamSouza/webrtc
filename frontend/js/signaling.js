@@ -12,6 +12,7 @@ export class SignalingClient {
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.isConnected = false;
+    this.heartbeatInterval = null;
   }
 
   /**
@@ -55,6 +56,7 @@ export class SignalingClient {
         console.log('[SignalingClient] Conexão WebSocket estabelecida com sucesso.');
         this.isConnected = true;
         this.reconnectAttempts = 0;
+        this.startHeartbeat();
         this.emit('connection_change', { status: 'connected' });
         resolve();
       };
@@ -71,6 +73,7 @@ export class SignalingClient {
       this.ws.onclose = (event) => {
         clearTimeout(connectionTimeout);
         this._pendingConnectPromise = null;
+        this.stopHeartbeat();
         console.warn(`[SignalingClient] Conexão WebSocket encerrada. Código: ${event.code}`);
         this.isConnected = false;
         this.emit('connection_change', { status: 'disconnected' });
@@ -162,7 +165,24 @@ export class SignalingClient {
     }
   }
 
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.send('PING', {});
+      }
+    }, 20000);
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
   disconnect() {
+    this.stopHeartbeat();
     this.roomId = null;
     this.reconnectAttempts = this.maxReconnectAttempts;
     if (this.ws) {

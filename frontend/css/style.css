@@ -519,82 +519,313 @@ body.dark-theme {
   flex: 1;
   position: relative;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--bg-primary);
+  width: 100%;
+  height: 100%;
 }
 
 /* ========================================================
-   GRID DE TRANSMISSÕES ADAPTATIVO (Multi-stream)
+   GRID DE TRANSMISSÕES E PARTICIPANTES (ESTILO DISCORD)
    ======================================================== */
 .video-grid {
   width: 100%;
   height: 100%;
+  flex: 1;
+  min-height: 0;
   display: grid;
-  gap: 10px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
   box-sizing: border-box;
   align-content: center;
   justify-content: center;
   transition: all 0.25s ease;
 }
 
-/* 1 transmissão: ocupa todo o espaço */
+/* 1 participante/transmissão: ocupa o espaço central amplo */
 .video-grid[data-count="1"] {
-  grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
+  grid-template-columns: minmax(280px, 920px);
+  grid-template-rows: minmax(220px, 1fr);
 }
 
-/* 2 transmissões: divide tela lado a lado */
+/* 2 participantes/transmissões: divide a tela lado a lado */
 .video-grid[data-count="2"] {
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: 1fr;
 }
 
-/* 3 ou 4 transmissões: grid 2x2 */
+/* 3 ou 4 participantes/transmissões: grid 2x2 */
 .video-grid[data-count="3"],
 .video-grid[data-count="4"] {
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(2, 1fr);
 }
 
-/* 5 ou 6 transmissões: grid 3x2 */
+/* 5 ou 6 participantes/transmissões: grid 3x2 */
 .video-grid[data-count="5"],
 .video-grid[data-count="6"] {
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(2, 1fr);
 }
 
+/* 7 a 9 participantes: grid 3x3 */
+.video-grid[data-count="7"],
+.video-grid[data-count="8"],
+.video-grid[data-count="9"] {
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+
+/* Mais de 9: grid responsivo fluido */
+.video-grid:not([data-count="0"]):not([data-count="1"]):not([data-count="2"]):not([data-count="3"]):not([data-count="4"]):not([data-count="5"]):not([data-count="6"]):not([data-count="7"]):not([data-count="8"]):not([data-count="9"]) {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-auto-rows: 1fr;
+}
+
 /* ========================================================
-   MODO PALCO / SPOTLIGHT (Destaque Principal + Miniaturas)
+   PARTICIPANT CARD (Estilo Discord Voice Call)
+   ======================================================== */
+.participant-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+}
+
+.participant-card:hover {
+  border-color: var(--border-focus);
+}
+
+.participant-avatar-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.participant-avatar {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background-color: var(--user-color, #5865F2);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 0 2px rgba(255, 255, 255, 0.1);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.participant-card:hover .participant-avatar {
+  transform: scale(1.06);
+}
+
+.participant-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* Barra inferior com nome e badges */
+.participant-footer {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.participant-name-tag {
+  background: rgba(9, 9, 11, 0.85);
+  backdrop-filter: blur(8px);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-name-tag .tag-badge {
+  font-size: 0.62rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  background: var(--bg-active);
+  color: var(--text-muted);
+}
+
+.participant-card.is-self .participant-name-tag .tag-badge {
+  color: var(--accent-primary);
+}
+
+.participant-card.is-host .participant-name-tag .tag-badge {
+  color: #eab308;
+}
+
+.participant-mic-indicator {
+  background: rgba(9, 9, 11, 0.85);
+  backdrop-filter: blur(8px);
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.participant-mic-indicator.is-muted {
+  color: var(--danger);
+}
+
+/* Participante Transmitindo (AO VIVO) */
+.participant-card.is-live {
+  border-color: rgba(239, 68, 68, 0.45);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.14);
+}
+
+.participant-card.is-live:hover {
+  border-color: #ef4444;
+}
+
+.participant-live-banner {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 5;
+}
+
+.badge-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(239, 68, 68, 0.92);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.badge-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  animation: pulseLiveDot 1.4s infinite;
+}
+
+@keyframes pulseLiveDot {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.35; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.live-source-pill {
+  background: rgba(13, 13, 16, 0.88);
+  backdrop-filter: blur(6px);
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Botão interativo para Assistir Transmissão (estilo Discord) */
+.btn-watch-stream {
+  margin-top: 12px;
+  background: var(--primary);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  transition: all 0.18s ease;
+  z-index: 6;
+}
+
+.btn-watch-stream:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45);
+}
+
+.btn-watch-stream:active {
+  transform: translateY(0);
+}
+
+.btn-watch-stream.watching {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+}
+
+.btn-watch-stream.watching:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+/* ========================================================
+   MODO PALCO / SPOTLIGHT (Destaque Principal + Strip)
    ======================================================== */
 .video-grid.stage-layout,
 .video-grid.spotlight-active {
-  display: grid !important;
-  gap: 10px;
-  width: 100%;
-  height: 100%;
-  padding: 10px;
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  padding: 10px !important;
   box-sizing: border-box;
-}
-
-/* 1 transmissão no Palco: ocupa 100% da tela */
-.video-grid.stage-layout[data-count="1"],
-.video-grid.spotlight-active[data-count="1"] {
-  grid-template-columns: 1fr !important;
-  grid-template-rows: 1fr !important;
-}
-
-/* 2 ou mais transmissões no Palco */
-.video-grid.stage-layout:not([data-count="1"]):not([data-count="0"]),
-.video-grid.spotlight-active:not([data-count="1"]):not([data-count="0"]) {
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) !important;
-  grid-template-rows: 1fr 120px !important;
 }
 
 .video-grid.stage-layout .stream-tile.is-spotlight,
 .video-grid.spotlight-active .stream-tile.is-spotlight {
-  grid-column: 1 / -1 !important;
-  grid-row: 1 !important;
+  flex: 1 !important;
+  min-height: 0 !important;
   width: 100% !important;
   height: 100% !important;
   border-color: var(--border-focus);
@@ -602,19 +833,174 @@ body.dark-theme {
 }
 
 .video-grid.stage-layout .stream-tile:not(.is-spotlight),
-.video-grid.spotlight-active .stream-tile:not(.is-spotlight) {
-  height: 120px !important;
-  cursor: pointer;
-  border-color: var(--border-color);
-  transition: all 0.15s ease;
-  opacity: 0.85;
+.video-grid.spotlight-active .stream-tile:not(.is-spotlight),
+.video-grid.stage-layout .participant-card,
+.video-grid.spotlight-active .participant-card {
+  display: none !important; /* Movidos para a tira de participantes */
 }
 
-.video-grid.stage-layout .stream-tile:not(.is-spotlight):hover,
-.video-grid.spotlight-active .stream-tile:not(.is-spotlight):hover {
-  transform: translateY(-2px);
+/* ========================================================
+   MODO TEATRO (Layout Cinema Ultra Imersivo)
+   ======================================================== */
+.video-grid.theater-layout {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  background: #000000;
+}
+
+.video-grid.theater-layout .stream-tile.is-spotlight {
+  flex: 1 !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.video-grid.theater-layout .stream-tile:not(.is-spotlight),
+.video-grid.theater-layout .participant-card {
+  display: none !important;
+}
+
+/* ========================================================
+   TIRA DE PARTICIPANTES (FILMSTRIP PARA PALCO E TEATRO)
+   ======================================================== */
+.participants-strip {
+  width: 100%;
+  height: 120px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px 8px 12px;
+  box-sizing: border-box;
+  transition: all 0.25s ease;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.participants-strip.hidden,
+.participants-strip.collapsed {
+  display: none !important;
+}
+
+.participants-strip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.strip-header-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.strip-collapse-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.strip-collapse-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.participants-strip-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  align-items: center;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+}
+
+.strip-card {
+  flex-shrink: 0;
+  width: 130px;
+  height: 80px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.strip-card:hover {
   border-color: var(--border-focus);
-  opacity: 1;
+  background: var(--bg-hover);
+  transform: translateY(-2px);
+}
+
+.strip-card.active-spotlight {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.strip-card.is-live {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.strip-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--user-color, #5865F2);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.strip-name {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strip-card.is-live .strip-live-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
 }
 
 /* ========================================================

@@ -56,12 +56,24 @@ Este documento consolida o histórico completo de melhorias, refatorações e ot
    - Reconexão resiliente com auto-rejoin de sala e ICE Restart completo conforme RFC 8829.
    - Flags Chromium contra congelamento de janelas ocluídas no desktop.
 
+10. **Layout Unificado de Chamada Estilo Discord & Transmissões na Tela Principal** *(v1.2.0)*:
+    - **Remoção da aba lateral de transmissões**: As transmissões foram migradas da sidebar para a área principal da sala onde ficam os controles de câmera e compartilhamento de tela.
+    - **Call Grid de Participantes**: Todos os participantes conectados à sala aparecem como cards no grid principal, mesmo que não estejam transmitindo vídeo ou tela (exibindo iniciais, nome, badges de Host/Você e status de microfone).
+    - **Paleta de Cores Aleatórias e Consistentes**: Atribuição automática de cores vibrantes e modernas (estilo Discord) para cada participante.
+    - **Miniaturas de Live Interativas ("Assistir Transmissão")**: Quando alguém transmite tela ou câmera, seu card ganha o badge "AO VIVO" pulsante e um botão em destaque convidando para assistir a transmissão com 1 clique sob demanda via WebRTC.
+    - **Reintrodução e Otimização dos Modos Palco e Teatro**:
+      - **Mosaico (Grid)**: Distribuição harmoniosa de todos os participantes e streams ativas lado a lado.
+      - **Palco (Stage)**: Transmissão em foco ampliada no centro e os outros participantes organizados em uma tira inferior (filmstrip).
+      - **Teatro (Theater)**: Visual imersivo sem bordas no formato cinema.
+      - **Tela Cheia (Fullscreen)**: Tela cheia com auto-hide de controles e cursor após 2.5s.
+    - **Tira de Participantes Ocultável**: Botão ("Ocultar Participantes" / "Mostrar Participantes") que permite ocultar as miniaturas dos participantes para a transmissão ocupar 100% da tela sem nenhuma distração.
+
 ---
 
 ## 🛠️ Status das Etapas de Implementação
 
 - [x] **Etapa 1**: Câmera sem microfone por padrão + Configuração opcional.
-- [x] **Etapa 2**: Remoção do Modo Teatro do HTML, JS e CSS.
+- [x] **Etapa 2**: Simplificação inicial de Layouts.
 - [x] **Etapa 3**: Slider de volume individual e controle de mute em cada transmissão.
 - [x] **Etapa 4**: Auto-hide de cabeçalho e controles em tela cheia por inatividade.
 - [x] **Etapa 5**: Envio de imagens efêmeras no chat com privacidade total.
@@ -70,3 +82,16 @@ Este documento consolida o histórico completo de melhorias, refatorações e ot
 - [x] **Etapa 8**: Rotação automática de tela cheia vertical no celular e renderização correta de nomes de apps no mixer (v1.1.7).
 - [x] **Etapa 9**: Correção de imagens no chat (Ctrl+V/anexo) e prevenção de congelamento em background (v1.1.8).
 - [x] **Etapa 10**: Empacotamento do release executável desktop e sincronização no Git.
+- [x] **Etapa 11**: Interface inspirada no Discord: Call Grid com participantes, cards interativos de Live ("Assistir Transmissão"), modos Palco e Teatro com tira de participantes ocultável e cores automáticas (v1.2.0).
+
+---
+
+## 🚀 Próximas Atualizações Planejadas (Backlog)
+
+1. **Fotos de Perfil / Avatares Customizados**:
+   - Permitir aos participantes fazer upload ou selecionar fotos de perfil / avatares customizados.
+2. **Extração Automática da Cor Dominante da Imagem**:
+   - Analisar a foto de perfil via Canvas para extrair a paleta de cores dominante do ícone/foto.
+   - Aplicar dinamicamente a cor da foto como a cor de destaque da miniatura e do card do participante (substituindo a cor aleatória padrão).
+3. **Alternância de Posição da Tira de Participantes**:
+   - Opção para o usuário escolher entre exibir a tira de participantes embaixo (horizontal) ou ao lado (vertical) nos modos Palco e Teatro.

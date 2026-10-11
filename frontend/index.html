@@ -205,7 +205,25 @@
               </svg>
               <span class="label">Palco</span>
             </button>
+            <button type="button" id="btnLayoutTheater" class="btn-layout" title="Layout Teatro (Modo Imersivo)" data-layout="theater">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="15" x="2" y="4.5" rx="2"/>
+                <line x1="2" x2="22" y1="9" y2="9"/>
+              </svg>
+              <span class="label">Teatro</span>
+            </button>
           </div>
+
+          <!-- Botão para Ocultar / Mostrar Miniaturas dos Participantes no Palco/Teatro -->
+          <button type="button" id="btnToggleParticipantsStrip" class="btn btn-secondary btn-sm btn-icon-inline" title="Ocultar ou mostrar miniaturas dos participantes">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span id="participantsStripBtnLabel">Ocultar Participantes</span>
+          </button>
 
           <!-- Botão para Recolher / Expandir Painel Lateral -->
           <button type="button" id="btnToggleSidebar" class="btn btn-secondary btn-sm btn-icon-inline" title="Alternar Painel Lateral">
@@ -254,9 +272,24 @@
         <!-- Player de Vídeo e Palco Central -->
         <main class="stream-viewport">
           <div class="video-wrapper" id="videoWrapper">
-            <!-- Grid Dinâmico Adaptativo de Transmissões (Câmeras e Telas) -->
+            <!-- Grid Dinâmico Adaptativo de Transmissões e Participantes (Estilo Discord) -->
             <div id="videoGrid" class="video-grid" data-count="0">
-              <!-- Stream tiles injetados dinamicamente via JavaScript -->
+              <!-- Stream tiles e cards de participantes injetados dinamicamente via JavaScript -->
+            </div>
+
+            <!-- Tira de Miniaturas dos Participantes (Modos Palco e Teatro) -->
+            <div id="participantsStrip" class="participants-strip hidden">
+              <div class="participants-strip-header">
+                <span class="strip-header-title">Participantes</span>
+                <button type="button" id="btnCollapseStrip" class="strip-collapse-btn" title="Ocultar tira de participantes">
+                  <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+              <div id="participantsStripList" class="participants-strip-list">
+                <!-- Miniaturas dos participantes renderizadas dinamicamente -->
+              </div>
             </div>
 
             <!-- Banner para ativar áudio em caso de restrição do navegador -->
@@ -443,14 +476,6 @@
               </svg>
               <span>Chat</span>
             </button>
-            <button class="tab-btn" data-tab="streams">
-              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect width="20" height="14" x="2" y="3" rx="2"/>
-                <line x1="8" x2="16" y1="21" y2="21"/>
-                <line x1="12" x2="12" y1="17" y2="21"/>
-              </svg>
-              <span>Transmissões (<span id="tabStreamCount">0</span>)</span>
-            </button>
             <button class="tab-btn" data-tab="participants">
               <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -487,23 +512,6 @@
               <input type="text" id="chatInput" placeholder="Mensagem ou cole imagem (Ctrl+V)..." maxlength="300" autocomplete="off">
               <button type="submit" class="btn btn-primary btn-sm">Enviar</button>
             </form>
-          </div>
-
-          <!-- Aba de Transmissões (Catálogo P2P Sob Demanda) -->
-          <div id="tabStreams" class="tab-pane">
-            <div class="streams-catalog-header">
-              <div class="streams-catalog-title">
-                <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polygon points="23 7 16 12 23 17 23 7"/>
-                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                </svg>
-                <h4>Catálogo de Transmissões</h4>
-              </div>
-              <p class="streams-catalog-hint">Assine apenas as transmissões que deseja assistir para poupar banda e hardware.</p>
-            </div>
-            <div id="streamsList" class="streams-catalog-list">
-              <!-- Renderizado dinamicamente via JavaScript -->
-            </div>
           </div>
 
           <!-- Aba de Participantes -->

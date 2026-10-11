@@ -2,6 +2,63 @@
  * Gerenciador de Estado da Sala no Cliente
  */
 
+// Paleta de cores vibrantes e modernas (estilo Discord e Material Design)
+export const PARTICIPANT_PALETTE = [
+  '#5865F2', // Discord Blurple
+  '#57F287', // Discord Green
+  '#FEE75C', // Discord Amber/Yellow
+  '#EB459E', // Discord Fuchsia
+  '#ED4245', // Discord Red
+  '#00B0F4', // Sky Blue
+  '#9B59B6', // Amethyst Purple
+  '#E67E22', // Carrot Orange
+  '#1ABC9C', // Turquoise
+  '#E91E63', // Neon Pink
+  '#3498DB', // Peter River Blue
+  '#10B981', // Emerald Green
+  '#8B5CF6', // Violet
+  '#F43F5E', // Rose
+  '#06B6D4', // Cyan
+  '#F59E0B'  // Amber
+];
+
+/**
+ * Obtém ou gera uma cor vibrante para o participante
+ * Preparado para suportar avatar com imagem e extração de cor predominante no futuro
+ */
+export function getParticipantColor(user) {
+  if (!user) return PARTICIPANT_PALETTE[0];
+  if (user.color) return user.color;
+  // Se no futuro houver foto com cor dominante calculada:
+  if (user.avatarDominantColor) {
+    user.color = user.avatarDominantColor;
+    return user.color;
+  }
+
+  // Gera uma cor aleatória/determinística baseada no ID ou nome
+  const seed = String(user.id || user.name || Math.random());
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % PARTICIPANT_PALETTE.length;
+  user.color = PARTICIPANT_PALETTE[index];
+  return user.color;
+}
+
+/**
+ * Obtém as iniciais em maiúsculas do nome do participante
+ */
+export function getUserInitials(name) {
+  if (!name) return 'U';
+  const clean = name.trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return clean.substring(0, 2).toUpperCase();
+}
+
 export class RoomState {
   constructor() {
     this.roomId = null;
@@ -37,6 +94,10 @@ export class RoomState {
   }
 
   addParticipant(user) {
+    if (!user) return;
+    if (!user.color) {
+      user.color = getParticipantColor(user);
+    }
     this.participants.set(user.id, user);
   }
 

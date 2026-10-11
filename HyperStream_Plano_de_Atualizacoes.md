@@ -521,9 +521,24 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
 
   2026-10-10              Implementadas Fases 1, 2, 3 e 4: Catálogo efêmero de transmissões na   Catálogo de Transmissões / Subscrição Sob Demanda implementado no backend Node.js e frontend (HTML/CSS/JS).
                           sala, subscrição sob demanda, aba na sidebar e sincronização de tiles.
+
+  2026-10-11              Evolução da Interface Inspirada no Discord: Transmissões no Menu        Eliminação da aba lateral de transmissões em prol de uma experiência unificada e intuitiva. Todos os
+                          Principal, Call Grid de Participantes, Miniatura Interativa com botão   participantes aparecem na chamada com cores vibrantes; lives recebem badge "AO VIVO" e botão para assistir.
+                          "Assistir Transmissão", Modos Teatro e Palco com Tira Ocultável         Modos Palco e Teatro ganham tira de miniaturas recolhível com 1 clique para foco total no vídeo.
+                          de Participantes e Cores Aleatórias/Consistentes para Participantes.
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-## 16. Princípio orientador
+## 16. Próximas Atualizações Planejadas (Backlog de Personalização de Usuário)
+
+1. **Fotos de Perfil / Avatares Customizados**:
+   - Adicionar suporte a foto de perfil/avatar para cada usuário (upload local com compressão em memória ou seleção de avatar).
+2. **Extração Automática da Cor Dominante da Imagem**:
+   - Utilizar Canvas no frontend para ler os pixels da foto de perfil e calcular a cor primária predominante.
+   - Definir automaticamente essa cor como a cor da miniatura, da borda de destaque e do card de presença do participante (substituindo a paleta aleatória).
+3. **Alternância de Posição da Tira de Participantes (Horizontal vs. Vertical)**:
+   - Configuração para alternar a tira de participantes entre a base inferior (horizontal) e a lateral (vertical) nos modos Palco e Teatro.
+
+## 17. Princípio orientador
 
 **Implementar primeiro a correção do ciclo de vida das transmissões e
 assinaturas; depois otimizar a quantidade e a qualidade dos fluxos.** O

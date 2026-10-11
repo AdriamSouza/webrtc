@@ -561,6 +561,17 @@ export class MediaManager {
     }
   }
 
+  /**
+   * Retorna se o microfone / áudio local está silenciado
+   */
+  isAudioMuted() {
+    return Boolean(this.isMuted || this.micMuted || !this.micStream);
+  }
+
+  isaudioMuted() {
+    return this.isAudioMuted();
+  }
+
   async setCaptureSystemAudio(enabled) {
     this.captureSystemAudio = Boolean(enabled);
     try { localStorage.setItem('hyperstream_capture_system_audio', this.captureSystemAudio); } catch (_) {}

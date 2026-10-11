@@ -191,6 +191,10 @@ function setLayoutMode(mode) {
   if (btnLayoutStage) btnLayoutStage.classList.toggle('active', currentLayoutMode === 'stage');
   if (btnLayoutTheater) btnLayoutTheater.classList.toggle('active', currentLayoutMode === 'theater');
 
+  if (btnToggleParticipantsStrip) {
+    btnToggleParticipantsStrip.style.display = (currentLayoutMode === 'grid') ? 'none' : 'inline-flex';
+  }
+
   if (roomBody) {
     roomBody.dataset.layout = currentLayoutMode;
     roomBody.classList.toggle('sidebar-collapsed', isSidebarCollapsed);
@@ -654,13 +658,13 @@ function syncRemotePeerTiles(userId) {
  */
 function toggleSpotlight(id) {
   if (currentSpotlightId === id) {
-    if (currentLayoutMode === 'stage') {
-      currentSpotlightId = null;
-      ensureSpotlightSelected();
+    if (currentLayoutMode === 'stage' || currentLayoutMode === 'theater') {
+      setLayoutMode('grid');
     } else {
       clearSpotlight();
     }
   } else {
+    setLayoutMode('stage');
     applySpotlightTile(id);
   }
 }
@@ -1026,18 +1030,6 @@ function renderCallParticipants() {
       const primaryStream = userStreams[0];
       const isSubscribed = primaryStream ? (isSelf || roomState.isSubscribed(primaryStream.streamId)) : false;
 
-      // Se o usuário está transmitindo e o vídeo já está montado como um tile ativo no grid,
-      // não duplicamos o card se ele já tem um tile de vídeo ativo representando-o
-      const activeTileExists = primaryStream && (
-        activeTiles.has(primaryStream.streamId) ||
-        activeTiles.has(`${user.id}-screen`) ||
-        activeTiles.has(`${user.id}-camera`)
-      );
-
-      if (activeTileExists) {
-        return;
-      }
-
       const card = document.createElement('div');
       card.className = `participant-card ${isSelf ? 'is-self' : ''} ${user.isHost ? 'is-host' : ''} ${hasLiveStream ? 'is-live' : ''}`;
       card.dataset.userId = user.id;
@@ -1063,7 +1055,7 @@ function renderCallParticipants() {
         if (!isSelf) {
           if (isSubscribed) {
             watchBtnHtml = `
-              <button type="button" class="btn-watch-stream watching" data-stream-id="${primaryStream.streamId}">
+              <button type="button" class="btn-watch-stream watching" data-stream-id="${primaryStream.streamId}" title="Assistindo a esta transmissão">
                 <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
                   <circle cx="12" cy="12" r="3"/>
@@ -1073,7 +1065,7 @@ function renderCallParticipants() {
             `;
           } else {
             watchBtnHtml = `
-              <button type="button" class="btn-watch-stream" data-stream-id="${primaryStream.streamId}">
+              <button type="button" class="btn-watch-stream" data-stream-id="${primaryStream.streamId}" title="Clique para assistir à transmissão no palco principal">
                 <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="5 3 19 12 5 21 5 3"/>
                 </svg>
@@ -1083,15 +1075,33 @@ function renderCallParticipants() {
           }
         } else {
           watchBtnHtml = `
-            <span class="badge-live" style="margin-top: 10px; background: rgba(99, 102, 241, 0.25); color: var(--accent-primary); border: 1px solid rgba(99, 102, 241, 0.4);">
-              Transmitindo Ao Vivo
-            </span>
+            <button type="button" class="btn-watch-stream btn-self-view" title="Ver sua própria transmissão em tela cheia ou palco">
+              <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect width="18" height="12" x="3" y="3" rx="1.5"/><rect width="5" height="4" x="3" y="17" rx="1"/><rect width="5" height="4" x="16" y="17" rx="1"/>
+              </svg>
+              <span>Ver no Palco</span>
+            </button>
           `;
         }
       }
 
-      // Indicador de microfone
-      const isMuted = isSelf ? media.isAudioMuted() : false;
+      // Indicador de microfone seguro e sincronizado
+      let isMuted = false;
+      if (isSelf) {
+        try {
+          if (media && typeof media.isAudioMuted === 'function') {
+            isMuted = media.isAudioMuted();
+          } else if (media && typeof media.isaudioMuted === 'function') {
+            isMuted = media.isaudioMuted();
+          } else if (media) {
+            isMuted = Boolean(media.isMuted || media.micMuted);
+          }
+        } catch (_) {
+          isMuted = false;
+        }
+      } else {
+        isMuted = Boolean(user.isMuted);
+      }
       const micIconHtml = isMuted ? Icons.micOff(13) : Icons.mic(13);
 
       card.innerHTML = `
@@ -1114,20 +1124,49 @@ function renderCallParticipants() {
         </div>
       `;
 
-      if (hasLiveStream && primaryStream && !isSelf) {
-        const watchBtn = card.querySelector('.btn-watch-stream');
-        if (watchBtn) {
-          watchBtn.addEventListener('click', (e) => {
+      if (hasLiveStream && primaryStream) {
+        if (!isSelf) {
+          const handleWatch = (e) => {
             e.stopPropagation();
             if (!isSubscribed) {
               toggleStreamSubscription(primaryStream.streamId, true);
-              setTimeout(() => {
-                applySpotlightTile(primaryStream.streamId);
-              }, 350);
-            } else {
-              applySpotlightTile(primaryStream.streamId);
             }
-          });
+            setLayoutMode('stage');
+            setTimeout(() => {
+              applySpotlightTile(primaryStream.streamId);
+            }, 250);
+          };
+
+          const watchBtn = card.querySelector('.btn-watch-stream');
+          if (watchBtn) watchBtn.addEventListener('click', handleWatch);
+          card.addEventListener('click', handleWatch);
+          card.style.cursor = 'pointer';
+        } else {
+          const handleSelfWatch = (e) => {
+            e.stopPropagation();
+            const isScreen = primaryStream.sourceType === 'desktop' || primaryStream.sourceType === 'screen';
+            const type = isScreen ? 'screen' : 'camera';
+            const localStream = isScreen ? media.screenStream : media.cameraStream;
+            const title = isScreen ? 'Sua Tela (60 FPS)' : 'Sua Câmera';
+            if (localStream) {
+              addOrUpdateTile({
+                id: `local-${type}`,
+                title,
+                stream: localStream,
+                isLocal: true,
+                type
+              });
+              setLayoutMode('stage');
+              setTimeout(() => {
+                applySpotlightTile(`local-${type}`);
+              }, 150);
+            }
+          };
+
+          const watchBtn = card.querySelector('.btn-watch-stream');
+          if (watchBtn) watchBtn.addEventListener('click', handleSelfWatch);
+          card.addEventListener('click', handleSelfWatch);
+          card.style.cursor = 'pointer';
         }
       }
 
@@ -1151,7 +1190,32 @@ function renderParticipantsStrip() {
 
   participants.forEach(user => {
     const isSelf = user.id === roomState.myUserId;
-    const userStreams = allStreams.filter(s => s.hostId === user.id);
+    let userStreams = allStreams.filter(s => s.hostId === user.id);
+
+    // Se for o usuário local, também inclui prévias de mídias ativas
+    if (isSelf) {
+      if (media.hasActiveScreenStream() && !userStreams.some(s => s.sourceType === 'desktop' || s.sourceType === 'screen')) {
+        userStreams.push({
+          streamId: 'local-screen',
+          hostId: user.id,
+          hostName: user.name,
+          sourceType: 'desktop',
+          title: 'Sua Tela (60 FPS)',
+          status: 'live'
+        });
+      }
+      if (media.hasActiveCamera() && !userStreams.some(s => s.sourceType === 'camera')) {
+        userStreams.push({
+          streamId: 'local-camera',
+          hostId: user.id,
+          hostName: user.name,
+          sourceType: 'camera',
+          title: 'Sua Câmera',
+          status: 'live'
+        });
+      }
+    }
+
     const hasLiveStream = userStreams.length > 0;
     const primaryStream = userStreams[0];
     const isSubscribed = primaryStream ? (isSelf || roomState.isSubscribed(primaryStream.streamId)) : false;
@@ -1161,13 +1225,15 @@ function renderParticipantsStrip() {
     const isCurrentSpotlight = primaryStream && (
       currentSpotlightId === primaryStream.streamId ||
       currentSpotlightId === `${user.id}-screen` ||
-      currentSpotlightId === `${user.id}-camera`
+      currentSpotlightId === `${user.id}-camera` ||
+      currentSpotlightId === 'local-screen' ||
+      currentSpotlightId === 'local-camera'
     );
 
     const stripCard = document.createElement('div');
     stripCard.className = `strip-card ${hasLiveStream ? 'is-live' : ''} ${isCurrentSpotlight ? 'active-spotlight' : ''}`;
     stripCard.dataset.userId = user.id;
-    stripCard.title = `${user.name}${hasLiveStream ? ' (Transmitindo Ao Vivo)' : ''}`;
+    stripCard.title = `${user.name}${hasLiveStream ? ' (Transmitindo Ao Vivo - Clique para focar no palco)' : ''}`;
 
     stripCard.innerHTML = `
       ${hasLiveStream ? '<span class="strip-live-badge">AO VIVO</span>' : ''}
@@ -1179,10 +1245,27 @@ function renderParticipantsStrip() {
 
     stripCard.addEventListener('click', () => {
       if (hasLiveStream && primaryStream) {
-        if (!isSubscribed && !isSelf) {
-          toggleStreamSubscription(primaryStream.streamId, true);
+        if (isSelf) {
+          const isScreen = primaryStream.sourceType === 'desktop' || primaryStream.sourceType === 'screen';
+          const type = isScreen ? 'screen' : 'camera';
+          const localStream = isScreen ? media.screenStream : media.cameraStream;
+          const title = isScreen ? 'Sua Tela (60 FPS)' : 'Sua Câmera';
+          if (localStream) {
+            addOrUpdateTile({
+              id: `local-${type}`,
+              title,
+              stream: localStream,
+              isLocal: true,
+              type
+            });
+            applySpotlightTile(`local-${type}`);
+          }
+        } else {
+          if (!isSubscribed) {
+            toggleStreamSubscription(primaryStream.streamId, true);
+          }
+          applySpotlightTile(primaryStream.streamId);
         }
-        applySpotlightTile(primaryStream.streamId);
       }
     });
 
@@ -1227,16 +1310,15 @@ function updateGridLayout() {
     }
   }
 
-  // Se houver qualquer participante ou transmissão na sala, streamPlaceholder fica oculto
-  if (roomState.participants.size > 0 || totalCount > 0) {
+  // Mantém streamPlaceholder permanentemente oculto (layout unificado de chamada estilo Discord / Meet)
+  if (streamPlaceholder) {
     streamPlaceholder.classList.add('hidden');
-    const streamCount = roomState.availableStreams.size;
-    updateConnectionStatus('connected', `${roomState.participants.size} participante${roomState.participants.size > 1 ? 's' : ''}${streamCount > 0 ? ` • ${streamCount} ao vivo` : ''}`);
-  } else {
-    streamPlaceholder.classList.remove('hidden');
-    placeholderNotice.textContent = 'Inicie sua câmera ou compartilhe sua tela para começar a transmitir.';
-    updateConnectionStatus('connected', 'Sala Pronta');
+    streamPlaceholder.style.display = 'none';
   }
+
+  const streamCount = roomState.availableStreams.size;
+  const participantCount = Math.max(roomState.participants.size, 1);
+  updateConnectionStatus('connected', `${participantCount} participante${participantCount > 1 ? 's' : ''}${streamCount > 0 ? ` • ${streamCount} ao vivo` : ''}`);
 }
 
 
@@ -1579,11 +1661,11 @@ function setupEventListeners() {
   });
 
   // Botões de Iniciar Mídia
-  btnShareScreen.addEventListener('click', handleToggleScreenShare);
-  btnPromptShare.addEventListener('click', handleToggleScreenShare);
+  if (btnShareScreen) btnShareScreen.addEventListener('click', handleToggleScreenShare);
+  if (btnPromptShare) btnPromptShare.addEventListener('click', handleToggleScreenShare);
 
-  btnToggleCamera.addEventListener('click', handleToggleCamera);
-  btnPromptCamera.addEventListener('click', handleToggleCamera);
+  if (btnToggleCamera) btnToggleCamera.addEventListener('click', handleToggleCamera);
+  if (btnPromptCamera) btnPromptCamera.addEventListener('click', handleToggleCamera);
 
   // Mute / Unmute microfone
   btnToggleAudio.addEventListener('click', async () => {
@@ -1598,6 +1680,7 @@ function setupEventListeners() {
       await webrtc.renegotiateAllPeers(otherIds);
 
       signaling.send('MUTE', { muted });
+      updateGridLayout();
     } catch (err) {
       alert('Não foi possível acessar o microfone: ' + err.message);
     }
@@ -2222,7 +2305,7 @@ function setupSignalingEvents() {
   });
 
   signaling.on('STREAM_PUBLISHED', (msg) => {
-    const streamInfo = msg.data;
+    const streamInfo = msg.data?.stream || msg.data;
     if (!streamInfo) return;
     roomState.addStream(streamInfo);
     updateStreamCatalogBadge();
@@ -2248,6 +2331,24 @@ function setupSignalingEvents() {
       }
       updateStreamCatalogBadge();
       renderStreamCatalogUI();
+      updateGridLayout();
+    }
+  });
+
+  signaling.on('MUTE', (msg) => {
+    const fromUserId = msg.from || msg.data?.userId;
+    const participant = roomState.participants.get(fromUserId);
+    if (participant) {
+      participant.isMuted = true;
+      updateGridLayout();
+    }
+  });
+
+  signaling.on('UNMUTE', (msg) => {
+    const fromUserId = msg.from || msg.data?.userId;
+    const participant = roomState.participants.get(fromUserId);
+    if (participant) {
+      participant.isMuted = false;
       updateGridLayout();
     }
   });

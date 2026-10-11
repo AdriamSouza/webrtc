@@ -526,17 +526,22 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
                           Principal, Call Grid de Participantes, Miniatura Interativa com botão   participantes aparecem na chamada com cores vibrantes; lives recebem badge "AO VIVO" e botão para assistir.
                           "Assistir Transmissão", Modos Teatro e Palco com Tira Ocultável         Modos Palco e Teatro ganham tira de miniaturas recolhível com 1 clique para foco total no vídeo.
                           de Participantes e Cores Aleatórias/Consistentes para Participantes.
+
+  2026-10-11              Resolução do erro isAudioMuted e Aprimoramento da Chamada Discord/Meet: Correção do método isAudioMuted/isaudioMuted em MediaManager e fallback resiliente. Participantes
+                          Sincronização de Mute Remoto, Foco Interativo e Expansão no Palco       sempre visíveis no Mosaico ou na Tira inferior recolhível. Usuário que transmite pode expandir
+                          (Versão 1.2.1).                                                         sua live no Palco/Teatro. Suporte a clique direto no card para assistir live e toggle da tira.
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 16. Próximas Atualizações Planejadas (Backlog de Personalização de Usuário)
 
 1. **Fotos de Perfil / Avatares Customizados**:
-   - Adicionar suporte a foto de perfil/avatar para cada usuário (upload local com compressão em memória ou seleção de avatar).
+   - Permitir que cada participante envie uma foto de perfil local ou selecione um ícone de usuário.
+   - Envio da imagem de perfil compactada via sinalização P2P para todos os participantes da sala.
 2. **Extração Automática da Cor Dominante da Imagem**:
-   - Utilizar Canvas no frontend para ler os pixels da foto de perfil e calcular a cor primária predominante.
-   - Definir automaticamente essa cor como a cor da miniatura, da borda de destaque e do card de presença do participante (substituindo a paleta aleatória).
+   - Processamento via Canvas 2D no cliente para extrair a cor média/dominante do avatar enviado.
+   - Aplicação dinâmica dessa cor como a cor da miniatura, do anel de atividade de voz e da borda do card do participante (substituindo a paleta randômica atual).
 3. **Alternância de Posição da Tira de Participantes (Horizontal vs. Vertical)**:
-   - Configuração para alternar a tira de participantes entre a base inferior (horizontal) e a lateral (vertical) nos modos Palco e Teatro.
+   - Permitir alternar a tira de participantes entre a posição inferior (horizontal, padrão Meet) e a lateral (vertical, padrão Discord) nos modos Palco e Teatro.
 
 ## 17. Princípio orientador
 

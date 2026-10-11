@@ -151,6 +151,14 @@ export class RoomState {
     if (streamId.endsWith('-desktop')) this.subscribedStreamIds.delete(streamId.replace(/-desktop$/, '-screen'));
   }
 
+  getStream(streamId) {
+    if (!streamId) return null;
+    if (this.availableStreams.has(streamId)) return this.availableStreams.get(streamId);
+    if (streamId.endsWith('-screen')) return this.availableStreams.get(streamId.replace(/-screen$/, '-desktop')) || null;
+    if (streamId.endsWith('-desktop')) return this.availableStreams.get(streamId.replace(/-desktop$/, '-screen')) || null;
+    return null;
+  }
+
   getAllStreams() {
     return Array.from(this.availableStreams.values());
   }

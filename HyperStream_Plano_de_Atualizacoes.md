@@ -534,6 +534,10 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
   2026-10-11              Correção de Encerramento de Transmissão e Indicador de Voz Ativa (VAD): Resolução do problema em que a tela ficava preta ao desativar live/câmera (retorno automático
                           Contorno Verde no Avatar/Card ao Falar e Áudio P2P Contínuo             ao grid sem tela preta). Implementação de VAD em tempo real via Web Audio API com contorno e badge
                           (Versão 1.2.3).                                                         verde (#10b981) quando o participante fala, e reprodução contínua de áudio na chamada P2P.
+
+  2026-10-11              Correção de Acesso à Transmissão (Sem Tela Preta) e Remoção de Teatro:  Remoção definitiva do botão/modo Teatro (permanecendo Mosaico e Palco). Resolução completa da tela preta
+                          Sincronização de Stream IDs (-desktop e -screen), Fallback Autoplay      ao clicar em "Assistir Transmissão" via normalização de aliases, registro no remoteUserMedia e fallback
+                          e Reprodução Estável no Desktop, Navegador e Mobile (Versão 1.2.4).      de reprodução com áudio/mudo em navegadores e dispositivos móveis.
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 16. Próximas Atualizações Planejadas (Backlog de Personalização de Usuário)

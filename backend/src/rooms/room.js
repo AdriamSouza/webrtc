@@ -135,7 +135,11 @@ export class Room {
   }
 
   getStream(streamId) {
-    return this.streams.get(streamId) || null;
+    if (!streamId) return null;
+    if (this.streams.has(streamId)) return this.streams.get(streamId);
+    if (streamId.endsWith('-screen')) return this.streams.get(streamId.replace(/-screen$/, '-desktop')) || null;
+    if (streamId.endsWith('-desktop')) return this.streams.get(streamId.replace(/-desktop$/, '-screen')) || null;
+    return null;
   }
 
   getAllStreams() {

@@ -52,7 +52,6 @@ const telemetryHud = document.getElementById('telemetryHud');
 const layoutSelectorGroup = document.getElementById('layoutSelectorGroup');
 const btnLayoutGrid = document.getElementById('btnLayoutGrid');
 const btnLayoutStage = document.getElementById('btnLayoutStage');
-const btnLayoutTheater = document.getElementById('btnLayoutTheater');
 const btnToggleParticipantsStrip = document.getElementById('btnToggleParticipantsStrip');
 const participantsStripBtnLabel = document.getElementById('participantsStripBtnLabel');
 const btnToggleSidebar = document.getElementById('btnToggleSidebar');
@@ -132,11 +131,26 @@ let isConnecting = false;
 const peerSyncTimers = new Map(); // Map<userId, number> - Timer de retry único por peer (previne loop exponencial)
 const peerRetryCounts = new Map(); // Map<userId, number> - Contador de tentativas limitadas
 
+/**
+ * Normaliza IDs de transmissões/tiles para formato canônico,
+ * garantindo compatibilidade uniforme entre '-desktop' e '-screen'.
+ */
+function toCanonicalTileId(id) {
+  if (!id) return '';
+  return String(id).replace(/-desktop$/, '-screen');
+}
+
+function areTileIdsEquivalent(id1, id2) {
+  if (!id1 || !id2) return false;
+  if (id1 === id2) return true;
+  return toCanonicalTileId(id1) === toCanonicalTileId(id2);
+}
+
 // Estado de Layout (Sincronizado entre Web e Desktop)
 let currentLayoutMode = (() => {
   try {
     const saved = localStorage.getItem('webrtc_layout_mode');
-    return (saved === 'stage' || saved === 'theater') ? saved : 'grid';
+    return (saved === 'stage') ? 'stage' : 'grid';
   } catch (_) { return 'grid'; }
 })();
 let isSidebarCollapsed = (() => {
@@ -155,7 +169,7 @@ let isParticipantsStripHidden = (() => {
 })();
 
 /**
- * Alterna a visibilidade da tira de miniaturas dos participantes nos modos Palco e Teatro
+ * Alterna a visibilidade da tira de miniaturas dos participantes no modo Palco
  */
 function toggleParticipantsStrip(forceState = null) {
   if (forceState !== null) {
@@ -166,9 +180,9 @@ function toggleParticipantsStrip(forceState = null) {
 
   try { localStorage.setItem('webrtc_strip_hidden', isParticipantsStripHidden ? 'true' : 'false'); } catch (_) {}
 
-  const isStageOrTheater = currentLayoutMode === 'stage' || currentLayoutMode === 'theater';
+  const isStage = currentLayoutMode === 'stage';
   if (participantsStrip) {
-    participantsStrip.classList.toggle('hidden', isParticipantsStripHidden || !isStageOrTheater);
+    participantsStrip.classList.toggle('hidden', isParticipantsStripHidden || !isStage);
   }
 
   if (participantsStripBtnLabel) {
@@ -180,20 +194,15 @@ function toggleParticipantsStrip(forceState = null) {
 }
 
 /**
- * Define o modo de layout ativo: 'grid' (Mosaico), 'stage' (Palco) ou 'theater' (Teatro)
+ * Define o modo de layout ativo: 'grid' (Mosaico) ou 'stage' (Palco)
  */
 function setLayoutMode(mode) {
-  if (activeTiles.size === 0) {
-    currentLayoutMode = 'grid';
-  } else {
-    currentLayoutMode = (mode === 'stage' || mode === 'theater') ? mode : 'grid';
-  }
+  currentLayoutMode = (mode === 'stage') ? 'stage' : 'grid';
   try { localStorage.setItem('webrtc_layout_mode', currentLayoutMode); } catch (_) {}
 
   // Atualiza estado visual dos botões de controle de layout
   if (btnLayoutGrid) btnLayoutGrid.classList.toggle('active', currentLayoutMode === 'grid');
   if (btnLayoutStage) btnLayoutStage.classList.toggle('active', currentLayoutMode === 'stage');
-  if (btnLayoutTheater) btnLayoutTheater.classList.toggle('active', currentLayoutMode === 'theater');
 
   if (btnToggleParticipantsStrip) {
     btnToggleParticipantsStrip.style.display = (currentLayoutMode === 'grid') ? 'none' : 'inline-flex';
@@ -204,18 +213,13 @@ function setLayoutMode(mode) {
     roomBody.classList.toggle('sidebar-collapsed', isSidebarCollapsed);
   }
 
-  if (currentLayoutMode === 'theater') {
-    videoGrid.classList.remove('stage-layout');
-    videoGrid.classList.add('theater-layout');
-    ensureSpotlightSelected();
-    toggleParticipantsStrip(isParticipantsStripHidden);
-  } else if (currentLayoutMode === 'stage') {
+  if (currentLayoutMode === 'stage') {
     videoGrid.classList.remove('theater-layout');
     videoGrid.classList.add('stage-layout');
     ensureSpotlightSelected();
     toggleParticipantsStrip(isParticipantsStripHidden);
   } else {
-    videoGrid.classList.remove('stage-layout', 'theater-layout');
+    videoGrid.classList.remove('stage-layout', 'spotlight-active', 'theater-layout');
     clearSpotlight();
     if (participantsStrip) {
       participantsStrip.classList.add('hidden');
@@ -231,9 +235,14 @@ function setLayoutMode(mode) {
 function ensureSpotlightSelected() {
   if (activeTiles.size === 0) return;
 
-  if (currentSpotlightId && activeTiles.has(currentSpotlightId)) {
-    applySpotlightTile(currentSpotlightId);
-    return;
+  const canonicalCurrent = toCanonicalTileId(currentSpotlightId);
+  if (canonicalCurrent) {
+    for (const [id] of activeTiles.entries()) {
+      if (areTileIdsEquivalent(id, canonicalCurrent)) {
+        applySpotlightTile(id);
+        return;
+      }
+    }
   }
 
   let targetId = null;
@@ -254,14 +263,36 @@ function ensureSpotlightSelected() {
 }
 
 function applySpotlightTile(id) {
-  currentSpotlightId = id;
-  videoGrid.classList.add('spotlight-active');
+  if (!id) return;
+  const canonicalId = toCanonicalTileId(id);
+  currentSpotlightId = canonicalId;
+
+  if (currentLayoutMode === 'stage') {
+    videoGrid.classList.add('stage-layout');
+    videoGrid.classList.add('spotlight-active');
+  }
+
+  let matched = false;
   document.querySelectorAll('.stream-tile').forEach(t => {
-    const isTarget = t.dataset.tileId === id;
+    const isTarget = areTileIdsEquivalent(t.dataset.tileId, canonicalId);
+    if (isTarget) matched = true;
     t.classList.toggle('is-spotlight', isTarget);
     const focusBtn = t.querySelector('.btn-focus');
     if (focusBtn) focusBtn.classList.toggle('active', isTarget);
   });
+
+  // Se nenhum tile coincidiu ainda (ex: acabou de ser montado), promove o primeiro no modo palco
+  if (!matched && currentLayoutMode === 'stage') {
+    const firstTile = document.querySelector('.stream-tile');
+    if (firstTile) {
+      firstTile.classList.add('is-spotlight');
+      currentSpotlightId = toCanonicalTileId(firstTile.dataset.tileId);
+      const focusBtn = firstTile.querySelector('.btn-focus');
+      if (focusBtn) focusBtn.classList.add('active');
+    }
+  }
+
+  renderParticipantsStrip();
 }
 
 function clearSpotlight() {
@@ -272,6 +303,7 @@ function clearSpotlight() {
     const focusBtn = t.querySelector('.btn-focus');
     if (focusBtn) focusBtn.classList.remove('active');
   });
+  renderParticipantsStrip();
 }
 
 function toggleSidebar(forceState = null) {
@@ -490,25 +522,44 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
   tileEl.addEventListener('click', (e) => {
     if (e.target.closest('.tile-btn') || e.target.closest('.tile-volume-group')) return;
     if (currentLayoutMode === 'stage' || videoGrid.classList.contains('stage-layout')) {
-      if (currentSpotlightId !== id) {
+      if (!areTileIdsEquivalent(currentSpotlightId, id)) {
         applySpotlightTile(id);
       }
     }
   });
 
-  const playPromise = videoEl.play();
-  if (playPromise !== undefined) {
-    playPromise.catch((err) => {
-      console.warn('[TileManager] Autoplay com som bloqueado, mutando...', err.message);
-      videoEl.muted = true;
-      updateVolumeUi();
-      videoEl.play().catch(e => console.error(e));
-      if (unmuteBanner) unmuteBanner.classList.remove('hidden');
-    });
-  }
+  // Duplo clique alterna tela cheia da transmissão
+  tileEl.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.tile-btn') || e.target.closest('.tile-volume-group')) return;
+    toggleTileFullscreen(tileEl);
+  });
+
+  const safePlayVideo = () => {
+    const playPromise = videoEl.play();
+    if (playPromise !== undefined && typeof playPromise.catch === 'function') {
+      playPromise.catch((err) => {
+        console.warn('[TileManager] Autoplay com som bloqueado, mutando...', err.message);
+        videoEl.muted = true;
+        updateVolumeUi();
+        videoEl.play().catch(e => console.warn('[TileManager] Fallback play falhou:', e.message));
+        if (unmuteBanner) unmuteBanner.classList.remove('hidden');
+      });
+    }
+  };
+
+  videoEl.addEventListener('loadedmetadata', () => {
+    if (videoEl.paused) safePlayVideo();
+  });
+  safePlayVideo();
 
   entry = { tileEl, videoEl, stream, type, isLocal, title };
   activeTiles.set(id, entry);
+
+  if (currentLayoutMode === 'stage') {
+    if (!currentSpotlightId || areTileIdsEquivalent(currentSpotlightId, id) || activeTiles.size === 1) {
+      applySpotlightTile(id);
+    }
+  }
 
   updateGridLayout();
   return entry;
@@ -518,11 +569,12 @@ function addOrUpdateTile({ id, title, stream, isLocal = false, type = 'screen' }
  * Remove um tile do grid e atualiza layout
  */
 function removeTile(id) {
-  const entry = activeTiles.get(id);
+  const canonicalId = toCanonicalTileId(id);
+  const entry = activeTiles.get(id) || activeTiles.get(canonicalId);
   if (!entry) {
-    const orphanEl = document.getElementById(`tile-${id}`);
+    const orphanEl = document.getElementById(`tile-${id}`) || document.getElementById(`tile-${canonicalId}`);
     if (orphanEl) orphanEl.remove();
-    if (activeTiles.size === 0 && (currentLayoutMode === 'stage' || currentLayoutMode === 'theater')) {
+    if (activeTiles.size === 0 && currentLayoutMode === 'stage') {
       setLayoutMode('grid');
     } else {
       updateGridLayout();
@@ -540,8 +592,9 @@ function removeTile(id) {
 
   entry.tileEl.remove();
   activeTiles.delete(id);
+  activeTiles.delete(canonicalId);
 
-  if (currentSpotlightId === id) {
+  if (areTileIdsEquivalent(currentSpotlightId, id)) {
     currentSpotlightId = null;
     if (activeTiles.size === 0) {
       setLayoutMode('grid');
@@ -552,7 +605,7 @@ function removeTile(id) {
     }
   }
 
-  if (activeTiles.size === 0 && (currentLayoutMode === 'stage' || currentLayoutMode === 'theater')) {
+  if (activeTiles.size === 0 && currentLayoutMode === 'stage') {
     setLayoutMode('grid');
   } else {
     updateGridLayout();
@@ -578,16 +631,27 @@ function syncRemotePeerTiles(userId) {
   const participantName = participant ? participant.name : `Usuário ${userId.substring(0, 4)}`;
   const userMedia = remoteUserMedia.get(userId) || { screen: false, camera: false };
 
+  // Verifica se o usuário possui stream anunciada no catálogo de transmissões ativas
+  const hasScreenInCatalog = Array.from(roomState.availableStreams.values()).some(
+    s => s.hostId === userId && (s.sourceType === 'desktop' || s.sourceType === 'screen' || s.streamId?.endsWith('-screen') || s.streamId?.endsWith('-desktop'))
+  );
+  const hasCameraInCatalog = Array.from(roomState.availableStreams.values()).some(
+    s => s.hostId === userId && (s.sourceType === 'camera' || s.streamId?.endsWith('-camera'))
+  );
+
+  const isScreenActive = Boolean(userMedia.screen || hasScreenInCatalog);
+  const isCameraActive = Boolean(userMedia.camera || hasCameraInCatalog);
+
   let pendingTrack = false;
 
   // 1. Sincroniza Transmissão de Tela (Sob Demanda via Assinatura)
   const screenTileId = `${userId}-screen`;
   const isScreenSubscribed = roomState.isSubscribed(screenTileId);
-  if (userMedia.screen && isScreenSubscribed) {
+  if (isScreenActive && isScreenSubscribed) {
     const screenStream = webrtc.getRemoteStreamForTile(userId, 'screen');
     const screenVideoTrack = webrtc.getRemoteVideoTrack(userId, 'screen');
 
-    if (screenVideoTrack && screenVideoTrack.readyState === 'live') {
+    if (screenVideoTrack && (screenVideoTrack.readyState === 'live' || !screenVideoTrack.ended)) {
       addOrUpdateTile({
         id: screenTileId,
         title: `${participantName} (Tela 60 FPS)`,
@@ -600,7 +664,10 @@ function syncRemotePeerTiles(userId) {
         console.log(`[App] Tela de ${participantName} pronta para reprodução (unmute)`);
         const tile = activeTiles.get(screenTileId);
         if (tile && tile.videoEl && tile.videoEl.paused) {
-          tile.videoEl.play().catch(e => console.warn(e));
+          tile.videoEl.play().catch(() => {
+            tile.videoEl.muted = true;
+            tile.videoEl.play().catch(() => {});
+          });
         }
       };
 
@@ -617,11 +684,11 @@ function syncRemotePeerTiles(userId) {
   // 2. Sincroniza Transmissão de Câmera (Sob Demanda via Assinatura)
   const cameraTileId = `${userId}-camera`;
   const isCameraSubscribed = roomState.isSubscribed(cameraTileId);
-  if (userMedia.camera && isCameraSubscribed) {
+  if (isCameraActive && isCameraSubscribed) {
     const cameraStream = webrtc.getRemoteStreamForTile(userId, 'camera');
     const cameraVideoTrack = webrtc.getRemoteVideoTrack(userId, 'camera');
 
-    if (cameraVideoTrack && cameraVideoTrack.readyState === 'live') {
+    if (cameraVideoTrack && (cameraVideoTrack.readyState === 'live' || !cameraVideoTrack.ended)) {
       addOrUpdateTile({
         id: cameraTileId,
         title: `${participantName} (Câmera)`,
@@ -634,7 +701,10 @@ function syncRemotePeerTiles(userId) {
         console.log(`[App] Câmera de ${participantName} pronta para reprodução (unmute)`);
         const tile = activeTiles.get(cameraTileId);
         if (tile && tile.videoEl && tile.videoEl.paused) {
-          tile.videoEl.play().catch(e => console.warn(e));
+          tile.videoEl.play().catch(() => {
+            tile.videoEl.muted = true;
+            tile.videoEl.play().catch(() => {});
+          });
         }
       };
 
@@ -650,12 +720,12 @@ function syncRemotePeerTiles(userId) {
 
   if (pendingTrack) {
     const retries = peerRetryCounts.get(userId) || 0;
-    if (retries < 6) {
+    if (retries < 10) {
       peerRetryCounts.set(userId, retries + 1);
       const timer = setTimeout(() => {
         peerSyncTimers.delete(userId);
         syncRemotePeerTiles(userId);
-      }, 500);
+      }, 350);
       peerSyncTimers.set(userId, timer);
     } else {
       peerRetryCounts.delete(userId);
@@ -671,8 +741,8 @@ function syncRemotePeerTiles(userId) {
  * Alterna modo de foco (Spotlight) em uma transmissão específica
  */
 function toggleSpotlight(id) {
-  if (currentSpotlightId === id) {
-    if (currentLayoutMode === 'stage' || currentLayoutMode === 'theater') {
+  if (areTileIdsEquivalent(currentSpotlightId, id)) {
+    if (currentLayoutMode === 'stage') {
       setLayoutMode('grid');
     } else {
       clearSpotlight();
@@ -1293,9 +1363,14 @@ function renderCallParticipants() {
               toggleStreamSubscription(primaryStream.streamId, true);
             }
             setLayoutMode('stage');
+            const targetTileId = toCanonicalTileId(primaryStream.streamId);
+            applySpotlightTile(targetTileId);
             setTimeout(() => {
-              applySpotlightTile(primaryStream.streamId);
-            }, 250);
+              applySpotlightTile(targetTileId);
+            }, 100);
+            setTimeout(() => {
+              applySpotlightTile(targetTileId);
+            }, 350);
           };
 
           const watchBtn = card.querySelector('.btn-watch-stream');
@@ -1318,9 +1393,10 @@ function renderCallParticipants() {
                 type
               });
               setLayoutMode('stage');
+              applySpotlightTile(`local-${type}`);
               setTimeout(() => {
                 applySpotlightTile(`local-${type}`);
-              }, 150);
+              }, 100);
             }
           };
 
@@ -1335,12 +1411,12 @@ function renderCallParticipants() {
     });
   }
 
-  // 2. Renderiza as miniaturas na tira de participantes (Modos Palco e Teatro)
+  // 2. Renderiza as miniaturas na tira de participantes (Modo Palco)
   renderParticipantsStrip();
 }
 
 /**
- * Renderiza as miniaturas de todos os participantes na barra/tira inferior dos modos Palco e Teatro
+ * Renderiza as miniaturas de todos os participantes na barra/tira inferior do modo Palco
  */
 function renderParticipantsStrip() {
   if (!participantsStripList) return;
@@ -1384,11 +1460,9 @@ function renderParticipantsStrip() {
     const initials = getUserInitials(user.name);
 
     const isCurrentSpotlight = primaryStream && (
-      currentSpotlightId === primaryStream.streamId ||
-      currentSpotlightId === `${user.id}-screen` ||
-      currentSpotlightId === `${user.id}-camera` ||
-      currentSpotlightId === 'local-screen' ||
-      currentSpotlightId === 'local-camera'
+      areTileIdsEquivalent(currentSpotlightId, primaryStream.streamId) ||
+      areTileIdsEquivalent(currentSpotlightId, `${user.id}-screen`) ||
+      areTileIdsEquivalent(currentSpotlightId, `${user.id}-camera`)
     );
 
     const isSpeaking = vad.speakingState.get(user.id) || false;
@@ -1426,7 +1500,14 @@ function renderParticipantsStrip() {
           if (!isSubscribed) {
             toggleStreamSubscription(primaryStream.streamId, true);
           }
-          applySpotlightTile(primaryStream.streamId);
+          const targetTileId = toCanonicalTileId(primaryStream.streamId);
+          applySpotlightTile(targetTileId);
+          setTimeout(() => {
+            applySpotlightTile(targetTileId);
+          }, 100);
+          setTimeout(() => {
+            applySpotlightTile(targetTileId);
+          }, 350);
         }
       }
     });
@@ -1448,25 +1529,15 @@ function updateGridLayout() {
 
   videoGrid.dataset.count = totalCount;
 
-  if (currentLayoutMode === 'theater') {
-    videoGrid.classList.add('theater-layout');
-    videoGrid.classList.remove('stage-layout');
-    ensureSpotlightSelected();
-    if (participantsStrip) {
-      participantsStrip.classList.toggle('hidden', isParticipantsStripHidden);
-    }
-  } else if (currentLayoutMode === 'stage') {
+  if (currentLayoutMode === 'stage') {
     videoGrid.classList.add('stage-layout');
-    videoGrid.classList.remove('theater-layout');
     ensureSpotlightSelected();
     if (participantsStrip) {
       participantsStrip.classList.toggle('hidden', isParticipantsStripHidden);
     }
   } else {
-    videoGrid.classList.remove('stage-layout', 'theater-layout');
-    if (!currentSpotlightId) {
-      videoGrid.classList.remove('spotlight-active');
-    }
+    videoGrid.classList.remove('stage-layout', 'spotlight-active', 'theater-layout');
+    clearSpotlight();
     if (participantsStrip) {
       participantsStrip.classList.add('hidden');
     }
@@ -1537,7 +1608,6 @@ function init() {
   // Configuração Inicial de Layout e Painel Lateral
   if (btnLayoutGrid) btnLayoutGrid.addEventListener('click', () => setLayoutMode('grid'));
   if (btnLayoutStage) btnLayoutStage.addEventListener('click', () => setLayoutMode('stage'));
-  if (btnLayoutTheater) btnLayoutTheater.addEventListener('click', () => setLayoutMode('theater'));
   if (btnToggleParticipantsStrip) btnToggleParticipantsStrip.addEventListener('click', () => toggleParticipantsStrip());
   if (btnCollapseStrip) btnCollapseStrip.addEventListener('click', () => toggleParticipantsStrip(true));
   if (btnToggleSidebar) btnToggleSidebar.addEventListener('click', () => toggleSidebar());
@@ -2174,7 +2244,7 @@ async function handleToggleScreenShare() {
       const trackId = media.getScreenVideoTrack()?.id;
       const streamId = media.screenStream?.id;
 
-      signaling.send('START_STREAM', { hasVideo: true, hasAudio, trackId, streamId, userId: roomState.myUserId });
+      signaling.send('START_STREAM', { type: 'screen', hasVideo: true, hasAudio, trackId, streamId, userId: roomState.myUserId });
       signaling.send('MEDIA_STATE', { type: 'screen', active: true, trackId, streamId, userId: roomState.myUserId });
 
       appendSystemChat(`Você iniciou o compartilhamento de tela.`);
@@ -2500,6 +2570,20 @@ function setupSignalingEvents() {
   signaling.on('STREAM_LIST', (msg) => {
     const streams = msg.data?.streams || [];
     roomState.setStreams(streams);
+    streams.forEach(s => {
+      let um = remoteUserMedia.get(s.hostId);
+      if (!um) {
+        um = { screen: false, camera: false };
+        remoteUserMedia.set(s.hostId, um);
+      }
+      if (s.sourceType === 'desktop' || s.sourceType === 'screen') {
+        um.screen = true;
+        webrtc.updatePeerMediaState(s.hostId, 'screen', true, null, s.streamId);
+      } else if (s.sourceType === 'camera') {
+        um.camera = true;
+        webrtc.updatePeerMediaState(s.hostId, 'camera', true, null, s.streamId);
+      }
+    });
     updateStreamCatalogBadge();
     renderStreamCatalogUI();
     updateGridLayout();
@@ -2509,6 +2593,20 @@ function setupSignalingEvents() {
     const streamInfo = msg.data?.stream || msg.data;
     if (!streamInfo) return;
     roomState.addStream(streamInfo);
+
+    let um = remoteUserMedia.get(streamInfo.hostId);
+    if (!um) {
+      um = { screen: false, camera: false };
+      remoteUserMedia.set(streamInfo.hostId, um);
+    }
+    if (streamInfo.sourceType === 'desktop' || streamInfo.sourceType === 'screen') {
+      um.screen = true;
+      webrtc.updatePeerMediaState(streamInfo.hostId, 'screen', true, null, streamInfo.streamId);
+    } else if (streamInfo.sourceType === 'camera') {
+      um.camera = true;
+      webrtc.updatePeerMediaState(streamInfo.hostId, 'camera', true, null, streamInfo.streamId);
+    }
+
     updateStreamCatalogBadge();
     renderStreamCatalogUI();
 
@@ -2533,6 +2631,20 @@ function setupSignalingEvents() {
       updateStreamCatalogBadge();
       renderStreamCatalogUI();
       updateGridLayout();
+    }
+  });
+
+  signaling.on('SUBSCRIBE_STREAM', async (msg) => {
+    const subscriberId = msg.data?.subscriberId || msg.from;
+    const streamId = msg.data?.streamId;
+    console.log(`[App] Evento SUBSCRIBE_STREAM de ${subscriberId} para ${streamId}`);
+    if (subscriberId && subscriberId !== roomState.myUserId) {
+      try {
+        await webrtc.syncPeerTracks(subscriberId, media);
+        await webrtc.createOfferForPeer(subscriberId);
+      } catch (err) {
+        console.warn('[App] Erro ao sincronizar tracks com assinante:', err);
+      }
     }
   });
 
@@ -2649,12 +2761,22 @@ function toggleStreamSubscription(streamId, forceSubscribe = null) {
   if (!streamId) return;
   const currentSubscribed = roomState.isSubscribed(streamId);
   const shouldSubscribe = (forceSubscribe !== null) ? forceSubscribe : !currentSubscribed;
-  const streamInfo = roomState.availableStreams.get(streamId);
+  const streamInfo = roomState.getStream(streamId);
 
   if (shouldSubscribe) {
     roomState.subscribe(streamId);
     signaling.send('SUBSCRIBE_STREAM', { streamId });
     if (streamInfo && streamInfo.hostId) {
+      let um = remoteUserMedia.get(streamInfo.hostId);
+      if (!um) {
+        um = { screen: false, camera: false };
+        remoteUserMedia.set(streamInfo.hostId, um);
+      }
+      if (streamInfo.sourceType === 'desktop' || streamInfo.sourceType === 'screen') {
+        um.screen = true;
+      } else if (streamInfo.sourceType === 'camera') {
+        um.camera = true;
+      }
       syncRemotePeerTiles(streamInfo.hostId);
     }
   } else {

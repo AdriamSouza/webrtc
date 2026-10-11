@@ -726,7 +726,10 @@ export class WebRTCManager {
       t => t.receiver && t.receiver.track && t.receiver.track.kind === 'video'
     );
 
-    if (videoTransceivers.length === 0) return null;
+    if (videoTransceivers.length === 0) {
+      const fallbackReceiver = pc.getReceivers().find(r => r.track && r.track.kind === 'video');
+      return fallbackReceiver?.track || null;
+    }
 
     // Se só há 1 transceiver de vídeo ativo
     if (videoTransceivers.length === 1) {

@@ -860,8 +860,7 @@ body.dark-theme {
 /* ========================================================
    MODO PALCO / SPOTLIGHT (Destaque Principal + Strip)
    ======================================================== */
-.video-grid.stage-layout,
-.video-grid.spotlight-active {
+.video-grid.stage-layout {
   display: flex !important;
   flex-direction: column !important;
   width: 100% !important;
@@ -871,51 +870,23 @@ body.dark-theme {
 }
 
 .video-grid.stage-layout .stream-tile.is-spotlight,
-.video-grid.spotlight-active .stream-tile.is-spotlight {
+.video-grid.stage-layout:not(:has(.stream-tile.is-spotlight)) .stream-tile:first-of-type {
   flex: 1 !important;
   min-height: 0 !important;
   width: 100% !important;
   height: 100% !important;
   border-color: var(--border-focus);
   z-index: 2;
+  display: flex !important;
 }
 
 .video-grid.stage-layout .stream-tile:not(.is-spotlight),
-.video-grid.spotlight-active .stream-tile:not(.is-spotlight),
-.video-grid.stage-layout .participant-card,
-.video-grid.spotlight-active .participant-card {
+.video-grid.stage-layout .participant-card {
   display: none !important; /* Movidos para a tira de participantes */
 }
 
 /* ========================================================
-   MODO TEATRO (Layout Cinema Ultra Imersivo)
-   ======================================================== */
-.video-grid.theater-layout {
-  display: flex !important;
-  flex-direction: column !important;
-  width: 100% !important;
-  height: 100% !important;
-  padding: 0 !important;
-  gap: 0 !important;
-  background: #000000;
-}
-
-.video-grid.theater-layout .stream-tile.is-spotlight {
-  flex: 1 !important;
-  min-height: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  border: none !important;
-  border-radius: 0 !important;
-}
-
-.video-grid.theater-layout .stream-tile:not(.is-spotlight),
-.video-grid.theater-layout .participant-card {
-  display: none !important;
-}
-
-/* ========================================================
-   TIRA DE PARTICIPANTES (FILMSTRIP PARA PALCO E TEATRO)
+   TIRA DE PARTICIPANTES (FILMSTRIP PARA PALCO)
    ======================================================== */
 .participants-strip {
   width: 100%;
@@ -1237,9 +1208,11 @@ body.dark-theme {
 /* Tela Cheia (Fullscreen Auto-Hide) */
 .stream-tile:fullscreen,
 .stream-tile.is-fullscreen {
+  display: flex !important;
   width: 100vw !important;
   height: 100vh !important;
   background: #000 !important;
+  z-index: 99999 !important;
 }
 
 /* Quando em tela cheia e inativo (idle): oculta cabeçalho (nome), ações (fechar, volume) e cursor */

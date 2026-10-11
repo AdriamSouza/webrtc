@@ -530,6 +530,10 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
   2026-10-11              Resolução do erro isAudioMuted e Aprimoramento da Chamada Discord/Meet: Correção do método isAudioMuted/isaudioMuted em MediaManager e fallback resiliente. Participantes
                           Sincronização de Mute Remoto, Foco Interativo e Expansão no Palco       sempre visíveis no Mosaico ou na Tira inferior recolhível. Usuário que transmite pode expandir
                           (Versão 1.2.1).                                                         sua live no Palco/Teatro. Suporte a clique direto no card para assistir live e toggle da tira.
+
+  2026-10-11              Correção de Encerramento de Transmissão e Indicador de Voz Ativa (VAD): Resolução do problema em que a tela ficava preta ao desativar live/câmera (retorno automático
+                          Contorno Verde no Avatar/Card ao Falar e Áudio P2P Contínuo             ao grid sem tela preta). Implementação de VAD em tempo real via Web Audio API com contorno e badge
+                          (Versão 1.2.3).                                                         verde (#10b981) quando o participante fala, e reprodução contínua de áudio na chamada P2P.
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 16. Próximas Atualizações Planejadas (Backlog de Personalização de Usuário)

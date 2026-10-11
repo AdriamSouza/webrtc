@@ -183,7 +183,11 @@ function toggleParticipantsStrip(forceState = null) {
  * Define o modo de layout ativo: 'grid' (Mosaico), 'stage' (Palco) ou 'theater' (Teatro)
  */
 function setLayoutMode(mode) {
-  currentLayoutMode = (mode === 'stage' || mode === 'theater') ? mode : 'grid';
+  if (activeTiles.size === 0) {
+    currentLayoutMode = 'grid';
+  } else {
+    currentLayoutMode = (mode === 'stage' || mode === 'theater') ? mode : 'grid';
+  }
   try { localStorage.setItem('webrtc_layout_mode', currentLayoutMode); } catch (_) {}
 
   // Atualiza estado visual dos botões de controle de layout
@@ -518,7 +522,11 @@ function removeTile(id) {
   if (!entry) {
     const orphanEl = document.getElementById(`tile-${id}`);
     if (orphanEl) orphanEl.remove();
-    updateGridLayout();
+    if (activeTiles.size === 0 && (currentLayoutMode === 'stage' || currentLayoutMode === 'theater')) {
+      setLayoutMode('grid');
+    } else {
+      updateGridLayout();
+    }
     return;
   }
 
@@ -535,14 +543,20 @@ function removeTile(id) {
 
   if (currentSpotlightId === id) {
     currentSpotlightId = null;
-    if (currentLayoutMode === 'stage') {
+    if (activeTiles.size === 0) {
+      setLayoutMode('grid');
+    } else if (currentLayoutMode === 'stage') {
       ensureSpotlightSelected();
     } else {
       videoGrid.classList.remove('spotlight-active');
     }
   }
 
-  updateGridLayout();
+  if (activeTiles.size === 0 && (currentLayoutMode === 'stage' || currentLayoutMode === 'theater')) {
+    setLayoutMode('grid');
+  } else {
+    updateGridLayout();
+  }
 }
 
 function clearPeerSyncTimer(userId) {
@@ -948,17 +962,28 @@ function addOrUpdateLocalPreview(type, stream, title) {
 }
 
 function removeLocalPreview(type) {
-  const entry = localPreviews.get(type);
-  if (!entry) return;
+  removeTile(`local-${type}`);
+  if (roomState.myUserId) {
+    removeTile(`${roomState.myUserId}-${type}`);
+  }
+  if (type === 'screen') {
+    removeTile(`local-desktop`);
+    if (roomState.myUserId) {
+      removeTile(`${roomState.myUserId}-desktop`);
+    }
+  }
 
-  if (entry.videoEl) {
-    entry.videoEl.srcObject = null;
+  const entry = localPreviews.get(type);
+  if (entry) {
+    if (entry.videoEl) {
+      try {
+        entry.videoEl.pause();
+        entry.videoEl.srcObject = null;
+      } catch (_) {}
+    }
+    entry.cardEl.remove();
+    localPreviews.delete(type);
   }
-  if (entry.isPinned) {
-    removeTile(`local-${type}`);
-  }
-  entry.cardEl.remove();
-  localPreviews.delete(type);
 
   updateLocalDockVisibility();
 }
@@ -982,6 +1007,141 @@ function updateLocalDockVisibility() {
   }
   updateGridLayout();
 }
+
+// ========================================================
+// GERENCIADOR DE ÁUDIO REMOTO E DETECÇÃO DE VOZ ATIVA (VAD)
+// Sinaliza quando um participante está falando (contorno/card verde)
+// ========================================================
+const peerAudioElements = new Map(); // Map<userId, HTMLAudioElement>
+
+function playRemoteAudioTrack(userId, track) {
+  if (!track || track.kind !== 'audio') return;
+  let audioEl = peerAudioElements.get(userId);
+  if (!audioEl) {
+    audioEl = new Audio();
+    audioEl.autoplay = true;
+    peerAudioElements.set(userId, audioEl);
+  }
+  let stream = audioEl.srcObject;
+  if (!stream || !(stream instanceof MediaStream)) {
+    stream = new MediaStream();
+    audioEl.srcObject = stream;
+  }
+  if (!stream.getTracks().some(t => t.id === track.id)) {
+    stream.addTrack(track);
+  }
+  audioEl.play().catch(e => console.warn('[App] Play remote audio error:', e));
+
+  // Monitora a voz deste participante remoto
+  vad.monitorStream(userId, stream);
+}
+
+class VoiceActivityDetector {
+  constructor() {
+    this.audioCtx = null;
+    this.monitoredStreams = new Map(); // Map<userId, { analyser, dataArray, source, lastSpoke }>
+    this.speakingState = new Map(); // Map<userId, boolean>
+    this.checkInterval = null;
+  }
+
+  ensureContext() {
+    if (!this.audioCtx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.audioCtx = new AudioCtx();
+      }
+    }
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
+    return this.audioCtx;
+  }
+
+  monitorStream(userId, stream) {
+    if (!stream || stream.getAudioTracks().length === 0) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    this.stopMonitoring(userId);
+
+    try {
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.35;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      this.monitoredStreams.set(userId, { analyser, dataArray, source, lastSpoke: 0 });
+
+      this.startLoop();
+    } catch (err) {
+      console.warn('[VAD] Erro ao monitorar stream de áudio:', err);
+    }
+  }
+
+  stopMonitoring(userId) {
+    const entry = this.monitoredStreams.get(userId);
+    if (entry) {
+      try { entry.source.disconnect(); } catch (_) {}
+      this.monitoredStreams.delete(userId);
+    }
+    this.setSpeaking(userId, false);
+    if (this.monitoredStreams.size === 0 && this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
+    }
+  }
+
+  startLoop() {
+    if (this.checkInterval) return;
+    this.checkInterval = setInterval(() => {
+      const now = Date.now();
+      this.monitoredStreams.forEach((entry, userId) => {
+        // Se for o usuário local e estiver mutado no app, não marca como speaking
+        if (userId === roomState.myUserId) {
+          if (media && typeof media.isAudioMuted === 'function' && media.isAudioMuted()) {
+            this.setSpeaking(userId, false);
+            return;
+          }
+        }
+
+        entry.analyser.getByteFrequencyData(entry.dataArray);
+        let sum = 0;
+        for (let i = 0; i < entry.dataArray.length; i++) {
+          sum += entry.dataArray[i];
+        }
+        const avg = sum / entry.dataArray.length;
+
+        // Limiar de detecção de fala (volume da voz humana)
+        if (avg > 13) {
+          entry.lastSpoke = now;
+          this.setSpeaking(userId, true);
+        } else if (now - entry.lastSpoke > 320) {
+          this.setSpeaking(userId, false);
+        }
+      });
+    }, 60);
+  }
+
+  setSpeaking(userId, isSpeaking) {
+    const current = this.speakingState.get(userId) || false;
+    if (current === isSpeaking) return;
+    this.speakingState.set(userId, isSpeaking);
+
+    // Atualiza cards de chamada no Grid
+    document.querySelectorAll(`.participant-card[data-user-id="${userId}"]`).forEach(card => {
+      card.classList.toggle('is-speaking', isSpeaking);
+    });
+
+    // Atualiza miniaturas na Tira inferior
+    document.querySelectorAll(`.strip-card[data-user-id="${userId}"]`).forEach(card => {
+      card.classList.toggle('is-speaking', isSpeaking);
+    });
+  }
+}
+
+const vad = new VoiceActivityDetector();
 
 /**
  * Renderiza os cards de participantes estilo Discord Voice Call no Grid principal
@@ -1029,9 +1189,10 @@ function renderCallParticipants() {
       const hasLiveStream = userStreams.length > 0;
       const primaryStream = userStreams[0];
       const isSubscribed = primaryStream ? (isSelf || roomState.isSubscribed(primaryStream.streamId)) : false;
+      const isSpeaking = vad.speakingState.get(user.id) || false;
 
       const card = document.createElement('div');
-      card.className = `participant-card ${isSelf ? 'is-self' : ''} ${user.isHost ? 'is-host' : ''} ${hasLiveStream ? 'is-live' : ''}`;
+      card.className = `participant-card ${isSelf ? 'is-self' : ''} ${user.isHost ? 'is-host' : ''} ${hasLiveStream ? 'is-live' : ''} ${isSpeaking ? 'is-speaking' : ''}`;
       card.dataset.userId = user.id;
 
       const userColor = getParticipantColor(user);
@@ -1230,8 +1391,9 @@ function renderParticipantsStrip() {
       currentSpotlightId === 'local-camera'
     );
 
+    const isSpeaking = vad.speakingState.get(user.id) || false;
     const stripCard = document.createElement('div');
-    stripCard.className = `strip-card ${hasLiveStream ? 'is-live' : ''} ${isCurrentSpotlight ? 'active-spotlight' : ''}`;
+    stripCard.className = `strip-card ${hasLiveStream ? 'is-live' : ''} ${isCurrentSpotlight ? 'active-spotlight' : ''} ${isSpeaking ? 'is-speaking' : ''}`;
     stripCard.dataset.userId = user.id;
     stripCard.title = `${user.name}${hasLiveStream ? ' (Transmitindo Ao Vivo - Clique para focar no palco)' : ''}`;
 
@@ -1680,6 +1842,13 @@ function setupEventListeners() {
       await webrtc.renegotiateAllPeers(otherIds);
 
       signaling.send('MUTE', { muted });
+
+      if (!muted && media.micStream) {
+        vad.monitorStream(roomState.myUserId, media.micStream);
+      } else {
+        vad.setSpeaking(roomState.myUserId, false);
+      }
+
       updateGridLayout();
     } catch (err) {
       alert('Não foi possível acessar o microfone: ' + err.message);
@@ -1741,6 +1910,10 @@ async function handleToggleCamera() {
       });
       appendSystemChat('Você ativou sua câmera.');
     } else {
+      removeTile('local-camera');
+      if (roomState.myUserId) {
+        removeTile(`${roomState.myUserId}-camera`);
+      }
       removeLocalPreview('camera');
 
       await webrtc.syncLocalMedia(media, otherIds);
@@ -1751,6 +1924,10 @@ async function handleToggleCamera() {
         active: false
       });
       appendSystemChat('Você desativou sua câmera.');
+
+      if (activeTiles.size === 0) {
+        setLayoutMode('grid');
+      }
     }
     updateGridLayout();
   } catch (err) {
@@ -2014,6 +2191,12 @@ async function handleToggleScreenShare() {
 }
 
 function handleStreamEnded() {
+  removeTile('local-screen');
+  removeTile('local-desktop');
+  if (roomState.myUserId) {
+    removeTile(`${roomState.myUserId}-screen`);
+    removeTile(`${roomState.myUserId}-desktop`);
+  }
   removeLocalPreview('screen');
 
   btnShareScreen.classList.remove('active');
@@ -2026,7 +2209,12 @@ function handleStreamEnded() {
   signaling.send('STOP_STREAM', { userId: roomState.myUserId });
   signaling.send('MEDIA_STATE', { type: 'screen', active: false, userId: roomState.myUserId });
   appendSystemChat('Você encerrou o compartilhamento de tela.');
-  updateGridLayout();
+
+  if (activeTiles.size === 0) {
+    setLayoutMode('grid');
+  } else {
+    updateGridLayout();
+  }
 }
 
 // ========================================================
@@ -2041,6 +2229,7 @@ function setupWebRTCEvents() {
   webrtc.onRemoteTrack = (track, stream, fromUserId) => {
     console.log(`[App] onRemoteTrack recebido de ${fromUserId}: kind=${track.kind}, id=${track.id}`);
     if (track.kind === 'audio') {
+      playRemoteAudioTrack(fromUserId, track);
       activeTiles.forEach((entry, tileId) => {
         if (tileId.startsWith(fromUserId)) {
           if (!entry.stream.getTracks().some(t => t.id === track.id)) {
@@ -2185,6 +2374,10 @@ function setupSignalingEvents() {
     });
 
     appendSystemChat(`Você entrou na sala como ${isHost ? 'Host' : 'Participante'}.`);
+
+    if (media && media.micStream && typeof media.isAudioMuted === 'function' && !media.isAudioMuted()) {
+      vad.monitorStream(userId, media.micStream);
+    }
   });
 
   signaling.on('USER_JOINED', async (msg) => {
@@ -2206,6 +2399,14 @@ function setupSignalingEvents() {
     peerRetryCounts.delete(userId);
     roomState.removeParticipant(userId);
     webrtc.closePeer(userId);
+
+    vad.stopMonitoring(userId);
+    const audioEl = peerAudioElements.get(userId);
+    if (audioEl) {
+      audioEl.pause();
+      audioEl.srcObject = null;
+      peerAudioElements.delete(userId);
+    }
 
     // Remove todos os tiles pertencentes a este usuário do grid
     removeTile(`${userId}-screen`);
@@ -2340,6 +2541,7 @@ function setupSignalingEvents() {
     const participant = roomState.participants.get(fromUserId);
     if (participant) {
       participant.isMuted = true;
+      vad.setSpeaking(fromUserId, false);
       updateGridLayout();
     }
   });

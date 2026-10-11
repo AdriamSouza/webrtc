@@ -823,16 +823,38 @@ body.dark-theme {
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
 }
 
-.participant-card.is-speaking .participant-avatar,
+/* Indicador de fala ativo (VAD - Estilo Discord & Meet) */
+.participant-card.is-speaking {
+  border-color: #10b981 !important;
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.32) !important;
+}
+
+.participant-card.is-speaking .participant-avatar {
+  box-shadow: 0 0 0 3px #10b981, 0 0 20px rgba(16, 185, 129, 0.75) !important;
+  animation: speakingGlow 1.2s infinite ease-in-out;
+}
+
+.participant-card.is-speaking .participant-name-tag {
+  border-color: #10b981 !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.45) !important;
+  background: rgba(16, 185, 129, 0.18) !important;
+  color: #ffffff !important;
+}
+
+.strip-card.is-speaking {
+  border-color: #10b981 !important;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.35) !important;
+}
+
 .strip-card.is-speaking .strip-avatar {
-  box-shadow: 0 0 0 3px #10b981, 0 0 16px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 0 2px #10b981, 0 0 12px rgba(16, 185, 129, 0.65) !important;
   animation: speakingGlow 1.2s infinite ease-in-out;
 }
 
 @keyframes speakingGlow {
-  0% { box-shadow: 0 0 0 2px #10b981, 0 0 10px rgba(16, 185, 129, 0.4); }
-  50% { box-shadow: 0 0 0 4px #10b981, 0 0 22px rgba(16, 185, 129, 0.7); }
-  100% { box-shadow: 0 0 0 2px #10b981, 0 0 10px rgba(16, 185, 129, 0.4); }
+  0% { box-shadow: 0 0 0 2px #10b981, 0 0 8px rgba(16, 185, 129, 0.4); }
+  50% { box-shadow: 0 0 0 4px #10b981, 0 0 22px rgba(16, 185, 129, 0.85); }
+  100% { box-shadow: 0 0 0 2px #10b981, 0 0 8px rgba(16, 185, 129, 0.4); }
 }
 
 /* ========================================================

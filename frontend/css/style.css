@@ -809,6 +809,53 @@ body.dark-theme {
   border-color: var(--border-focus);
 }
 
+/* Ações múltiplas para participantes com Tela e Câmera simultâneas */
+.participant-watch-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  width: 100%;
+  max-width: 220px;
+  align-items: center;
+  z-index: 6;
+}
+
+.participant-watch-actions .btn-watch-stream {
+  margin-top: 0;
+  width: 100%;
+  justify-content: center;
+}
+
+.btn-watch-stream.btn-sm-action {
+  padding: 5px 10px;
+  font-size: 0.74rem;
+}
+
+.btn-watch-stream.btn-watch-camera {
+  background: #10b981;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+}
+
+.btn-watch-stream.btn-watch-camera:hover {
+  background: #059669;
+}
+
+.btn-watch-stream.btn-watch-camera.watching {
+  background: var(--bg-tertiary);
+  color: #10b981;
+  border-color: #10b981;
+}
+
+.btn-watch-stream.btn-watch-both {
+  background: linear-gradient(135deg, #6366f1 0%, #10b981 100%);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+}
+
+.btn-watch-stream.btn-watch-both:hover {
+  filter: brightness(1.1);
+}
+
 .btn-watch-stream.btn-self-view {
   background: rgba(99, 102, 241, 0.2);
   color: var(--accent-primary);
@@ -883,6 +930,54 @@ body.dark-theme {
 .video-grid.stage-layout .stream-tile:not(.is-spotlight),
 .video-grid.stage-layout .participant-card {
   display: none !important; /* Movidos para a tira de participantes */
+}
+
+/* ========================================================
+   MODO TEATRO (Cinema Imersivo com Miniaturas Acessíveis)
+   ======================================================== */
+.room-body[data-layout="theater"] {
+  background: #05070c;
+}
+
+.room-body[data-layout="theater"] .stream-viewport {
+  background: #05070c;
+}
+
+.video-grid.theater-layout {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  background: #000000;
+}
+
+.video-grid.theater-layout .stream-tile.is-spotlight,
+.video-grid.theater-layout:not(:has(.stream-tile.is-spotlight)) .stream-tile:first-of-type {
+  flex: 1 !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  border-radius: 0 !important;
+  z-index: 2;
+  display: flex !important;
+  background: #000000;
+}
+
+.video-grid.theater-layout .stream-tile:not(.is-spotlight),
+.video-grid.theater-layout .participant-card {
+  display: none !important;
+}
+
+.room-body[data-layout="theater"] .participants-strip {
+  background: rgba(10, 14, 23, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  height: 112px;
+  padding: 4px 10px 6px 10px;
 }
 
 /* ========================================================
@@ -1020,6 +1115,160 @@ body.dark-theme {
   padding: 1px 4px;
   border-radius: 3px;
   letter-spacing: 0.02em;
+}
+
+/* Miniatura com Vídeo Ativo na Tira (Câmeras e Transmissões de Tela) */
+.strip-card.strip-video-card {
+  width: 148px;
+  height: 86px;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  background: #090c15;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border-color);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  user-select: none;
+}
+
+.strip-card.strip-video-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.strip-card.strip-video-card.active-spotlight {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px #f59e0b, 0 0 12px rgba(245, 158, 11, 0.4);
+}
+
+.strip-card.strip-video-card .strip-video-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000000;
+}
+
+.strip-card.strip-video-card video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  background: #000000;
+}
+
+.strip-card.strip-video-card.is-screen video {
+  object-fit: contain;
+}
+
+.strip-card.strip-video-card .strip-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.68) 0%, transparent 40%, rgba(0,0,0,0.85) 100%);
+  pointer-events: none;
+}
+
+.strip-card.strip-video-card .strip-badges-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.strip-badge-type {
+  font-size: 0.58rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.strip-badge-type.badge-screen {
+  background: rgba(88, 101, 242, 0.9);
+  color: #ffffff;
+}
+
+.strip-badge-type.badge-camera {
+  background: rgba(16, 185, 129, 0.9);
+  color: #ffffff;
+}
+
+.strip-badge-spotlight {
+  background: #f59e0b;
+  color: #000000;
+  font-size: 0.55rem;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+
+.strip-card.strip-video-card .strip-info-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.85);
+}
+
+.strip-info-bottom .strip-label-text {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strip-info-bottom .strip-focus-cue {
+  font-size: 0.62rem;
+  color: #93c5fd;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.strip-card.strip-video-card:hover .strip-focus-cue {
+  opacity: 1;
+}
+
+/* Card interativo para transmissões disponíveis para assistir na tira */
+.strip-card.has-stream-option {
+  border-color: rgba(99, 102, 241, 0.45);
+}
+
+.strip-card.has-stream-option:hover {
+  border-color: var(--primary);
+}
+
+.strip-card-btn-watch {
+  margin-top: 4px;
+  background: var(--primary);
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: background 0.15s ease;
+}
+
+.strip-card-btn-watch:hover {
+  background: var(--primary-hover);
 }
 
 /* ========================================================

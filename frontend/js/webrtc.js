@@ -731,9 +731,22 @@ export class WebRTCManager {
       return fallbackReceiver?.track || null;
     }
 
-    // Se só há 1 transceiver de vídeo ativo
+    // Se só há 1 transceiver de vídeo ativo, verifica se ele pertence ao tipo solicitado
     if (videoTransceivers.length === 1) {
-      return videoTransceivers[0].receiver.track;
+      const singleTr = videoTransceivers[0];
+      if (type === 'screen' && mapping.cameraMid && singleTr.mid === mapping.cameraMid) {
+        return null;
+      }
+      if (type === 'camera' && mapping.screenMid && singleTr.mid === mapping.screenMid) {
+        return null;
+      }
+      if (type === 'screen' && mapping.cameraActive && !mapping.screenActive) {
+        return null;
+      }
+      if (type === 'camera' && mapping.screenActive && !mapping.cameraActive) {
+        return null;
+      }
+      return singleTr.receiver.track;
     }
 
     // Se há 2 vídeos simultâneos (Câmera + Tela):
@@ -748,7 +761,7 @@ export class WebRTCManager {
       return videoTransceivers[cameraIndex].receiver.track;
     }
 
-    return videoTransceivers[0]?.receiver?.track || null;
+    return null;
   }
 
   /**

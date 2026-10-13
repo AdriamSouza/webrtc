@@ -15,8 +15,10 @@ const __dirname = path.dirname(__filename);
 // ========================================================
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
-// Habilita captura direta via Windows Graphics Capture API (DirectX / Vulkan / Jogos em Tela Cheia)
-app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture');
+// Habilita aceleração por hardware completa para codificação/decodificação WebRTC e WGC
+app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,AcceleratedVideoEncoder,AcceleratedVideoDecoder');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+app.commandLine.appendSwitch('enable-accelerated-video-encode');
 // Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
@@ -260,6 +262,40 @@ ipcMain.handle('desktop:get-version', () => {
   return app.getVersion();
 });
 
+// IPC: Diagnóstico detalhado de aceleração por hardware GPU e recursos do sistema
+ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
+  let featureStatus = {};
+  let gpuInfo = null;
+  try {
+    featureStatus = app.getGPUFeatureStatus();
+  } catch (e) {
+    featureStatus = { error: e.message };
+  }
+  try {
+    gpuInfo = await app.getGPUInfo('basic');
+  } catch (e) {
+    gpuInfo = { error: e.message };
+  }
+
+  let memoryInfo = null;
+  try {
+    memoryInfo = process.getProcessMemoryInfo ? await process.getProcessMemoryInfo() : null;
+  } catch (_) {}
+
+  const cpuUsage = process.getCPUUsage ? process.getCPUUsage() : null;
+
+  return {
+    featureStatus,
+    gpuInfo,
+    platform: process.platform,
+    arch: process.arch,
+    memoryInfo,
+    cpuUsage,
+    electronVersion: process.versions.electron,
+    chromeVersion: process.versions.chrome
+  };
+});
+
 // IPC: Configuração de captura de áudio do sistema (loopback)
 ipcMain.handle('desktop:set-capture-audio', (event, enabled) => {
   captureAudioEnabled = Boolean(enabled);
@@ -500,7 +536,8 @@ function startBackgroundAudioQueryLoop() {
 
   const scheduleNext = () => {
     const isFocused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused();
-    const intervalMs = isFocused ? 3000 : 8000;
+    // Usa intervalo adaptativo (6s em foco, 15s em background) para minimizar criação de processos
+    const intervalMs = isFocused ? 6000 : 15000;
 
     mixerQueryTimer = setTimeout(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) {

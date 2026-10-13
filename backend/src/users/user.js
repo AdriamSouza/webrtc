@@ -15,9 +15,11 @@ export class User {
     this.mediaState = { screen: false, camera: false, mids: {} };
     this.joinedAt = new Date();
 
-    // Controle de Rate Limiting
-    this.messageCount = 0;
-    this.rateWindowStart = Date.now();
+    // Controle de Rate Limiting com algoritmo Token Bucket
+    this.tokens = 160; // Capacidade inicial de burst
+    this.maxTokens = 160;
+    this.lastRefill = Date.now();
+    this.lastRateLimitWarning = 0;
   }
 
   /**
@@ -34,18 +36,22 @@ export class User {
   }
 
   /**
-   * Verifica se o usuário excedeu o limite de mensagens por segundo
+   * Verifica se o usuário excedeu o limite de mensagens usando Token Bucket
+   * Permite rajadas instantâneas legítimas de negociação ICE enquanto bloqueia floods sustentados
    */
-  checkRateLimit(maxPerSecond, windowMs = 1000) {
+  checkRateLimit(maxPerSecond = 60, burstCapacity = 160) {
     const now = Date.now();
-    if (now - this.rateWindowStart > windowMs) {
-      this.rateWindowStart = now;
-      this.messageCount = 1;
+    const elapsedSec = (now - this.lastRefill) / 1000;
+    this.maxTokens = burstCapacity;
+    this.tokens = Math.min(this.maxTokens, this.tokens + (elapsedSec * maxPerSecond));
+    this.lastRefill = now;
+
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
       return true;
     }
 
-    this.messageCount++;
-    return this.messageCount <= maxPerSecond;
+    return false;
   }
 
   /**

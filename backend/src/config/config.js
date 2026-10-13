@@ -82,9 +82,10 @@ export const config = {
   // Limite arquitetural da malha P2P Mesh (definido no documento para proteger o uplink do transmissor)
   maxUsersPerRoom: process.env.MAX_USERS_PER_ROOM ? parseInt(process.env.MAX_USERS_PER_ROOM, 10) : 20,
 
-  // Segurança e Rate Limiting
+  // Segurança e Rate Limiting (Token Bucket com tolerância a picos legítimos de sinalização ICE)
   rateLimit: {
-    maxMessagesPerSecond: 50, // Anti-flood por cliente
+    maxMessagesPerSecond: process.env.MAX_MSG_PER_SEC ? parseInt(process.env.MAX_MSG_PER_SEC, 10) : 60,
+    burstCapacity: 160, // Permite rajadas de candidatos ICE na negociação multi-peer
     windowMs: 1000
   },
 

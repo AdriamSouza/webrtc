@@ -39,6 +39,7 @@ export class WebRTCManager {
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
     this.targetMaxFps = 60; // 60 FPS padrão
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
+    this.roomState = null;
   }
 
   setIceServers(servers) {
@@ -49,6 +50,10 @@ export class WebRTCManager {
 
   setMediaManager(mediaManager) {
     this.mediaManager = mediaManager;
+  }
+
+  setRoomState(roomState) {
+    this.roomState = roomState;
   }
 
   /**
@@ -117,7 +122,8 @@ export class WebRTCManager {
   }
 
   /**
-   * Sincroniza tracks com um peer individual
+   * Sincroniza tracks com um peer individual com suporte a entrega sob demanda (on-demand streaming)
+   * Reduz maciçamente o uso de CPU/GPU do host evitando instâncias de codificadores redundantes
    */
   async syncPeerTracks(targetUserId, mediaManager = this.mediaManager) {
     if (!mediaManager) return;
@@ -134,6 +140,18 @@ export class WebRTCManager {
     const cameraVideo = mediaManager.getCameraVideoTrack();
     const cameraAudio = mediaManager.getCameraAudioTrack();
     const micAudio = mediaManager.getMicAudioTrack();
+
+    // Em chamada direta (<= 2 participantes), transmissão direta automática fica habilitada
+    const totalParticipants = this.roomState?.getParticipantCount() || 0;
+    const isDirectCall = totalParticipants <= 2;
+
+    const wantsScreen = isDirectCall || Boolean(this.roomState?.isPeerSubscribedToLocal('screen', targetUserId));
+    const wantsCamera = isDirectCall || Boolean(this.roomState?.isPeerSubscribedToLocal('camera', targetUserId));
+
+    const effectiveScreenVideo = wantsScreen ? screenVideo : null;
+    const effectiveScreenAudio = wantsScreen ? screenAudio : null;
+    const effectiveCameraVideo = wantsCamera ? cameraVideo : null;
+    const effectiveCameraAudio = wantsCamera ? cameraAudio : null;
 
     const updateSender = async (key, track, stream, isVideo) => {
       const existingSender = senders[key];
@@ -169,11 +187,42 @@ export class WebRTCManager {
       }
     };
 
-    await updateSender('screenVideo', screenVideo, mediaManager.screenStream, true);
-    await updateSender('screenAudio', screenAudio, mediaManager.screenStream, false);
-    await updateSender('cameraVideo', cameraVideo, mediaManager.cameraStream, true);
-    await updateSender('cameraAudio', cameraAudio, mediaManager.cameraStream, false);
+    await updateSender('screenVideo', effectiveScreenVideo, mediaManager.screenStream, true);
+    await updateSender('screenAudio', effectiveScreenAudio, mediaManager.screenStream, false);
+    await updateSender('cameraVideo', effectiveCameraVideo, mediaManager.cameraStream, true);
+    await updateSender('cameraAudio', effectiveCameraAudio, mediaManager.cameraStream, false);
     await updateSender('micAudio', micAudio, mediaManager.micStream, false);
+  }
+
+  /**
+   * Desativa imediatamente o envio de vídeo para um peer específico quando este encerra a inscrição
+   * Desliga a instância do codificador na GPU/CPU do transmissor instantaneamente
+   */
+  async unsubscribePeerFromStream(targetUserId, sourceType) {
+    const senders = this.peerSenders.get(targetUserId);
+    if (!senders) return;
+
+    if (sourceType === 'desktop' || sourceType === 'screen') {
+      if (senders.screenVideo) {
+        try {
+          console.log(`[WebRTC] Desativando encoder de tela para ${targetUserId} (unsubscribe)`);
+          await senders.screenVideo.replaceTrack(null);
+        } catch (_) {}
+      }
+      if (senders.screenAudio) {
+        try { await senders.screenAudio.replaceTrack(null); } catch (_) {}
+      }
+    } else if (sourceType === 'camera') {
+      if (senders.cameraVideo) {
+        try {
+          console.log(`[WebRTC] Desativando encoder de câmera para ${targetUserId} (unsubscribe)`);
+          await senders.cameraVideo.replaceTrack(null);
+        } catch (_) {}
+      }
+      if (senders.cameraAudio) {
+        try { await senders.cameraAudio.replaceTrack(null); } catch (_) {}
+      }
+    }
   }
 
   /**
@@ -342,9 +391,10 @@ export class WebRTCManager {
   }
 
   /**
-   * Detecta aceleração por hardware GPU disponível na máquina
+   * Avalia o suporte a codecs e verifica o estado de aceleração da GPU
+   * Diferencia o formato do codec do mecanismo real de codificação (Hardware vs Software)
    */
-  static detectGpuHardwareAcceleration() {
+  static detectGpuHardwareAcceleration(gpuDiagnostics = null) {
     const caps = typeof RTCRtpSender.getCapabilities === 'function' ? RTCRtpSender.getCapabilities('video') : null;
     const codecs = caps ? caps.codecs : [];
 
@@ -353,32 +403,47 @@ export class WebRTCManager {
     const hasVP9 = codecs.some(c => c.mimeType.toLowerCase() === 'video/vp9');
     const hasVP8 = codecs.some(c => c.mimeType.toLowerCase() === 'video/vp8');
 
+    const featureStatus = gpuDiagnostics?.featureStatus || {};
+    const gpuInfo = gpuDiagnostics?.gpuInfo || {};
+    const isDesktop = Boolean(gpuDiagnostics);
+    const hwEncodeActive = featureStatus.video_encode === 'enabled';
+    const hwDecodeActive = featureStatus.video_decode === 'enabled';
+
+    let gpuDevice = null;
+    if (gpuInfo.gpuDevice && gpuInfo.gpuDevice[0] && gpuInfo.gpuDevice[0].deviceString) {
+      gpuDevice = gpuInfo.gpuDevice[0].deviceString;
+    }
+
     return {
+      gpuDevice,
+      isDesktop,
+      hwEncodeActive,
+      hwDecodeActive,
       h264: {
         supported: hasH264,
-        gpuAccelerated: hasH264,
-        label: 'H.264 / AVC (NVENC / QuickSync / AMF)',
-        badge: hasH264 ? 'GPU ⚡' : 'Não Suportado',
-        description: 'Aceleração nativa via placa de vídeo (NVIDIA, AMD ou Intel). Mínima latência para jogos a 60 FPS.'
+        gpuAccelerated: hwEncodeActive && hasH264,
+        label: 'H.264 / AVC',
+        badge: hwEncodeActive && hasH264 ? 'GPU ⚡ (Hardware)' : (hasH264 ? 'Suportado' : 'Não Suportado'),
+        description: 'Padrão com ampla aceleração por GPU (NVENC, AMD AMF, Intel QuickSync).'
       },
       av1: {
         supported: hasAV1,
-        gpuAccelerated: hasAV1,
-        label: 'AV1 (Next-Gen Ultra Fidelidade)',
-        badge: hasAV1 ? 'GPU / Hardware 🚀' : 'Não Suportado',
-        description: 'Compressão revolucionária. Mesma fidelidade a 60 FPS usando 40% menos dados de rede.'
+        gpuAccelerated: hwEncodeActive && hasAV1,
+        label: 'AV1 (Next-Gen)',
+        badge: hwEncodeActive && hasAV1 ? 'GPU / Hardware 🚀' : (hasAV1 ? 'Suportado' : 'Não Suportado'),
+        description: 'Compressão ultra-eficiente a 60 FPS com 40% menos dados.'
       },
       vp9: {
         supported: hasVP9,
-        gpuAccelerated: hasVP9,
-        label: 'VP9 (Google HD)',
+        gpuAccelerated: hwEncodeActive && hasVP9,
+        label: 'VP9',
         badge: hasVP9 ? 'HD' : 'Não Suportado',
         description: 'Excelente equilíbrio de cores e transições de cena dinâmicas.'
       },
       vp8: {
         supported: hasVP8,
         gpuAccelerated: false,
-        label: 'VP8 (Legado)',
+        label: 'VP8',
         badge: 'Básico',
         description: 'Modo de compatibilidade para dispositivos sem aceleradores dedicados de vídeo.'
       }
@@ -388,10 +453,10 @@ export class WebRTCManager {
   /**
    * Retorna a lista de codecs de vídeo disponíveis e suportados pelo dispositivo/navegador
    */
-  static getAvailableCodecs() {
+  static getAvailableCodecs(gpuDiagnostics = null) {
     if (typeof RTCRtpReceiver.getCapabilities !== 'function') {
       return [
-        { codec: 'H264', name: 'H264', label: 'H.264 (AVC)', description: 'Aceleração de hardware universal (NVidia / AMD / Intel)', badge: 'GPU ⚡', gpu: true },
+        { codec: 'H264', name: 'H264', label: 'H.264 (AVC)', description: 'Compatibilidade GPU', badge: 'H.264', gpu: true },
         { codec: 'VP8', name: 'VP8', label: 'VP8', description: 'Compatibilidade padrão universal', badge: 'Básico', gpu: false }
       ];
     }
@@ -400,6 +465,7 @@ export class WebRTCManager {
       const caps = RTCRtpReceiver.getCapabilities('video');
       if (!caps || !caps.codecs) return [];
 
+      const hwEncodeActive = gpuDiagnostics?.featureStatus?.video_encode === 'enabled';
       const seen = new Set();
       const result = [];
 
@@ -415,18 +481,18 @@ export class WebRTCManager {
           if (mime === 'AV1') {
             label = 'AV1 (Ultra Eficiente / Next-Gen)';
             description = 'Altíssima fidelidade a 60 FPS com 40% menos banda';
-            badge = 'Recomendado / GPU 🚀';
-            gpu = true;
+            badge = hwEncodeActive ? 'GPU 🚀 (Hardware)' : 'Suportado';
+            gpu = hwEncodeActive;
           } else if (mime === 'H264') {
-            label = 'H.264 (Aceleração Nativa GPU)';
-            description = 'Aceleração total por hardware em placas NVidia, AMD e Intel';
-            badge = 'GPU NVENC ⚡';
-            gpu = true;
+            label = 'H.264 (AVC)';
+            description = 'Compatibilidade universal e aceleração em GPUs NVIDIA, AMD e Intel';
+            badge = hwEncodeActive ? 'GPU ⚡ (Hardware)' : 'Suportado';
+            gpu = hwEncodeActive;
           } else if (mime === 'VP9') {
             label = 'VP9 (Google HD)';
             description = 'Excelente fidelidade de cores e transições suaves';
             badge = 'HD';
-            gpu = true;
+            gpu = hwEncodeActive;
           } else if (mime === 'VP8') {
             label = 'VP8 (Legado)';
             description = 'Compatibilidade com todos os dispositivos e navegadores';
@@ -442,8 +508,8 @@ export class WebRTCManager {
     } catch (err) {
       console.warn('[WebRTC] Erro ao listar codecs disponíveis:', err);
       return [
-        { codec: 'H264', name: 'H264', label: 'H.264 (AVC)', description: 'Compatibilidade GPU', badge: 'GPU ⚡', gpu: true },
-        { codec: 'AV1', name: 'AV1', label: 'AV1', description: 'Ultra eficiente', badge: 'Recomendado', gpu: true }
+        { codec: 'H264', name: 'H264', label: 'H.264 (AVC)', description: 'Compatibilidade ampla', badge: 'H.264', gpu: true },
+        { codec: 'AV1', name: 'AV1', label: 'AV1', description: 'Ultra eficiente', badge: 'AV1', gpu: true }
       ];
     }
   }
@@ -563,10 +629,15 @@ export class WebRTCManager {
       });
     }
 
-    // Disparo de candidatos ICE locais para o peer através da sinalização
+    // Disparo de candidatos ICE locais para o peer através da sinalização (com batching inteligente)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.signaling.send('ICE_CANDIDATE', event.candidate.toJSON ? event.candidate.toJSON() : event.candidate, targetUserId);
+        const cand = event.candidate.toJSON ? event.candidate.toJSON() : event.candidate;
+        if (this.signaling && typeof this.signaling.sendIceCandidate === 'function') {
+          this.signaling.sendIceCandidate(cand, targetUserId);
+        } else {
+          this.signaling.send('ICE_CANDIDATE', cand, targetUserId);
+        }
       }
     };
 
@@ -931,6 +1002,12 @@ export class WebRTCManager {
       await pc.setRemoteDescription(new RTCSessionDescription(sdpInit));
       console.log(`[WebRTC] SDP Offer de ${fromUserId} aplicada com sucesso.`);
 
+      // Configura preferências de codecs nos transceivers de vídeo recebidos antes de gerar Answer
+      const videoTransceivers = pc.getTransceivers().filter(t => t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
+      for (const vt of videoTransceivers) {
+        this.configureCodecPreferences(vt);
+      }
+
       // Drena candidatos ICE que porventura chegaram antes do SDP Offer
       await this.drainCandidateQueue(fromUserId, pc);
 
@@ -982,9 +1059,24 @@ export class WebRTCManager {
   }
 
   /**
-   * Adiciona candidato ICE com enfileiramento defensivo caso remoteDescription ainda não esteja pronta
+   * Adiciona candidato ICE com suporte a lotes e enfileiramento defensivo
    */
   async handleIceCandidate(fromUserId, candidateData) {
+    if (!candidateData) return;
+
+    // Suporte a lote de candidatos agrupados (batch)
+    if (Array.isArray(candidateData.candidates)) {
+      for (const cand of candidateData.candidates) {
+        await this._applySingleIceCandidate(fromUserId, cand);
+      }
+      return;
+    }
+
+    await this._applySingleIceCandidate(fromUserId, candidateData);
+  }
+
+  async _applySingleIceCandidate(fromUserId, candidateData) {
+    if (!candidateData) return;
     const pc = this.peers.get(fromUserId);
 
     // Se o peer ainda não existe ou ainda não possui remoteDescription aplicada, enfileira
@@ -993,7 +1085,6 @@ export class WebRTCManager {
         this.candidateQueues.set(fromUserId, []);
       }
       this.candidateQueues.get(fromUserId).push(candidateData);
-      console.log(`[WebRTC] Candidato ICE de ${fromUserId} enfileirado (aguardando remoteDescription)`);
       return;
     }
 

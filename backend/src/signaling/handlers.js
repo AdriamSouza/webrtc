@@ -273,6 +273,7 @@ export function handleSubscribeStream(user, message, roomManager) {
     host.send(
       createMessage(MessageTypes.SUBSCRIBE_STREAM, roomId, user.id, host.id, {
         streamId,
+        sourceType: streamInfo.sourceType,
         subscriberId: user.id,
         subscriberName: user.name
       })
@@ -295,6 +296,7 @@ export function handleUnsubscribeStream(user, message, roomManager) {
     host.send(
       createMessage(MessageTypes.UNSUBSCRIBE_STREAM, roomId, user.id, host.id, {
         streamId,
+        sourceType: streamInfo.sourceType,
         subscriberId: user.id,
         subscriberName: user.name
       })

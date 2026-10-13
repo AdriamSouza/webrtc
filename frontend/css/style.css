@@ -4339,4 +4339,283 @@ body.dark-theme {
   }
 }
 
+/* ==========================================================================
+   CARD: ÚLTIMA SALA ACESSADA (LOBBY)
+   ========================================================================== */
+.last-room-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0, 210, 255, 0.08);
+  border: 1px solid rgba(0, 210, 255, 0.25);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  gap: 12px;
+  animation: fadeIn 0.25s ease;
+}
+
+.last-room-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.last-room-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--accent-primary, #00d2ff);
+  color: #0b0d14;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.last-room-text {
+  font-size: 0.82rem;
+  color: var(--text-primary, #f0f2f5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.last-room-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted, #8a94a6);
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.btn-ghost:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+/* ==========================================================================
+   BANNER DE RECONEXÃO AUTOMÁTICA (ROOM SCREEN)
+   ========================================================================== */
+.reconnect-banner {
+  background: linear-gradient(90deg, rgba(234, 88, 12, 0.95), rgba(217, 119, 6, 0.95));
+  color: #ffffff;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.82rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  z-index: 99;
+  position: relative;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.reconnect-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.reconnect-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.reconnect-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-xs {
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   MODAL DE DIAGNÓSTICO TÉCNICO & TELEMETRIA
+   ========================================================================== */
+.modal-diagnostics {
+  max-width: 920px;
+  width: 95vw;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.diagnostics-modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.diag-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.diag-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.diag-section-header h4 {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary, #f0f2f5);
+  margin: 0;
+}
+
+.diag-sublabel {
+  font-size: 0.72rem;
+  color: var(--text-muted, #8a94a6);
+}
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.diag-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diag-label {
+  font-size: 0.7rem;
+  color: var(--text-muted, #8a94a6);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.diag-val {
+  font-size: 0.84rem;
+  color: var(--text-primary, #f0f2f5);
+  font-family: var(--font-mono, 'Consolas', monospace);
+  word-break: break-all;
+}
+
+.diag-table-container {
+  overflow-x: auto;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.diag-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+  text-align: left;
+}
+
+.diag-table th {
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text-muted, #8a94a6);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+
+.diag-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--text-primary, #f0f2f5);
+  font-family: var(--font-mono, 'Consolas', monospace);
+}
+
+.diag-table tr:last-child td {
+  border-bottom: none;
+}
+
+.diag-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.diag-empty {
+  text-align: center;
+  color: var(--text-muted, #8a94a6);
+  padding: 20px !important;
+  font-family: inherit !important;
+}
+
+.diag-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.diag-live-pill {
+  font-size: 0.72rem;
+  color: var(--text-muted, #8a94a6);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diag-badge-hw {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.diag-badge-sw {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+
 

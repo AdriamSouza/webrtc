@@ -60,14 +60,18 @@ export function setupWebSocketServer(httpServer) {
     console.log(`[WebSocket] Novo cliente conectado: ${userId} (${req.socket.remoteAddress})`);
 
     ws.on('message', (raw) => {
-      // 1. Rate Limiting / Anti-Flood
-      if (!user.checkRateLimit(config.rateLimit.maxMessagesPerSecond, config.rateLimit.windowMs)) {
-        user.send(
-          createMessage(MessageTypes.ERROR, user.roomId, 'server', user.id, {
-            code: 'RATE_LIMIT_EXCEEDED',
-            message: 'Limite de mensagens por segundo excedido'
-          })
-        );
+      // 1. Rate Limiting / Anti-Flood (Token Bucket com tolerância a rajadas de negociação ICE)
+      if (!user.checkRateLimit(config.rateLimit.maxMessagesPerSecond, config.rateLimit.burstCapacity || 160)) {
+        const now = Date.now();
+        if (now - user.lastRateLimitWarning > 2000) {
+          user.lastRateLimitWarning = now;
+          user.send(
+            createMessage(MessageTypes.ERROR, user.roomId, 'server', user.id, {
+              code: 'RATE_LIMIT_EXCEEDED',
+              message: 'Limite de mensagens por segundo excedido temporariamente'
+            })
+          );
+        }
         return;
       }
 

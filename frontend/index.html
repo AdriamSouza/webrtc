@@ -54,6 +54,18 @@
           </button>
         </div>
 
+        <!-- Card: Voltar para a última sala acessada -->
+        <div id="lastRoomCard" class="last-room-card hidden">
+          <div class="last-room-info">
+            <span class="last-room-badge">Última Sessão</span>
+            <span class="last-room-text">Sala: <strong id="lastRoomIdDisplay">---</strong> (<span id="lastRoomUserDisplay">---</span>)</span>
+          </div>
+          <div class="last-room-actions">
+            <button type="button" id="btnRejoinLastRoom" class="btn btn-sm btn-primary">Voltar para a Sala</button>
+            <button type="button" id="btnClearLastRoom" class="btn btn-sm btn-ghost" title="Limpar histórico da sala">&times;</button>
+          </div>
+        </div>
+
         <!-- Alerta / Mensagem de Erro do Lobby -->
         <div id="lobbyAlert" class="lobby-alert hidden"></div>
 
@@ -240,6 +252,15 @@
             <span>Telemetria</span>
           </button>
 
+          <button id="btnDiagnostics" class="btn btn-secondary btn-sm btn-icon-inline" title="Diagnóstico de GPU, Codecs e WebRTC em Tempo Real">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 20V10"/>
+              <path d="M12 20V4"/>
+              <path d="M6 20v-6"/>
+            </svg>
+            <span>Diagnóstico</span>
+          </button>
+
           <button id="btnOpenSettings" class="btn btn-secondary btn-sm btn-icon-inline" title="Configurações da Transmissão">
             <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -265,6 +286,19 @@
           </span>
         </div>
       </header>
+
+      <!-- Banner de Reconexão Automática -->
+      <div id="reconnectBanner" class="reconnect-banner hidden" role="alert">
+        <div class="reconnect-banner-content">
+          <span class="reconnect-spinner"></span>
+          <span id="reconnectBannerText">Conexão perdida. Tentando reconectar automaticamente (tentativa 1 de 8)...</span>
+        </div>
+        <div class="reconnect-banner-actions">
+          <button type="button" id="btnReconnectNow" class="btn btn-xs btn-primary">Tentar Agora</button>
+          <button type="button" id="btnCancelReconnect" class="btn btn-xs btn-secondary">Cancelar</button>
+          <button type="button" id="btnLeaveRoomReconnect" class="btn btn-xs btn-danger">Sair</button>
+        </div>
+      </div>
 
       <!-- Área de Conteúdo Principal -->
       <div class="room-body" id="roomBody" data-layout="grid">
@@ -1086,6 +1120,120 @@
       </div>
       <div class="lightbox-body">
         <img id="lightboxImg" src="" alt="Imagem ampliada">
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Diagnóstico Técnico e Telemetria WebRTC / GPU -->
+  <div id="diagnosticsModal" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="modal-card modal-diagnostics">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 20V10"/>
+            <path d="M12 20V4"/>
+            <path d="M6 20v-6"/>
+          </svg>
+          <h3>Auditoria & Diagnóstico em Tempo Real</h3>
+        </div>
+        <button id="btnCloseDiagnostics" class="btn-icon-close" title="Fechar">&times;</button>
+      </div>
+
+      <div class="diagnostics-modal-body">
+        <!-- SEÇÃO 1: AMBIENTE, GPU & HARDWARE -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Aceleração de Hardware & GPU</h4>
+            <span id="diagGpuStatusBadge" class="badge">Detectando...</span>
+          </div>
+          <div class="diag-grid" id="diagSystemGrid">
+            <div class="diag-card">
+              <span class="diag-label">GPU Primária:</span>
+              <strong class="diag-val" id="diagGpuRenderer">Carregando...</strong>
+            </div>
+            <div class="diag-card">
+              <span class="diag-label">Driver / Vendor:</span>
+              <strong class="diag-val" id="diagGpuDriver">Carregando...</strong>
+            </div>
+            <div class="diag-card">
+              <span class="diag-label">Decodificação GPU:</span>
+              <strong class="diag-val" id="diagGpuDecode">Carregando...</strong>
+            </div>
+            <div class="diag-card">
+              <span class="diag-label">Codificação GPU:</span>
+              <strong class="diag-val" id="diagGpuEncode">Carregando...</strong>
+            </div>
+            <div class="diag-card">
+              <span class="diag-label">Uso de CPU App:</span>
+              <strong class="diag-val" id="diagCpuUsage">---</strong>
+            </div>
+            <div class="diag-card">
+              <span class="diag-label">Memória RAM App:</span>
+              <strong class="diag-val" id="diagMemoryUsage">---</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- SEÇÃO 2: TRANSMISSÃO DE SAÍDA (OUTBOUND - HOST) -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Transmissões Locais de Saída (Outbound Encoders)</h4>
+            <span class="diag-sublabel">Apenas inscritos ativos consomem encoders</span>
+          </div>
+          <div class="diag-table-container">
+            <table class="diag-table">
+              <thead>
+                <tr>
+                  <th>Destinatário</th>
+                  <th>Stream</th>
+                  <th>Codec</th>
+                  <th>Implementação (Encoder)</th>
+                  <th>Resolução / FPS</th>
+                  <th>Bitrate</th>
+                  <th>Limitação</th>
+                </tr>
+              </thead>
+              <tbody id="diagOutboundTableBody">
+                <tr>
+                  <td colspan="7" class="diag-empty">Nenhum fluxo de vídeo sendo transmitido no momento.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- SEÇÃO 3: TRANSMISSÕES DE ENTRADA (INBOUND - PEERS) -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Transmissões Recebidas (Inbound Decoders)</h4>
+            <span class="diag-sublabel">Métricas reais via RTCPeerConnection.getStats()</span>
+          </div>
+          <div class="diag-table-container">
+            <table class="diag-table">
+              <thead>
+                <tr>
+                  <th>Remetente</th>
+                  <th>Stream</th>
+                  <th>Codec</th>
+                  <th>Implementação (Decoder)</th>
+                  <th>Resolução / FPS</th>
+                  <th>Bitrate</th>
+                  <th>Perda / Jitter</th>
+                </tr>
+              </thead>
+              <tbody id="diagInboundTableBody">
+                <tr>
+                  <td colspan="7" class="diag-empty">Nenhum fluxo de vídeo remoto recebido no momento.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer diag-footer">
+        <span class="diag-live-pill"><span class="status-dot"></span> Atualização em tempo real (1.5s)</span>
+        <button type="button" id="btnCloseDiagnosticsFooter" class="btn btn-secondary">Fechar</button>
       </div>
     </div>
   </div>

@@ -41,6 +41,19 @@ export const QUALITY_PROFILES = {
   }
 };
 
+/**
+ * Avalia se o nome da implementação de codificador/decodificador do Chromium
+ * corresponde a aceleração por hardware GPU (NVENC, AMF, D3D11, MediaFoundation)
+ */
+export function isHardwareCodecImplementation(implName) {
+  if (!implName) return false;
+  const s = String(implName).toLowerCase();
+  if (s.startsWith('externalencoder') || s.startsWith('externaldecoder')) return true;
+  if (s.includes('d3d11') || s.includes('nvenc') || s.includes('amf') || s.includes('mediafoundation') || s.includes('qsv') || s.includes('hardware')) return true;
+  if (s.includes('openh264') || s.includes('libvpx') || s.includes('libaom') || s.includes('dav1d') || s.includes('ffmpeg')) return false;
+  return false;
+}
+
 export class QualityController {
   constructor() {
     this.intervalId = null;
@@ -50,6 +63,7 @@ export class QualityController {
 
     // Histórico individual por ID de relatório RTP para cálculo exato de deltas sem colisões
     this.streamStatsHistory = new Map();
+    this.latestDiagnostics = null; // Diagnóstico completo acessível pelo painel de estatísticas
 
     // Perfil ativo persistente (Ultra por padrão)
     const saved = (() => {
@@ -60,6 +74,10 @@ export class QualityController {
     this.activeProfile = profile.id;
     this.currentMaxBitrate = profile.maxBitrate;
     this.currentMaxFps = profile.maxFps;
+  }
+
+  getDetailedDiagnostics() {
+    return this.latestDiagnostics;
   }
 
   start(webrtcManager, callback) {
@@ -216,17 +234,29 @@ export class QualityController {
 
       const seenReportIds = new Set();
 
+      const outboundStreamsList = [];
+      const inboundStreamsList = [];
+
       for (const { userId, pc } of connectedPcs) {
         const stats = await pc.getStats();
 
         // 1. Mapeamento de candidatos e codecs deste peer
         const candidateReports = new Map();
         const codecMap = new Map();
+        const codecDetailsMap = new Map();
         let activeCandidatePair = null;
 
         stats.forEach(report => {
-          if (report.type === 'codec' && report.mimeType) {
-            codecMap.set(report.id, report.mimeType.replace(/^video\//i, '').replace(/^audio\//i, '').toUpperCase());
+          if (report.type === 'codec') {
+            const mime = (report.mimeType || '').replace(/^video\//i, '').replace(/^audio\//i, '').toUpperCase();
+            codecMap.set(report.id, mime);
+            codecDetailsMap.set(report.id, {
+              mime,
+              clockRate: report.clockRate,
+              channels: report.channels,
+              sdpFmtpLine: report.sdpFmtpLine || null,
+              payloadType: report.payloadType
+            });
           }
           if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
             candidateReports.set(report.id, report);
@@ -269,15 +299,18 @@ export class QualityController {
           if (report.type === 'outbound-rtp' && report.kind === 'video') {
             seenReportIds.add(report.id);
 
-            // Ignora fluxos RTX no cálculo de resolução
+            const codecDetail = report.codecId ? codecDetailsMap.get(report.codecId) : null;
+            const cName = codecDetail ? codecDetail.mime : (report.codecId ? codecMap.get(report.codecId) : null);
+            if (cName) activeCodec = cName;
+
             if (report.frameWidth && report.frameHeight) {
               width = report.frameWidth;
               height = report.frameHeight;
             }
 
-            if (report.codecId && codecMap.has(report.codecId)) {
-              activeCodec = codecMap.get(report.codecId);
-            }
+            let streamFps = report.framesPerSecond ? Math.round(report.framesPerSecond) : null;
+            let streamBitrateBps = 0;
+            let avgEncodeTimeMs = null;
 
             const prev = this.streamStatsHistory.get(report.id);
             if (prev && report.timestamp > prev.timestamp) {
@@ -285,7 +318,8 @@ export class QualityController {
               if (dt > 0.1) {
                 const bytesDelta = (report.bytesSent || 0) - prev.bytes;
                 if (bytesDelta >= 0) {
-                  totalBitrateBps += (bytesDelta * 8) / dt;
+                  streamBitrateBps = (bytesDelta * 8) / dt;
+                  totalBitrateBps += streamBitrateBps;
                 }
 
                 // FPS via delta de frames enviados/codificados
@@ -293,20 +327,52 @@ export class QualityController {
                 if (currentFrames !== undefined && prev.frames !== undefined) {
                   const framesDelta = currentFrames - prev.frames;
                   if (framesDelta >= 0) {
-                    calculatedFpsList.push(Math.round(framesDelta / dt));
+                    const calcFps = Math.round(framesDelta / dt);
+                    calculatedFpsList.push(calcFps);
+                    if (!streamFps) streamFps = calcFps;
+
+                    if (report.totalEncodeTime !== undefined && prev.totalEncodeTime !== undefined && framesDelta > 0) {
+                      const encodeDelta = report.totalEncodeTime - prev.totalEncodeTime;
+                      if (encodeDelta >= 0) {
+                        avgEncodeTimeMs = Number(((encodeDelta / framesDelta) * 1000).toFixed(2));
+                      }
+                    }
                   }
                 }
               }
             }
 
-            if (report.framesPerSecond) {
-              calculatedFpsList.push(Math.round(report.framesPerSecond));
+            if (streamFps) {
+              calculatedFpsList.push(streamFps);
             }
+
+            const encoderImpl = report.encoderImplementation || null;
+            const isHw = isHardwareCodecImplementation(encoderImpl);
+
+            outboundStreamsList.push({
+              id: report.id,
+              targetUserId: userId,
+              codec: cName || 'DESCONHECIDO',
+              sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
+              encoderImplementation: encoderImpl || 'Padrão do Sistema',
+              isHardware: isHw,
+              qualityLimitationReason: report.qualityLimitationReason || 'none',
+              width: report.frameWidth || width || '--',
+              height: report.frameHeight || height || '--',
+              fps: streamFps || '--',
+              bitrateMbps: (streamBitrateBps / 1000000).toFixed(2),
+              framesEncoded: report.framesEncoded || 0,
+              framesDropped: report.framesDropped || 0,
+              avgEncodeTimeMs: avgEncodeTimeMs !== null ? `${avgEncodeTimeMs} ms` : '--',
+              packetsSent: report.packetsSent || 0,
+              bytesSent: report.bytesSent || 0
+            });
 
             this.streamStatsHistory.set(report.id, {
               bytes: report.bytesSent || 0,
               timestamp: report.timestamp,
-              frames: report.framesSent ?? report.framesEncoded
+              frames: report.framesSent ?? report.framesEncoded,
+              totalEncodeTime: report.totalEncodeTime || 0
             });
           }
 
@@ -338,14 +404,18 @@ export class QualityController {
           if (report.type === 'inbound-rtp' && report.kind === 'video') {
             seenReportIds.add(report.id);
 
+            const codecDetail = report.codecId ? codecDetailsMap.get(report.codecId) : null;
+            const cName = codecDetail ? codecDetail.mime : (report.codecId ? codecMap.get(report.codecId) : null);
+            if (cName) activeCodec = cName;
+
             if (report.frameWidth && report.frameHeight) {
               width = report.frameWidth;
               height = report.frameHeight;
             }
 
-            if (report.codecId && codecMap.has(report.codecId)) {
-              activeCodec = codecMap.get(report.codecId);
-            }
+            let streamFps = report.framesPerSecond ? Math.round(report.framesPerSecond) : null;
+            let streamBitrateBps = 0;
+            let avgDecodeTimeMs = null;
 
             if (report.packetsLost !== undefined) {
               totalPacketsLost += report.packetsLost;
@@ -360,27 +430,62 @@ export class QualityController {
               if (dt > 0.1) {
                 const bytesDelta = (report.bytesReceived || 0) - prev.bytes;
                 if (bytesDelta >= 0) {
-                  totalBitrateBps += (bytesDelta * 8) / dt;
+                  streamBitrateBps = (bytesDelta * 8) / dt;
+                  totalBitrateBps += streamBitrateBps;
                 }
 
                 const currentFrames = report.framesDecoded ?? report.framesReceived;
                 if (currentFrames !== undefined && prev.frames !== undefined) {
                   const framesDelta = currentFrames - prev.frames;
                   if (framesDelta >= 0) {
-                    calculatedFpsList.push(Math.round(framesDelta / dt));
+                    const calcFps = Math.round(framesDelta / dt);
+                    calculatedFpsList.push(calcFps);
+                    if (!streamFps) streamFps = calcFps;
+
+                    if (report.totalDecodeTime !== undefined && prev.totalDecodeTime !== undefined && framesDelta > 0) {
+                      const decodeDelta = report.totalDecodeTime - prev.totalDecodeTime;
+                      if (decodeDelta >= 0) {
+                        avgDecodeTimeMs = Number(((decodeDelta / framesDelta) * 1000).toFixed(2));
+                      }
+                    }
                   }
                 }
               }
             }
 
-            if (report.framesPerSecond) {
-              calculatedFpsList.push(Math.round(report.framesPerSecond));
+            if (streamFps) {
+              calculatedFpsList.push(streamFps);
             }
+
+            const decoderImpl = report.decoderImplementation || null;
+            const isPowerEfficient = Boolean(report.powerEfficientDecoder);
+            const isHw = isHardwareCodecImplementation(decoderImpl) || isPowerEfficient;
+
+            inboundStreamsList.push({
+              id: report.id,
+              peerId: userId,
+              codec: cName || 'DESCONHECIDO',
+              sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
+              decoderImplementation: decoderImpl || 'Padrão do Sistema',
+              powerEfficientDecoder: isPowerEfficient,
+              isHardware: isHw,
+              width: report.frameWidth || width || '--',
+              height: report.frameHeight || height || '--',
+              fps: streamFps || '--',
+              bitrateMbps: (streamBitrateBps / 1000000).toFixed(2),
+              framesDecoded: report.framesDecoded || 0,
+              framesDropped: report.framesDropped || 0,
+              avgDecodeTimeMs: avgDecodeTimeMs !== null ? `${avgDecodeTimeMs} ms` : '--',
+              packetsReceived: report.packetsReceived || 0,
+              packetsLost: report.packetsLost || 0,
+              jitterMs: report.jitter ? Math.round(report.jitter * 1000) : 0
+            });
 
             this.streamStatsHistory.set(report.id, {
               bytes: report.bytesReceived || 0,
               timestamp: report.timestamp,
-              frames: report.framesDecoded ?? report.framesReceived
+              frames: report.framesDecoded ?? report.framesReceived,
+              totalDecodeTime: report.totalDecodeTime || 0
             });
           }
         });
@@ -453,17 +558,30 @@ export class QualityController {
         ? (totalBitrateBps / 1000000).toFixed(2)
         : '--';
 
-      let formattedCodec = activeCodec;
-      if (activeCodec === 'H264') {
-        formattedCodec = 'H.264 (GPU ⚡)';
-      } else if (activeCodec === 'AV1') {
-        formattedCodec = 'AV1 (GPU 🚀)';
-      } else if (activeCodec === 'VP9') {
-        formattedCodec = 'VP9 (HD)';
-      } else if (!activeCodec) {
-        const pref = (this.webrtc?.preferredCodec || 'auto').toUpperCase();
-        formattedCodec = pref === 'AUTO' ? 'H.264 (GPU ⚡)' : (pref === 'AV1' ? 'AV1 (GPU 🚀)' : `${pref} (GPU)`);
+      // Identifica o codec efetivo e se a codificação/decodificação é por hardware ou software
+      let formattedCodec = '--';
+      if (outboundStreamsList.length > 0) {
+        const s = outboundStreamsList[0];
+        formattedCodec = `${s.codec} (${s.isHardware ? 'GPU ⚡' : 'Software ⚠️'})`;
+      } else if (inboundStreamsList.length > 0) {
+        const s = inboundStreamsList[0];
+        formattedCodec = `${s.codec} (${s.isHardware ? 'GPU ⚡' : 'Software ⚠️'})`;
+      } else if (activeCodec) {
+        formattedCodec = activeCodec;
       }
+
+      // Atualiza snapshot de diagnóstico detalhado
+      this.latestDiagnostics = {
+        outbound: outboundStreamsList,
+        inbound: inboundStreamsList,
+        dominantConnectionType,
+        rtt: finalRtt,
+        packetLoss: finalPacketLoss,
+        bitrateMbps,
+        fps: finalFps,
+        resolution: width && height ? `${width}x${height}` : '--',
+        timestamp: Date.now()
+      };
 
       const metrics = {
         fps: finalFps,
@@ -473,7 +591,8 @@ export class QualityController {
         packetLossPercent: finalPacketLoss,
         codec: formattedCodec,
         connectionType: dominantConnectionType,
-        activeProfile: this.activeProfile
+        activeProfile: this.activeProfile,
+        diagnostics: this.latestDiagnostics
       };
 
       // Dispara lógica adaptativa de bitrate em todas as conexões ativas

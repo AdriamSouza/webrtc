@@ -12,6 +12,7 @@ const webrtc = new WebRTCManager(signaling);
 webrtc.setMediaManager(media);
 const qualityController = new QualityController();
 const roomState = new RoomState();
+webrtc.setRoomState(roomState);
 
 function updateConnectionStatus(statusClass, text) {
   if (!connectionBadge) return;
@@ -1703,6 +1704,187 @@ function updateGridLayout() {
   updateConnectionStatus('connected', `${participantCount} participante${participantCount > 1 ? 's' : ''}${streamCount > 0 ? ` • ${streamCount} ao vivo` : ''}`);
 }
 
+// ========================================================
+// RECONEXÃO AUTOMÁTICA, ÚLTIMA SALA E DIAGNÓSTICO EM TEMPO REAL
+// ========================================================
+function showReconnectBanner(text, isFailed = false) {
+  const banner = document.getElementById('reconnectBanner');
+  const bannerText = document.getElementById('reconnectBannerText');
+  const spinner = banner?.querySelector('.reconnect-spinner');
+  if (!banner) return;
+  if (bannerText) bannerText.textContent = text;
+  if (spinner) spinner.style.display = isFailed ? 'none' : 'inline-block';
+  banner.classList.remove('hidden');
+}
+
+function hideReconnectBanner() {
+  const banner = document.getElementById('reconnectBanner');
+  if (banner) banner.classList.add('hidden');
+}
+
+function updateLastRoomCardUI() {
+  const lastRoomCard = document.getElementById('lastRoomCard');
+  const lastRoomIdDisplay = document.getElementById('lastRoomIdDisplay');
+  const lastRoomUserDisplay = document.getElementById('lastRoomUserDisplay');
+  if (!lastRoomCard) return;
+
+  const last = RoomState.getLastRoom();
+  if (last && last.roomId && last.username) {
+    if (lastRoomIdDisplay) lastRoomIdDisplay.textContent = last.roomId;
+    if (lastRoomUserDisplay) lastRoomUserDisplay.textContent = last.username;
+    lastRoomCard.classList.remove('hidden');
+  } else {
+    lastRoomCard.classList.add('hidden');
+  }
+}
+
+let diagnosticsInterval = null;
+
+async function renderDiagnosticsData() {
+  const diagGpuRenderer = document.getElementById('diagGpuRenderer');
+  const diagGpuDriver = document.getElementById('diagGpuDriver');
+  const diagGpuDecode = document.getElementById('diagGpuDecode');
+  const diagGpuEncode = document.getElementById('diagGpuEncode');
+  const diagCpuUsage = document.getElementById('diagCpuUsage');
+  const diagMemoryUsage = document.getElementById('diagMemoryUsage');
+  const diagGpuStatusBadge = document.getElementById('diagGpuStatusBadge');
+
+  if (window.desktopAPI && typeof window.desktopAPI.getGpuDiagnostics === 'function') {
+    try {
+      const gpuDiag = await window.desktopAPI.getGpuDiagnostics();
+      if (gpuDiag) {
+        if (diagGpuRenderer) diagGpuRenderer.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || 'GPU Dedicada (Desktop)';
+        if (diagGpuDriver) diagGpuDriver.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.driverVersion || 'Nativo Windows';
+
+        const videoDecodeStatus = gpuDiag.featureStatus?.video_decode || 'unknown';
+        const videoEncodeStatus = gpuDiag.featureStatus?.video_encode || gpuDiag.featureStatus?.accelerated_video_encode || 'unknown';
+
+        const isDecodeHw = videoDecodeStatus === 'enabled' || videoDecodeStatus === 'hardware_accelerated';
+        const isEncodeHw = videoEncodeStatus === 'enabled' || videoEncodeStatus === 'hardware_accelerated';
+
+        if (diagGpuDecode) {
+          diagGpuDecode.innerHTML = isDecodeHw
+            ? '<span class="diag-badge-hw">Ativa (Hardware ⚡)</span>'
+            : `<span class="diag-badge-sw">${videoDecodeStatus}</span>`;
+        }
+        if (diagGpuEncode) {
+          diagGpuEncode.innerHTML = isEncodeHw
+            ? '<span class="diag-badge-hw">Ativa (MediaFoundation/D3D11 ⚡)</span>'
+            : `<span class="diag-badge-sw">${videoEncodeStatus}</span>`;
+        }
+
+        if (diagCpuUsage && gpuDiag.cpuUsagePercent !== undefined) {
+          diagCpuUsage.textContent = `${gpuDiag.cpuUsagePercent.toFixed(1)}%`;
+        }
+        if (diagMemoryUsage && gpuDiag.memoryUsageMB !== undefined) {
+          diagMemoryUsage.textContent = `${gpuDiag.memoryUsageMB.toFixed(0)} MB`;
+        }
+        if (diagGpuStatusBadge) {
+          diagGpuStatusBadge.textContent = 'Hardware Ativo ⚡';
+          diagGpuStatusBadge.className = 'badge badge-success';
+        }
+      }
+    } catch (e) {
+      console.warn('[Diagnostics] Erro ao obter diagnóstico de GPU desktop:', e);
+    }
+  } else {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo && diagGpuRenderer) {
+          diagGpuRenderer.textContent = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+        }
+        if (debugInfo && diagGpuDriver) {
+          diagGpuDriver.textContent = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+        }
+      }
+      if (diagGpuDecode) diagGpuDecode.textContent = 'Decodificador WebRTC do Navegador';
+      if (diagGpuEncode) diagGpuEncode.textContent = 'Codificador WebRTC do Navegador';
+      if (diagGpuStatusBadge) {
+        diagGpuStatusBadge.textContent = 'Web Runtime';
+        diagGpuStatusBadge.className = 'badge';
+      }
+    } catch (_) {}
+  }
+
+  const detailed = qualityController.getDetailedDiagnostics();
+  const outboundTbody = document.getElementById('diagOutboundTableBody');
+  const inboundTbody = document.getElementById('diagInboundTableBody');
+
+  if (outboundTbody) {
+    if (detailed.outboundStreams.length === 0) {
+      outboundTbody.innerHTML = '<tr><td colspan="7" class="diag-empty">Nenhum fluxo de vídeo sendo transmitido no momento.</td></tr>';
+    } else {
+      outboundTbody.innerHTML = detailed.outboundStreams.map(s => {
+        const isHw = s.isHardware;
+        const targetName = roomState.participants.get(s.targetPeerId)?.name || s.targetPeerId || 'Todos';
+        const implBadge = isHw
+          ? `<span class="diag-badge-hw">GPU ⚡ (${escapeHtml(s.encoderImplementation)})</span>`
+          : `<span class="diag-badge-sw">Software ⚠️ (${escapeHtml(s.encoderImplementation)})</span>`;
+        return `
+          <tr>
+            <td><strong>${escapeHtml(targetName)}</strong></td>
+            <td>${escapeHtml(s.streamType || 'video')}</td>
+            <td>${escapeHtml(s.codec || '---')}</td>
+            <td>${implBadge}</td>
+            <td>${s.width}x${s.height} @ ${s.fps} fps</td>
+            <td>${s.bitrateKbps} kbps</td>
+            <td>${escapeHtml(s.qualityLimitationReason || 'none')}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
+
+  if (inboundTbody) {
+    if (detailed.inboundStreams.length === 0) {
+      inboundTbody.innerHTML = '<tr><td colspan="7" class="diag-empty">Nenhum fluxo de vídeo remoto recebido no momento.</td></tr>';
+    } else {
+      inboundTbody.innerHTML = detailed.inboundStreams.map(s => {
+        const isHw = s.isHardware;
+        const senderName = roomState.participants.get(s.peerId)?.name || s.peerId;
+        const implBadge = isHw
+          ? `<span class="diag-badge-hw">GPU ⚡ (${escapeHtml(s.decoderImplementation)})</span>`
+          : `<span class="diag-badge-sw">Software ⚠️ (${escapeHtml(s.decoderImplementation)})</span>`;
+        return `
+          <tr>
+            <td><strong>${escapeHtml(senderName)}</strong></td>
+            <td>${escapeHtml(s.streamType || 'video')}</td>
+            <td>${escapeHtml(s.codec || '---')}</td>
+            <td>${implBadge}</td>
+            <td>${s.width}x${s.height} @ ${s.fps} fps</td>
+            <td>${s.bitrateKbps} kbps</td>
+            <td>${s.packetLossPercent}% / ${(s.jitter * 1000).toFixed(1)}ms</td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
+}
+
+function openDiagnosticsModal() {
+  const modal = document.getElementById('diagnosticsModal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  renderDiagnosticsData();
+  if (!diagnosticsInterval) {
+    diagnosticsInterval = setInterval(renderDiagnosticsData, 1500);
+  }
+}
+
+function closeDiagnosticsModal() {
+  const modal = document.getElementById('diagnosticsModal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
+  if (diagnosticsInterval) {
+    clearInterval(diagnosticsInterval);
+    diagnosticsInterval = null;
+  }
+}
 
 // ========================================================
 // 1. INICIALIZAÇÃO E TRATAMENTO DA URL
@@ -1741,6 +1923,7 @@ function init() {
   setupSignalingEvents();
   setupWebRTCEvents();
   setupSettingsModal();
+  updateLastRoomCardUI();
 
   // Detecção de Ambiente Desktop (Electron com WGC)
   if (window.desktopAPI) {
@@ -1867,6 +2050,61 @@ function setupEventListeners() {
     });
   }
 
+  // --- BOTÕES DO CARD DE ÚLTIMA SALA (LOBBY) ---
+  const btnRejoinLastRoom = document.getElementById('btnRejoinLastRoom');
+  const btnClearLastRoom = document.getElementById('btnClearLastRoom');
+
+  if (btnRejoinLastRoom) {
+    btnRejoinLastRoom.addEventListener('click', () => {
+      const last = RoomState.getLastRoom();
+      if (last && last.roomId && last.username) {
+        console.log(`[App] Reingressando na última sala: ${last.roomId} como ${last.username}`);
+        enterRoom({
+          roomId: last.roomId,
+          username: last.username,
+          isHost: false,
+          password: last.roomPin,
+          submitBtn: btnRejoinLastRoom
+        });
+      }
+    });
+  }
+
+  if (btnClearLastRoom) {
+    btnClearLastRoom.addEventListener('click', () => {
+      RoomState.clearLastRoom();
+      updateLastRoomCardUI();
+    });
+  }
+
+  // --- BOTÕES DO BANNER DE RECONEXÃO AUTOMÁTICA ---
+  const btnReconnectNow = document.getElementById('btnReconnectNow');
+  const btnCancelReconnect = document.getElementById('btnCancelReconnect');
+  const btnLeaveRoomReconnect = document.getElementById('btnLeaveRoomReconnect');
+
+  if (btnReconnectNow) {
+    btnReconnectNow.addEventListener('click', () => {
+      console.log('[App] Reconexão manual solicitada pelo usuário');
+      signaling.reconnectNow();
+    });
+  }
+  if (btnCancelReconnect) {
+    btnCancelReconnect.addEventListener('click', () => {
+      console.log('[App] Tentativa de reconexão cancelada pelo usuário');
+      signaling.cancelReconnect();
+      hideReconnectBanner();
+      updateConnectionStatus('', 'Reconexão Cancelada');
+    });
+  }
+  if (btnLeaveRoomReconnect) {
+    btnLeaveRoomReconnect.addEventListener('click', () => {
+      console.log('[App] Usuário optou por sair durante tentativa de reconexão');
+      signaling.cancelReconnect();
+      hideReconnectBanner();
+      leaveCurrentRoom();
+    });
+  }
+
   if (btnCopyLink) {
     btnCopyLink.addEventListener('click', () => {
       let inviteUrl = `${window.location.origin}/?room=${encodeURIComponent(roomState.roomId)}`;
@@ -1897,6 +2135,27 @@ function setupEventListeners() {
   btnToggleHud.addEventListener('click', () => {
     telemetryHud.classList.toggle('hidden');
   });
+
+  // --- BOTÃO DE DIAGNÓSTICO EM TEMPO REAL ---
+  const btnDiagnostics = document.getElementById('btnDiagnostics');
+  const diagnosticsModal = document.getElementById('diagnosticsModal');
+  const btnCloseDiagnostics = document.getElementById('btnCloseDiagnostics');
+  const btnCloseDiagnosticsFooter = document.getElementById('btnCloseDiagnosticsFooter');
+
+  if (btnDiagnostics) {
+    btnDiagnostics.addEventListener('click', openDiagnosticsModal);
+  }
+  if (btnCloseDiagnostics) {
+    btnCloseDiagnostics.addEventListener('click', closeDiagnosticsModal);
+  }
+  if (btnCloseDiagnosticsFooter) {
+    btnCloseDiagnosticsFooter.addEventListener('click', closeDiagnosticsModal);
+  }
+  if (diagnosticsModal) {
+    diagnosticsModal.addEventListener('click', (e) => {
+      if (e.target === diagnosticsModal) closeDiagnosticsModal();
+    });
+  }
 
   // Seletor de Perfil de Qualidade / Banda (Ultra 60, Equilibrado, Econômico)
   const profileBtns = document.querySelectorAll('.btn-profile');
@@ -2536,6 +2795,7 @@ function setupSignalingEvents() {
       roomPin: currentAttemptedPin,
       initialStreams: streams || []
     });
+    RoomState.saveLastRoom(roomId, username, currentAttemptedPin);
     webrtc.setIceServers(iceServers);
 
     lobbyScreen.classList.remove('active');
@@ -2787,14 +3047,26 @@ function setupSignalingEvents() {
   signaling.on('SUBSCRIBE_STREAM', async (msg) => {
     const subscriberId = msg.data?.subscriberId || msg.from;
     const streamId = msg.data?.streamId;
-    console.log(`[App] Evento SUBSCRIBE_STREAM de ${subscriberId} para ${streamId}`);
+    const sourceType = msg.data?.sourceType || (streamId && streamId.includes('camera') ? 'camera' : 'screen');
+    console.log(`[App] Evento SUBSCRIBE_STREAM de ${subscriberId} para ${streamId} (${sourceType})`);
     if (subscriberId && subscriberId !== roomState.myUserId) {
       try {
+        roomState.addLocalSubscriber(sourceType, subscriberId);
         await webrtc.syncPeerTracks(subscriberId, media);
         await webrtc.createOfferForPeer(subscriberId);
       } catch (err) {
         console.warn('[App] Erro ao sincronizar tracks com assinante:', err);
       }
+    }
+  });
+
+  signaling.on('UNSUBSCRIBE_STREAM', async (msg) => {
+    const subscriberId = msg.data?.subscriberId || msg.from;
+    const sourceType = msg.data?.sourceType;
+    console.log(`[App] Evento UNSUBSCRIBE_STREAM de ${subscriberId} para ${sourceType || 'todos'}`);
+    if (subscriberId) {
+      roomState.removeLocalSubscriber(sourceType, subscriberId);
+      webrtc.unsubscribePeerFromStream(subscriberId, sourceType);
     }
   });
 
@@ -2825,6 +3097,7 @@ function setupSignalingEvents() {
   signaling.on('ERROR', (msg) => {
     isConnecting = false;
     const errorMsg = msg.data?.message || 'Erro inesperado';
+    const errorCode = msg.data?.code;
 
     if (btnSubmitCreate) {
       btnSubmitCreate.disabled = false;
@@ -2838,34 +3111,52 @@ function setupSignalingEvents() {
     if (lobbyScreen && lobbyScreen.classList.contains('active')) {
       showLobbyAlert(errorMsg, 'error');
     } else {
-      alert(`Aviso do Servidor: ${errorMsg}`);
+      console.warn(`[Signaling Error] [${errorCode || 'UNKNOWN'}]: ${errorMsg}`);
+      if (errorCode === 'RATE_LIMIT_EXCEEDED') {
+        appendSystemChat('⚠️ Alto volume de mensagens de sinalização detectado. Suavizado automaticamente.');
+      } else {
+        appendSystemChat(`⚠️ Aviso do Servidor: ${errorMsg}`);
+      }
     }
+  });
+
+  signaling.on('reconnecting', ({ attempt, maxAttempts }) => {
+    showReconnectBanner(`Conexão perdida. Tentando reconectar automaticamente (${attempt} de ${maxAttempts})...`);
+    updateConnectionStatus('connecting', `Reconectando (${attempt}/${maxAttempts})...`);
+  });
+
+  signaling.on('reconnect_failed', () => {
+    showReconnectBanner('Falha ao reconectar ao servidor de sinalização após várias tentativas.', true);
+    updateConnectionStatus('', 'Desconectado');
   });
 
   signaling.on('connection_change', async ({ status }) => {
     console.log(`[App] Status da conexão de sinalização: ${status}`);
-    if (status === 'connected' && roomState.roomId) {
-      console.log(`[App] WebSocket de sinalização reconectado. Re-ingressando na sala ${roomState.roomId}...`);
-      signaling.roomId = roomState.roomId;
-      signaling.send('JOIN_ROOM', {
-        roomId: roomState.roomId,
-        username: roomState.myUserName,
-        pin: roomState.roomPin
-      });
+    if (status === 'connected') {
+      hideReconnectBanner();
+      if (roomState.roomId) {
+        console.log(`[App] WebSocket de sinalização reconectado. Re-ingressando na sala ${roomState.roomId}...`);
+        signaling.roomId = roomState.roomId;
+        signaling.send('JOIN_ROOM', {
+          roomId: roomState.roomId,
+          username: roomState.myUserName,
+          pin: roomState.roomPin
+        });
 
-      // Aguarda 1s para renegociar túneis de mídia com os demais participantes
-      setTimeout(async () => {
-        try {
-          const otherIds = roomState.getOtherParticipantIds();
-          if (otherIds.length > 0) {
-            console.log(`[App] Re-sincronizando mídias locais com ${otherIds.length} participantes após reconexão...`);
-            await webrtc.syncLocalMedia(media, otherIds);
-            await webrtc.renegotiateAllPeers(otherIds);
+        // Aguarda 1s para renegociar túneis de mídia com os demais participantes
+        setTimeout(async () => {
+          try {
+            const otherIds = roomState.getOtherParticipantIds();
+            if (otherIds.length > 0) {
+              console.log(`[App] Re-sincronizando mídias locais com ${otherIds.length} participantes após reconexão...`);
+              await webrtc.syncLocalMedia(media, otherIds);
+              await webrtc.renegotiateAllPeers(otherIds);
+            }
+          } catch (syncErr) {
+            console.warn('[App] Erro na renegociação pós-reconexão WebSocket:', syncErr);
           }
-        } catch (syncErr) {
-          console.warn('[App] Erro na renegociação pós-reconexão WebSocket:', syncErr);
-        }
-      }, 1000);
+        }, 1000);
+      }
     }
   });
 }
@@ -3227,6 +3518,9 @@ function leaveCurrentRoom() {
   } catch (err) {
     console.error('[App] Erro durante saída da sala:', err);
   } finally {
+    hideReconnectBanner();
+    closeDiagnosticsModal();
+    updateLastRoomCardUI();
     // Garante sem exceção a transição visual para o Lobby
     if (roomScreen) roomScreen.classList.remove('active');
     if (lobbyScreen) lobbyScreen.classList.add('active');

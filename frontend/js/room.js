@@ -73,6 +73,33 @@ export class RoomState {
     this.availableStreams = new Map(); // Map<streamId, StreamInfo> (Catálogo efêmero da sala)
     this.subscribedStreamIds = new Set(); // Set<streamId> (Transmissões ativamente assinadas pelo usuário)
     this.chatMessages = [];
+
+    // Rastreamento de assinantes das nossas transmissões locais (para entrega de vídeo sob demanda)
+    this.localSubscribers = {
+      screen: new Set(),
+      camera: new Set()
+    };
+  }
+
+  addLocalSubscriber(sourceType, userId) {
+    const key = (sourceType === 'desktop' || sourceType === 'screen') ? 'screen' : sourceType;
+    if (this.localSubscribers[key]) {
+      this.localSubscribers[key].add(userId);
+    }
+  }
+
+  removeLocalSubscriber(sourceType, userId) {
+    const key = (sourceType === 'desktop' || sourceType === 'screen') ? 'screen' : sourceType;
+    if (this.localSubscribers[key]) {
+      this.localSubscribers[key].delete(userId);
+    }
+  }
+
+  isPeerSubscribedToLocal(sourceType, userId) {
+    // Em chamada direta com apenas 2 participantes, auto-entrega fica ativa para comodidade imediata
+    if (this.participants.size <= 2) return true;
+    const key = (sourceType === 'desktop' || sourceType === 'screen') ? 'screen' : sourceType;
+    return Boolean(this.localSubscribers[key]?.has(userId));
   }
 
   setRoomInfo(roomId, userId, username, isHost, initialUsers = [], extra = {}) {
@@ -188,6 +215,37 @@ export class RoomState {
     this.participants.clear();
     this.availableStreams.clear();
     this.subscribedStreamIds.clear();
+    this.localSubscribers.screen.clear();
+    this.localSubscribers.camera.clear();
     this.chatMessages = [];
+  }
+
+  static saveLastRoom(roomId, username, roomPin = null) {
+    if (!roomId) return;
+    try {
+      const data = {
+        roomId: String(roomId).trim().toUpperCase(),
+        username: username ? String(username).trim() : '',
+        roomPin: roomPin ? String(roomPin).trim() : '',
+        timestamp: Date.now()
+      };
+      localStorage.setItem('hyperstream_last_room', JSON.stringify(data));
+    } catch (_) {}
+  }
+
+  static getLastRoom() {
+    try {
+      const raw = localStorage.getItem('hyperstream_last_room');
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (data && data.roomId) return data;
+    } catch (_) {}
+    return null;
+  }
+
+  static clearLastRoom() {
+    try {
+      localStorage.removeItem('hyperstream_last_room');
+    } catch (_) {}
   }
 }

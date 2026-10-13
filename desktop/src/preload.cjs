@@ -49,7 +49,10 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   reloadApp: () => ipcRenderer.invoke('desktop:reload-app'),
 
   // Abertura de links externos no navegador padrão de forma segura
-  openExternal: (url) => ipcRenderer.invoke('desktop:open-external', url)
+  openExternal: (url) => ipcRenderer.invoke('desktop:open-external', url),
+
+  // Diagnóstico de aceleração por hardware GPU e recursos do sistema
+  getGpuDiagnostics: () => ipcRenderer.invoke('desktop:get-gpu-diagnostics')
 });
 
 console.log('[Desktop Preload] desktopAPI estendida com suporte a atualizações e controle de áudio.');

@@ -10,9 +10,12 @@ export class SignalingClient {
     this.userId = null;
     this.listeners = new Map();
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
+    this.maxReconnectAttempts = 8;
     this.isConnected = false;
     this.heartbeatInterval = null;
+    this.reconnectTimer = null;
+    this.iceCandidateQueues = new Map(); // Map<targetUserId, candidate[]>
+    this.iceBatchTimers = new Map(); // Map<targetUserId, timerId>
   }
 
   /**
@@ -55,9 +58,10 @@ export class SignalingClient {
         this._pendingConnectPromise = null;
         console.log('[SignalingClient] Conexão WebSocket estabelecida com sucesso.');
         this.isConnected = true;
+        const wasReconnecting = this.reconnectAttempts > 0;
         this.reconnectAttempts = 0;
         this.startHeartbeat();
-        this.emit('connection_change', { status: 'connected' });
+        this.emit('connection_change', { status: 'connected', wasReconnecting });
         resolve();
       };
 
@@ -76,7 +80,7 @@ export class SignalingClient {
         this.stopHeartbeat();
         console.warn(`[SignalingClient] Conexão WebSocket encerrada. Código: ${event.code}`);
         this.isConnected = false;
-        this.emit('connection_change', { status: 'disconnected' });
+        this.emit('connection_change', { status: 'disconnected', code: event.code });
         if (this.roomId) {
           this.attemptReconnect();
         }
@@ -96,16 +100,98 @@ export class SignalingClient {
     return this._pendingConnectPromise;
   }
 
+  /**
+   * Tenta reconectar com intervalo progressivo (backoff exponencial) e jitter aleatório
+   * Evita "thundering herd" com muitos clientes reconectando simultaneamente
+   */
   attemptReconnect() {
     if (!this.roomId) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
-      console.log(`[SignalingClient] Tentando reconectar em ${delay}ms (Tentativa ${this.reconnectAttempts})...`);
-      setTimeout(() => {
+      const baseDelay = Math.min(1000 * Math.pow(1.6, this.reconnectAttempts), 12000);
+      const jitter = Math.floor(Math.random() * 800);
+      const delay = Math.round(baseDelay + jitter);
+
+      console.log(`[SignalingClient] Tentando reconectar em ${delay}ms (Tentativa ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+      this.emit('reconnecting', {
+        attempt: this.reconnectAttempts,
+        maxAttempts: this.maxReconnectAttempts,
+        delayMs: delay
+      });
+
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
         if (!this.roomId) return;
         this.connect().catch(() => {});
       }, delay);
+    } else {
+      console.warn('[SignalingClient] Limite de tentativas de reconexão automática atingido.');
+      this.emit('reconnect_failed', {
+        attempts: this.reconnectAttempts
+      });
+    }
+  }
+
+  cancelReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+    this.emit('reconnect_cancelled');
+  }
+
+  reconnectNow() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    return this.connect();
+  }
+
+  /**
+   * Enfileira e agrupa candidatos ICE locais para envio em lote (batching)
+   * Reduz drasticamente o volume de frames WebSocket em salas com múltiplos peers
+   */
+  sendIceCandidate(candidate, to) {
+    if (!to || !candidate) return;
+    if (!this.iceCandidateQueues.has(to)) {
+      this.iceCandidateQueues.set(to, []);
+    }
+    this.iceCandidateQueues.get(to).push(candidate);
+
+    if (this.iceCandidateQueues.get(to).length >= 8) {
+      this.flushIceCandidates(to);
+      return;
+    }
+
+    if (!this.iceBatchTimers.has(to)) {
+      const timer = setTimeout(() => {
+        this.flushIceCandidates(to);
+      }, 35);
+      this.iceBatchTimers.set(to, timer);
+    }
+  }
+
+  flushIceCandidates(to) {
+    if (this.iceBatchTimers.has(to)) {
+      clearTimeout(this.iceBatchTimers.get(to));
+      this.iceBatchTimers.delete(to);
+    }
+
+    const queue = this.iceCandidateQueues.get(to);
+    if (!queue || queue.length === 0) return;
+
+    const batch = queue.splice(0, queue.length);
+    if (batch.length === 1) {
+      this.send('ICE_CANDIDATE', batch[0], to);
+    } else {
+      this.send('ICE_CANDIDATE', { candidates: batch }, to);
     }
   }
 
@@ -183,6 +269,12 @@ export class SignalingClient {
 
   disconnect() {
     this.stopHeartbeat();
+    this.cancelReconnect();
+    for (const timer of this.iceBatchTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.iceBatchTimers.clear();
+    this.iceCandidateQueues.clear();
     this.roomId = null;
     this.reconnectAttempts = this.maxReconnectAttempts;
     if (this.ws) {

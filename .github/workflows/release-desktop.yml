@@ -1,0 +1,52 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Windows Desktop Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Workspace Dependencies
+        run: |
+          npm --prefix backend ci
+          npm --prefix desktop ci
+
+      - name: Run Automated Test Suite
+        run: npm test
+
+      - name: Build Desktop Application & Generate Distribution Artifacts
+        run: npm run desktop:build
+
+      - name: Create GitHub Release and Upload Artifacts
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: HyperStream ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            desktop/dist/Hyperstream-Windows-x64.zip
+            desktop/dist/Hyperstream-Windows-x64.zip.sha256
+            desktop/dist/latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

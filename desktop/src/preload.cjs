@@ -6,8 +6,9 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   platform: process.platform,
   wgcEnabled: true,
 
-  // Versão do aplicativo
+  // Versão e metadados do aplicativo
   getVersion: () => ipcRenderer.invoke('desktop:get-version'),
+  getVersionInfo: () => ipcRenderer.invoke('desktop:get-version-info'),
 
   // Captura de fontes nativas (janelas de jogos ou telas inteiras com thumbnails)
   getSources: (opts) => ipcRenderer.invoke('desktop:get-sources', opts),
@@ -52,7 +53,11 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   openExternal: (url) => ipcRenderer.invoke('desktop:open-external', url),
 
   // Diagnóstico de aceleração por hardware GPU e recursos do sistema
-  getGpuDiagnostics: () => ipcRenderer.invoke('desktop:get-gpu-diagnostics')
+  getGpuDiagnostics: () => ipcRenderer.invoke('desktop:get-gpu-diagnostics'),
+
+  // Preferências persistentes do usuário e dados de sessão
+  getPreferences: () => ipcRenderer.invoke('desktop:get-preferences'),
+  savePreferences: (prefs) => ipcRenderer.invoke('desktop:save-preferences', prefs)
 });
 
 console.log('[Desktop Preload] desktopAPI estendida com suporte a atualizações e controle de áudio.');

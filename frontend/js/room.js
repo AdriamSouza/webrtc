@@ -230,6 +230,9 @@ export class RoomState {
         timestamp: Date.now()
       };
       localStorage.setItem('hyperstream_last_room', JSON.stringify(data));
+      if (typeof window !== 'undefined' && window.desktopAPI && typeof window.desktopAPI.savePreferences === 'function') {
+        window.desktopAPI.savePreferences({ lastRoom: data });
+      }
     } catch (_) {}
   }
 
@@ -246,6 +249,9 @@ export class RoomState {
   static clearLastRoom() {
     try {
       localStorage.removeItem('hyperstream_last_room');
+      if (typeof window !== 'undefined' && window.desktopAPI && typeof window.desktopAPI.savePreferences === 'function') {
+        window.desktopAPI.savePreferences({ lastRoom: null });
+      }
     } catch (_) {}
   }
 }

@@ -1730,9 +1730,14 @@ function updateLastRoomCardUI() {
   if (!lastRoomCard) return;
 
   const last = RoomState.getLastRoom();
-  if (last && last.roomId && last.username) {
+  const savedUser = (() => {
+    try { return localStorage.getItem('webrtc_username'); } catch (_) { return null; }
+  })();
+  const userToShow = (last && last.username) ? last.username : (savedUser || 'Usuário');
+
+  if (last && last.roomId) {
     if (lastRoomIdDisplay) lastRoomIdDisplay.textContent = last.roomId;
-    if (lastRoomUserDisplay) lastRoomUserDisplay.textContent = last.username;
+    if (lastRoomUserDisplay) lastRoomUserDisplay.textContent = userToShow;
     lastRoomCard.classList.remove('hidden');
   } else {
     lastRoomCard.classList.add('hidden');
@@ -1966,7 +1971,8 @@ function init() {
     createRoomIdInput.value = 'stream-' + Math.random().toString(36).substring(2, 7);
   }
 
-  // Se o usuário abriu um link de convite (com ?room=...)
+  // Preenche automaticamente o campo de entrar com a última sala salva caso não haja sala na URL
+  const last = RoomState.getLastRoom();
   if (roomFromUrl) {
     switchLobbyTab('join');
     if (joinRoomIdInput) joinRoomIdInput.value = roomFromUrl.trim().toLowerCase();
@@ -1976,6 +1982,39 @@ function init() {
     } else {
       showLobbyAlert(`Convite recebido para a sala "${roomFromUrl}".`, 'info');
     }
+  } else if (last && last.roomId) {
+    if (joinRoomIdInput && !joinRoomIdInput.value) {
+      joinRoomIdInput.value = last.roomId.toLowerCase();
+    }
+    if (last.roomPin && joinPasswordInput && !joinPasswordInput.value) {
+      joinPasswordInput.value = last.roomPin;
+    }
+  }
+
+  // Sincronização em tempo real do nome de usuário entre as abas e persistência imediata
+  const handleUsernameSync = (val) => {
+    const trimmed = (val || '').trim();
+    if (createUsernameInput && createUsernameInput.value !== val) {
+      createUsernameInput.value = val;
+    }
+    if (joinUsernameInput && joinUsernameInput.value !== val) {
+      joinUsernameInput.value = val;
+    }
+    if (trimmed) {
+      try { localStorage.setItem('webrtc_username', trimmed); } catch (_) {}
+      if (window.desktopAPI && typeof window.desktopAPI.savePreferences === 'function') {
+        window.desktopAPI.savePreferences({ username: trimmed });
+      }
+    }
+  };
+
+  if (createUsernameInput) {
+    createUsernameInput.addEventListener('input', (e) => handleUsernameSync(e.target.value));
+    createUsernameInput.addEventListener('change', (e) => handleUsernameSync(e.target.value));
+  }
+  if (joinUsernameInput) {
+    joinUsernameInput.addEventListener('input', (e) => handleUsernameSync(e.target.value));
+    joinUsernameInput.addEventListener('change', (e) => handleUsernameSync(e.target.value));
   }
 
   setupEventListeners();
@@ -1993,6 +2032,27 @@ function init() {
     const lobbyDownloadApp = document.getElementById('lobbyDownloadApp');
     if (lobbyDownloadApp) {
       lobbyDownloadApp.classList.add('hidden');
+    }
+
+    if (typeof window.desktopAPI.getPreferences === 'function') {
+      window.desktopAPI.getPreferences().then(prefs => {
+        if (!prefs) return;
+        if (prefs.username && (!savedUsername || createUsernameInput?.value?.startsWith('User_'))) {
+          try { localStorage.setItem('webrtc_username', prefs.username); } catch (_) {}
+          if (createUsernameInput) createUsernameInput.value = prefs.username;
+          if (joinUsernameInput) joinUsernameInput.value = prefs.username;
+        }
+        if (prefs.lastRoom && !RoomState.getLastRoom()) {
+          RoomState.saveLastRoom(prefs.lastRoom.roomId, prefs.lastRoom.username || prefs.username, prefs.lastRoom.roomPin);
+          if (joinRoomIdInput && !joinRoomIdInput.value && !roomFromUrl) {
+            joinRoomIdInput.value = prefs.lastRoom.roomId.toLowerCase();
+          }
+          if (prefs.lastRoom.roomPin && joinPasswordInput && !joinPasswordInput.value && !roomFromUrl) {
+            joinPasswordInput.value = prefs.lastRoom.roomPin;
+          }
+          updateLastRoomCardUI();
+        }
+      }).catch(err => console.warn('[App] Erro ao carregar preferências do desktop:', err));
     }
   }
 
@@ -2030,6 +2090,19 @@ async function enterRoom({ roomId, username, isHost, password, submitBtn }) {
   try {
     localStorage.setItem('webrtc_username', cleanUsername);
   } catch (_) {}
+  RoomState.saveLastRoom(sanitizedRoom, cleanUsername, cleanPassword);
+  if (window.desktopAPI && typeof window.desktopAPI.savePreferences === 'function') {
+    window.desktopAPI.savePreferences({
+      username: cleanUsername,
+      lastRoom: {
+        roomId: sanitizedRoom.toUpperCase(),
+        username: cleanUsername,
+        roomPin: cleanPassword,
+        timestamp: Date.now()
+      }
+    });
+  }
+  updateLastRoomCardUI();
 
   isConnecting = true;
   const originalBtnText = submitBtn.textContent;
@@ -2116,11 +2189,16 @@ function setupEventListeners() {
   if (btnRejoinLastRoom) {
     btnRejoinLastRoom.addEventListener('click', () => {
       const last = RoomState.getLastRoom();
-      if (last && last.roomId && last.username) {
-        console.log(`[App] Reingressando na última sala: ${last.roomId} como ${last.username}`);
+      const currentSavedUser = (() => {
+        try { return localStorage.getItem('webrtc_username'); } catch (_) { return null; }
+      })();
+      const userToUse = (last && last.username) || currentSavedUser || (createUsernameInput ? createUsernameInput.value : '') || ('User_' + Math.floor(Math.random() * 900 + 100));
+
+      if (last && last.roomId) {
+        console.log(`[App] Reingressando na última sala: ${last.roomId} como ${userToUse}`);
         enterRoom({
           roomId: last.roomId,
-          username: last.username,
+          username: userToUse,
           isHost: false,
           password: last.roomPin,
           submitBtn: btnRejoinLastRoom
@@ -3580,6 +3658,13 @@ function leaveCurrentRoom() {
     hideReconnectBanner();
     closeDiagnosticsModal();
     updateLastRoomCardUI();
+    const last = RoomState.getLastRoom();
+    if (last && last.roomId && joinRoomIdInput && !joinRoomIdInput.value) {
+      joinRoomIdInput.value = last.roomId.toLowerCase();
+    }
+    if (last && last.roomPin && joinPasswordInput && !joinPasswordInput.value) {
+      joinPasswordInput.value = last.roomPin;
+    }
     // Garante sem exceção a transição visual para o Lobby
     if (roomScreen) roomScreen.classList.remove('active');
     if (lobbyScreen) lobbyScreen.classList.add('active');
@@ -3999,18 +4084,109 @@ function setupSettingsModal() {
     }
   }
 
-  // Versão Instalada
-  function checkAppVersion() {
+  // Versão Instalada e Matriz de Compatibilidade em Tempo Real
+  async function checkAppVersion() {
     const versionDisplay = document.getElementById('currentAppVersionDisplay');
+    const matrixDesktopVal = document.getElementById('matrixDesktopVal');
+    const matrixDesktopCommit = document.getElementById('matrixDesktopCommit');
+    const matrixFrontendVal = document.getElementById('matrixFrontendVal');
+    const matrixFrontendSub = document.getElementById('matrixFrontendSub');
+    const matrixBackendVal = document.getElementById('matrixBackendVal');
+    const matrixBackendSub = document.getElementById('matrixBackendSub');
+    const matrixCompatVal = document.getElementById('matrixCompatVal');
+    const matrixCompatSub = document.getElementById('matrixCompatSub');
+    const matrixCompatCard = document.getElementById('matrixCompatCard');
+
+    let clientVer = '1.3.3';
+    let clientCommit = 'a186ed0';
+    let clientProto = 2;
+
+    // 1. Identificação do Desktop
+    if (window.desktopAPI) {
+      if (typeof window.desktopAPI.getVersionInfo === 'function') {
+        try {
+          const info = await window.desktopAPI.getVersionInfo();
+          if (info) {
+            clientVer = info.version || clientVer;
+            clientCommit = info.gitCommit || clientCommit;
+            clientProto = info.protocolVersion || clientProto;
+            if (matrixDesktopVal) matrixDesktopVal.textContent = `v${clientVer}`;
+            if (matrixDesktopCommit) matrixDesktopCommit.textContent = `Commit: ${clientCommit.slice(0, 7)}`;
+          }
+        } catch (_) {}
+      } else if (typeof window.desktopAPI.getVersion === 'function') {
+        try {
+          const v = await window.desktopAPI.getVersion();
+          if (v) {
+            clientVer = v;
+            if (matrixDesktopVal) matrixDesktopVal.textContent = `v${v}`;
+          }
+        } catch (_) {}
+      }
+    } else {
+      if (matrixDesktopVal) matrixDesktopVal.textContent = 'Navegador Web';
+      if (matrixDesktopCommit) matrixDesktopCommit.textContent = 'Modo Remoto';
+    }
+
     if (versionDisplay) {
-      if (window.desktopAPI && window.desktopAPI.getVersion) {
-        window.desktopAPI.getVersion().then(ver => {
-          versionDisplay.textContent = ver ? `v${ver}` : 'v1.0.1';
-        }).catch(() => {
-          versionDisplay.textContent = 'v1.0.1 (Desktop)';
-        });
+      versionDisplay.textContent = window.desktopAPI ? `v${clientVer}` : 'Versão Web (Navegador)';
+    }
+
+    // 2. Identificação do Frontend Embutido
+    if (matrixFrontendVal) matrixFrontendVal.textContent = `v${clientVer}`;
+    if (matrixFrontendSub) matrixFrontendSub.textContent = `Protocolo v${clientProto}`;
+
+    // 3. Consulta ao Backend (Render ou Localhost) para verificar versão e compatibilidade
+    let serverBaseUrl = '';
+    if (window.desktopAPI && typeof window.desktopAPI.getServerUrl === 'function') {
+      try { serverBaseUrl = await window.desktopAPI.getServerUrl(); } catch (_) {}
+    }
+    if (!serverBaseUrl || serverBaseUrl.startsWith('data:')) {
+      serverBaseUrl = window.location.origin;
+    }
+
+    try {
+      const resp = await fetch(`${serverBaseUrl.replace(/\/$/, '')}/api/version`, { cache: 'no-store' });
+      if (resp.ok) {
+        const serverMeta = await resp.json();
+        const sVer = serverMeta.version || '1.3.3';
+        const sCommit = serverMeta.gitCommit || 'online';
+        const sProto = serverMeta.protocolVersion || 2;
+        const minClientProto = serverMeta.minClientProtocolVersion || 1;
+
+        if (matrixBackendVal) matrixBackendVal.textContent = `v${sVer}`;
+        if (matrixBackendSub) matrixBackendSub.textContent = `Commit: ${sCommit.slice(0, 7)} | Proto v${sProto}`;
+
+        // Política de Compatibilidade
+        if (clientProto < minClientProto) {
+          if (matrixCompatVal) matrixCompatVal.textContent = 'Incompatível';
+          if (matrixCompatSub) matrixCompatSub.textContent = `Exige protocolo v${minClientProto}`;
+          if (matrixCompatCard) {
+            matrixCompatCard.className = 'version-matrix-card compat-danger';
+          }
+        } else if (isNewerVersion(clientVer, sVer)) {
+          if (matrixCompatVal) matrixCompatVal.textContent = 'Atualização Disp.';
+          if (matrixCompatSub) matrixCompatSub.textContent = `Servidor na v${sVer}`;
+          if (matrixCompatCard) {
+            matrixCompatCard.className = 'version-matrix-card compat-warning';
+          }
+        } else {
+          if (matrixCompatVal) matrixCompatVal.textContent = '100% Compatível';
+          if (matrixCompatSub) matrixCompatSub.textContent = `Protocolo v${clientProto} Sincronizado`;
+          if (matrixCompatCard) {
+            matrixCompatCard.className = 'version-matrix-card compat-ok';
+          }
+        }
       } else {
-        versionDisplay.textContent = 'Versão Web (Navegador)';
+        throw new Error(`HTTP ${resp.status}`);
+      }
+    } catch (e) {
+      if (matrixBackendVal) matrixBackendVal.textContent = 'Offline';
+      if (matrixBackendSub) matrixBackendSub.textContent = 'Servidor Inacessível';
+      if (matrixCompatVal) matrixCompatVal.textContent = 'Indisponível';
+      if (matrixCompatSub) matrixCompatSub.textContent = 'Não foi possível contatar';
+      if (matrixCompatCard) {
+        matrixCompatCard.className = 'version-matrix-card compat-warning';
       }
     }
   }

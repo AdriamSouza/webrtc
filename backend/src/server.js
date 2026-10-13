@@ -4,6 +4,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { config } from './config/config.js';
 import { roomManager } from './rooms/roomManager.js';
@@ -21,11 +22,73 @@ app.use(express.json());
 const frontendPath = path.resolve(__dirname, '../../frontend');
 app.use(express.static(frontendPath));
 
-// Endpoints REST de Apoio e Diagnóstico
+// Metadados de versão e protocolo para compatibilidade entre Desktop, Web e Render
+const versionFilePath = path.resolve(__dirname, 'version.json');
+let versionMetadata = {
+  version: '1.3.3',
+  protocolVersion: 2,
+  minClientProtocolVersion: 2,
+  gitCommit: 'a186ed0',
+  buildDate: new Date().toISOString()
+};
+
+try {
+  if (fs.existsSync(versionFilePath)) {
+    versionMetadata = { ...versionMetadata, ...JSON.parse(fs.readFileSync(versionFilePath, 'utf8')) };
+  } else {
+    const rootPkgPath = path.resolve(__dirname, '../../package.json');
+    if (fs.existsSync(rootPkgPath)) {
+      const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8'));
+      if (rootPkg.version) versionMetadata.version = rootPkg.version;
+    }
+  }
+} catch (e) {
+  console.warn('[Server] Aviso ao ler version.json:', e.message);
+}
+
+// Resolução dinâmica de commit real em produção (Render) ou ambiente Git local
+function resolveBackendGitCommit() {
+  if (process.env.RENDER_GIT_COMMIT) {
+    return process.env.RENDER_GIT_COMMIT.substring(0, 7);
+  }
+  if (process.env.GIT_COMMIT) {
+    return process.env.GIT_COMMIT.substring(0, 7);
+  }
+  try {
+    const gitHead = execSync('git rev-parse --short HEAD', {
+      cwd: path.resolve(__dirname, '../..'),
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 1000
+    }).toString().trim();
+    if (gitHead) return gitHead;
+  } catch (_) {}
+  return versionMetadata.gitCommit || 'unknown';
+}
+
+// Endpoints REST de Apoio, Diagnóstico e Compatibilidade
+app.get('/api/version', (req, res) => {
+  const currentCommit = resolveBackendGitCommit();
+  res.json({
+    service: 'hyperstream-backend',
+    ...versionMetadata,
+    gitCommit: currentCommit,
+    environment: process.env.NODE_ENV || 'development',
+    deploymentPlatform: process.env.RENDER ? 'Render Cloud' : 'Self-Hosted/Local',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/api/health', (req, res) => {
+  const currentCommit = resolveBackendGitCommit();
   res.json({
     status: 'online',
     https: isHttps,
+    version: versionMetadata.version,
+    protocolVersion: versionMetadata.protocolVersion,
+    minClientProtocolVersion: versionMetadata.minClientProtocolVersion,
+    gitCommit: currentCommit,
+    environment: process.env.NODE_ENV || 'development',
+    deploymentPlatform: process.env.RENDER ? 'Render Cloud' : 'Self-Hosted/Local',
     activeRooms: roomManager.getTotalRooms(),
     connectedUsers: roomManager.getTotalUsers(),
     timestamp: new Date().toISOString()

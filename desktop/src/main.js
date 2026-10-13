@@ -7,6 +7,12 @@ import { spawn, exec, execSync, execFile, execFileSync } from 'node:child_proces
 import util from 'node:util';
 import { fileURLToPath } from 'node:url';
 import loopbackModule from 'loopback-capture';
+import {
+  isNewerVersion,
+  extractExpectedSha256,
+  verifyPackageIntegrity,
+  generatePowerShellUpdaterScript
+} from './updaterCore.js';
 
 const LoopbackCapture = loopbackModule.LoopbackCapture || loopbackModule.default?.LoopbackCapture;
 
@@ -40,27 +46,39 @@ app.on('certificate-error', (event, webContents, url, error, certificate, callba
   callback(true);
 });
 
-// Arquivo de configuração persistente para guardar a URL do servidor (Localhost ou Render)
+// Arquivo de configuração persistente para guardar configurações do app e preferências do usuário
 const configFilePath = path.join(app.getPath('userData'), 'hyperstream-config.json');
 
-function loadSavedServerUrl() {
+function loadDesktopConfig() {
   try {
     if (fs.existsSync(configFilePath)) {
-      const data = JSON.parse(fs.readFileSync(configFilePath, 'utf8'));
-      if (data && data.serverUrl) return data.serverUrl;
+      return JSON.parse(fs.readFileSync(configFilePath, 'utf8')) || {};
     }
   } catch (e) {
     console.warn('[Desktop Main] Erro ao ler hyperstream-config.json:', e.message);
   }
-  return null;
+  return {};
+}
+
+function saveDesktopConfig(partial) {
+  try {
+    const current = loadDesktopConfig();
+    const updated = { ...current, ...partial };
+    fs.writeFileSync(configFilePath, JSON.stringify(updated, null, 2), 'utf8');
+    return updated;
+  } catch (e) {
+    console.warn('[Desktop Main] Erro ao salvar hyperstream-config.json:', e.message);
+    return null;
+  }
+}
+
+function loadSavedServerUrl() {
+  const conf = loadDesktopConfig();
+  return conf.serverUrl || null;
 }
 
 function saveServerUrl(url) {
-  try {
-    fs.writeFileSync(configFilePath, JSON.stringify({ serverUrl: url }, null, 2), 'utf8');
-  } catch (e) {
-    console.warn('[Desktop Main] Erro ao salvar hyperstream-config.json:', e.message);
-  }
+  saveDesktopConfig({ serverUrl: url });
 }
 
 let mainWindow = null;
@@ -150,17 +168,33 @@ function startLocalFrontendServer() {
       }
     });
 
-    server.listen(0, '127.0.0.1', () => {
-      localFrontendPort = server.address().port;
-      localFrontendServer = server;
-      console.log(`[Desktop Main] Servidor local embutido iniciado em http://127.0.0.1:${localFrontendPort} (servindo ${frontendDir})`);
-      resolve(`http://127.0.0.1:${localFrontendPort}`);
+    const PREFERRED_PORT = 38385;
+
+    const startListening = (portToTry) => {
+      server.listen(portToTry, '127.0.0.1', () => {
+        localFrontendPort = server.address().port;
+        localFrontendServer = server;
+        console.log(`[Desktop Main] Servidor local embutido iniciado em http://127.0.0.1:${localFrontendPort} (servindo ${frontendDir})`);
+        resolve(`http://127.0.0.1:${localFrontendPort}`);
+      });
+    };
+
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`[Desktop Main] Porta fixa ${PREFERRED_PORT} ocupada, utilizando porta dinâmica alternativa...`);
+        server.listen(0, '127.0.0.1', () => {
+          localFrontendPort = server.address().port;
+          localFrontendServer = server;
+          console.log(`[Desktop Main] Servidor local embutido iniciado em http://127.0.0.1:${localFrontendPort} (servindo ${frontendDir})`);
+          resolve(`http://127.0.0.1:${localFrontendPort}`);
+        });
+      } else {
+        console.warn('[Desktop Main] Falha ao iniciar servidor local embutido:', err.message);
+        resolve(null);
+      }
     });
 
-    server.on('error', (err) => {
-      console.warn('[Desktop Main] Falha ao iniciar servidor local embutido:', err.message);
-      resolve(null);
-    });
+    startListening(PREFERRED_PORT);
   });
 }
 
@@ -367,6 +401,18 @@ ipcMain.handle('desktop:set-server-url', async (event, newUrl) => {
     return true;
   }
   return false;
+});
+
+// IPC: Obter / Salvar preferências do usuário (Nome, última sala, etc.)
+ipcMain.handle('desktop:get-preferences', () => {
+  return loadDesktopConfig();
+});
+
+ipcMain.handle('desktop:save-preferences', (event, prefs) => {
+  if (prefs && typeof prefs === 'object') {
+    return saveDesktopConfig(prefs);
+  }
+  return null;
 });
 
 // IPC: Recarregar aplicação
@@ -889,17 +935,19 @@ ipcMain.handle('desktop:stop-loopback-capture', async () => {
 function fetchJson(url) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+    const client = u.protocol === 'http:' ? http : https;
     const opts = {
       hostname: u.hostname,
+      port: u.port || (u.protocol === 'http:' ? 80 : 443),
       path: u.pathname + u.search,
       headers: {
         'User-Agent': 'Hyperstream-Desktop-App',
-        'Accept': 'application/vnd.github.v3+json'
+        'Accept': 'application/vnd.github.v3+json, application/json, */*'
       }
     };
-    https.get(opts, (res) => {
+    client.get(opts, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return resolve(fetchJson(res.headers.location));
+        return resolve(fetchJson(new URL(res.headers.location, url).href));
       }
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
@@ -917,65 +965,156 @@ function fetchJson(url) {
   });
 }
 
-function isNewerVersion(current, latest) {
-  const parseVer = (v) => v.replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
-  const c = parseVer(current);
-  const l = parseVer(latest);
-  for (let i = 0; i < 3; i++) {
-    const cv = c[i] || 0;
-    const lv = l[i] || 0;
-    if (lv > cv) return true;
-    if (lv < cv) return false;
-  }
-  return false;
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const client = u.protocol === 'http:' ? http : https;
+    const opts = {
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'http:' ? 80 : 443),
+      path: u.pathname + u.search,
+      headers: {
+        'User-Agent': 'Hyperstream-Desktop-App',
+        'Accept': 'text/plain, */*'
+      }
+    };
+    client.get(opts, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return resolve(fetchText(new URL(res.headers.location, url).href));
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+      }
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
 }
 
 function downloadFile(url, destPath, onProgress) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
-    const handleResponse = (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return https.get(res.headers.location, handleResponse).on('error', reject);
-      }
-      if (res.statusCode !== 200) {
-        file.close();
-        fs.unlink(destPath, () => {});
-        return reject(new Error(`Falha no download: HTTP ${res.statusCode}`));
-      }
-      const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
-      let downloadedBytes = 0;
+    let redirectsCount = 0;
+    const maxRedirects = 6;
 
-      res.on('data', chunk => {
-        downloadedBytes += chunk.length;
-        if (onProgress && totalBytes > 0) {
-          const percent = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
-          onProgress({ percent, downloaded: downloadedBytes, total: totalBytes });
+    const doDownload = (targetUrl) => {
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(targetUrl);
+      } catch (err) {
+        return reject(new Error(`URL inválida para download: ${targetUrl}`));
+      }
+
+      const client = parsedUrl.protocol === 'http:' ? http : https;
+      const req = client.get(targetUrl, {
+        headers: {
+          'User-Agent': 'Hyperstream-Desktop-App',
+          'Accept': 'application/octet-stream, */*'
         }
+      }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          redirectsCount++;
+          if (redirectsCount > maxRedirects) {
+            return reject(new Error('Muitos redirecionamentos durante o download da atualização.'));
+          }
+          const nextUrl = new URL(res.headers.location, targetUrl).href;
+          res.resume();
+          return doDownload(nextUrl);
+        }
+
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`Falha no download da atualização: HTTP ${res.statusCode} ${res.statusMessage || ''}`));
+        }
+
+        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+        let downloadedBytes = 0;
+        const fileStream = fs.createWriteStream(destPath);
+
+        res.on('data', chunk => {
+          downloadedBytes += chunk.length;
+          if (onProgress && totalBytes > 0) {
+            const percent = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
+            onProgress({ percent, downloaded: downloadedBytes, total: totalBytes, status: 'downloading' });
+          }
+        });
+
+        res.on('error', (err) => {
+          fileStream.destroy();
+          fs.unlink(destPath, () => {});
+          reject(err);
+        });
+
+        fileStream.on('error', (err) => {
+          fileStream.destroy();
+          fs.unlink(destPath, () => {});
+          reject(err);
+        });
+
+        fileStream.on('finish', () => {
+          fileStream.close(() => resolve());
+        });
+
+        res.pipe(fileStream);
       });
 
-      res.pipe(file);
-      file.on('finish', () => {
-        file.close(() => resolve());
+      req.on('error', (err) => {
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
+
+      req.setTimeout(60000, () => {
+        req.destroy();
+        fs.unlink(destPath, () => {});
+        reject(new Error('Tempo limite de download esgotado (60s).'));
       });
     };
 
-    https.get(url, { headers: { 'User-Agent': 'Hyperstream-Desktop-App' } }, handleResponse).on('error', (err) => {
-      file.close();
-      fs.unlink(destPath, () => {});
-      reject(err);
-    });
+    doDownload(url);
   });
 }
+
+// IPC: Obter informações detalhadas de versão e metadados de build do Desktop
+ipcMain.handle('desktop:get-version-info', () => {
+  let meta = {
+    version: app.getVersion(),
+    protocolVersion: 2,
+    minClientProtocolVersion: 2,
+    gitCommit: 'a186ed0',
+    buildDate: new Date().toISOString()
+  };
+  try {
+    const vPath = path.resolve(__dirname, '../version.json');
+    if (fs.existsSync(vPath)) {
+      meta = { ...meta, ...JSON.parse(fs.readFileSync(vPath, 'utf8')) };
+    }
+  } catch (_) {}
+
+  // Em modo de desenvolvimento, tenta inspecionar commit ativo do git
+  if (!app.isPackaged) {
+    try {
+      meta.gitCommit = execSync('git rev-parse --short HEAD', { cwd: path.resolve(__dirname, '../..') }).toString().trim();
+    } catch (_) {}
+  }
+
+  return {
+    ...meta,
+    electronVersion: process.versions.electron,
+    chromeVersion: process.versions.chrome,
+    isPackaged: app.isPackaged
+  };
+});
 
 // IPC: Verificar se há nova versão no GitHub Releases
 ipcMain.handle('desktop:check-for-updates', async () => {
   try {
     const currentVersion = app.getVersion();
-    const release = await fetchJson('https://api.github.com/repos/AdriamSouza/webrtc/releases/latest');
+    const repo = process.env.HYPERSTREAM_GITHUB_REPO || 'AdriamSouza/webrtc';
+    const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`);
     const latestTag = release.tag_name || release.name || '';
     const latestVersion = latestTag.replace(/^v/i, '');
     const hasUpdate = isNewerVersion(currentVersion, latestVersion);
-    const asset = (release.assets || []).find(a => a.name.endsWith('.zip'));
+    const asset = (release.assets || []).find(a => a.name && a.name.endsWith('.zip'));
 
     return {
       success: true,
@@ -994,20 +1133,52 @@ ipcMain.handle('desktop:check-for-updates', async () => {
   }
 });
 
-// IPC: Baixar e aplicar atualização sem necessidade de download manual
+// IPC: Baixar e aplicar atualização de forma 100% autônoma, validada por SHA-256 e com rollback
 ipcMain.handle('desktop:download-and-install-update', async () => {
   try {
-    const release = await fetchJson('https://api.github.com/repos/AdriamSouza/webrtc/releases/latest');
-    const asset = (release.assets || []).find(a => a.name.endsWith('.zip'));
+    const repo = process.env.HYPERSTREAM_GITHUB_REPO || 'AdriamSouza/webrtc';
+    const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`);
+    const asset = (release.assets || []).find(a => a.name && a.name.endsWith('.zip'));
     if (!asset) {
-      throw new Error('Nenhum pacote zip de atualização encontrado na release.');
+      throw new Error('Nenhum pacote zip de atualização encontrado na release do GitHub.');
     }
+
+    // 1. Localiza metadados confiáveis de SHA-256 (latest.json, .sha256 ou digest do asset)
+    let latestJson = null;
+    let sha256Text = null;
+
+    const latestJsonAsset = (release.assets || []).find(a => a.name === 'latest.json');
+    if (latestJsonAsset && latestJsonAsset.browser_download_url) {
+      try {
+        console.log('[Desktop Updater] Baixando manifesto latest.json para verificação de integridade...');
+        latestJson = await fetchJson(latestJsonAsset.browser_download_url);
+      } catch (err) {
+        console.warn('[Desktop Updater] Não foi possível obter latest.json:', err.message);
+      }
+    }
+
+    const sha256Asset = (release.assets || []).find(a => a.name && a.name.endsWith('.sha256'));
+    if (sha256Asset && sha256Asset.browser_download_url) {
+      try {
+        console.log('[Desktop Updater] Baixando checksum .sha256 para verificação de integridade...');
+        sha256Text = await fetchText(sha256Asset.browser_download_url);
+      } catch (err) {
+        console.warn('[Desktop Updater] Não foi possível obter arquivo .sha256:', err.message);
+      }
+    }
+
+    const expectedSha256 = extractExpectedSha256({ release, latestJson, sha256Text });
+    console.log('[Desktop Updater] Hash SHA-256 esperado:', expectedSha256 || '(nenhum encontrado nos assets)');
 
     const tempDir = app.getPath('temp');
     const updateId = Date.now();
     const zipPath = path.join(tempDir, `hyperstream-update-${updateId}.zip`);
     const extractDir = path.join(tempDir, `hyperstream-update-${updateId}`);
+    const backupDir = path.join(tempDir, `hyperstream-backup-${updateId}`);
+    const psScriptPath = path.join(tempDir, `apply_hyperstream_update_${updateId}.ps1`);
+    const logPath = path.join(tempDir, 'hyperstream-updater.log');
 
+    // 2. Download seguro do pacote com monitoramento de progresso
     console.log('[Desktop Updater] Baixando atualização de:', asset.browser_download_url);
     await downloadFile(asset.browser_download_url, zipPath, (progress) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1015,98 +1186,111 @@ ipcMain.handle('desktop:download-and-install-update', async () => {
       }
     });
 
-    console.log('[Desktop Updater] Download concluído. Descompactando...');
+    // 3. Validação estrita de integridade via SHA-256
+    console.log('[Desktop Updater] Validando integridade do pacote baixado via SHA-256...');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('desktop:update-progress', { percent: 100, status: 'verifying' });
+    }
+
+    try {
+      const integrityResult = await verifyPackageIntegrity(zipPath, expectedSha256, {
+        allowMissing: false // Não permite instalar se hash não puder ser validado
+      });
+      console.log('[Desktop Updater] Integridade confirmada com sucesso! SHA256:', integrityResult.actualSha256);
+    } catch (integrityErr) {
+      // Limpa arquivo baixado corrompido ou adulterado
+      try { fs.unlinkSync(zipPath); } catch (_) {}
+      console.error('[Desktop Updater] Falha na validação de integridade:', integrityErr.message);
+      throw integrityErr;
+    }
+
+    // 4. Descompactação do pacote em diretório temporário isolado
+    console.log('[Desktop Updater] Descompactando arquivos...');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('desktop:update-progress', { percent: 100, status: 'extracting' });
     }
 
-    // Cria diretório temporário exclusivo para esta tentativa de update (evita colisões e erros de ENOTEMPTY)
     fs.mkdirSync(extractDir, { recursive: true });
 
-    // Tenta limpar diretórios de updates antigos de forma tolerante a falhas (não bloqueante)
-    try {
-      const oldStatic = path.join(tempDir, 'hyperstream-update-extracted');
-      if (fs.existsSync(oldStatic)) {
-        fs.rmSync(oldStatic, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
-      }
-    } catch (_) {}
-
-    // Extrai usando PowerShell Expand-Archive nativo do Windows
     await new Promise((resolve, reject) => {
-      const cmd = `powershell.exe -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force"`;
-      exec(cmd, (err) => {
-        if (err) return reject(err);
+      const cmd = `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force"`;
+      exec(cmd, { windowsHide: true }, (err) => {
+        if (err) return reject(new Error(`Falha ao descompactar atualização: ${err.message}`));
         resolve();
       });
     });
 
-    console.log('[Desktop Updater] Arquivos descompactados. Preparando reinicialização...');
+    console.log('[Desktop Updater] Arquivos descompactados. Localizando executável Hyperstream.exe...');
 
-    // Localiza a pasta contendo Hyperstream.exe descompactada
-    let sourceFolder = extractDir;
-    const subfolders = fs.readdirSync(extractDir, { withFileTypes: true }).filter(d => d.isDirectory());
-    for (const sub of subfolders) {
-      if (fs.existsSync(path.join(extractDir, sub.name, 'Hyperstream.exe'))) {
-        sourceFolder = path.join(extractDir, sub.name);
-        break;
+    const findExeInDir = (dir) => {
+      if (fs.existsSync(path.join(dir, 'Hyperstream.exe'))) return dir;
+      const subs = fs.readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory());
+      for (const s of subs) {
+        const found = findExeInDir(path.join(dir, s.name));
+        if (found) return found;
       }
-    }
+      return null;
+    };
 
-    const currentAppDir = path.dirname(process.execPath);
+    const foundSourceDir = findExeInDir(extractDir);
+    if (!foundSourceDir) {
+      throw new Error('Executável Hyperstream.exe não foi localizado dentro do pacote de atualização descompactado.');
+    }
+    const sourceFolder = foundSourceDir;
+
+    const currentExePath = process.execPath;
+    const currentAppDir = path.dirname(currentExePath);
     const isPackaged = app.isPackaged;
 
     if (!isPackaged) {
+      try {
+        fs.unlinkSync(zipPath);
+        fs.rmSync(extractDir, { recursive: true, force: true });
+      } catch (_) {}
       return {
         success: true,
         devMode: true,
-        message: 'Atualização baixada com sucesso! Em modo de desenvolvimento, os arquivos do executável não são substituídos automaticamente.'
+        message: 'Atualização baixada e validada com sucesso! Em modo de desenvolvimento, os arquivos do executável não são substituídos automaticamente.'
       };
     }
 
-    // Cria script batch para aguardar encerramento do processo, substituir os binários e reiniciar
-    const batPath = path.join(tempDir, `apply_hyperstream_update_${updateId}.bat`);
-    const batContent = `@echo off
-chcp 65001 > nul
-set "PID=${process.pid}"
-set "TARGET_DIR=${currentAppDir}"
-set "SOURCE_DIR=${sourceFolder}"
-set "EXE_PATH=${path.join(currentAppDir, 'Hyperstream.exe')}"
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('desktop:update-progress', { percent: 100, status: 'installing' });
+    }
 
-:: Aguarda até que o processo do Hyperstream seja totalmente encerrado pelo Windows
-:wait_loop
-tasklist /fi "PID eq %PID%" 2>nul | find "%PID%" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait_loop
-)
+    // 5. Gera script de atualização autônomo com backup prévio e rollback automático
+    const psContent = generatePowerShellUpdaterScript({
+      mainPid: process.pid,
+      targetDir: currentAppDir,
+      sourceDir: sourceFolder,
+      exePath: currentExePath,
+      zipPath,
+      extractDir,
+      logPath,
+      scriptPath: psScriptPath,
+      backupDir
+    });
 
-:: Pausa extra para garantir a liberação total de todos os arquivos (.dll, .asar)
-timeout /t 1 /nobreak >nul
+    fs.writeFileSync(psScriptPath, psContent, 'utf8');
 
-:: Copia todos os arquivos novos com robocopy tolerante a tentativas
-robocopy "%SOURCE_DIR%" "%TARGET_DIR%" /E /IS /IT /NP /R:3 /W:1 >nul
-
-:: Fallback com xcopy caso robocopy retorne erro fatal
-if errorlevel 8 (
-    xcopy /s /y /e /h "%SOURCE_DIR%\\*" "%TARGET_DIR%\\" >nul
-)
-
-:: Inicia o executável atualizado
-start "" "%EXE_PATH%"
-exit
-`;
-    fs.writeFileSync(batPath, batContent, 'utf8');
-
-    // Executa o script desacoplado do processo do Electron e finaliza o app
-    const updaterProcess = spawn('cmd.exe', ['/c', batPath], {
+    console.log('[Desktop Updater] Disparando script de atualização invisível via PowerShell com rollback ativo...');
+    const updaterProcess = spawn('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-WindowStyle', 'Hidden',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', psScriptPath
+    ], {
       detached: true,
-      stdio: 'ignore'
+      stdio: 'ignore',
+      windowsHide: true
     });
     updaterProcess.unref();
 
+    // Encerra a instância antiga do app de forma controlada após breve intervalo
     setTimeout(() => {
-      app.quit();
-    }, 500);
+      app.exit(0);
+    }, 300);
 
     return { success: true, restarting: true };
   } catch (err) {
@@ -1115,7 +1299,7 @@ exit
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Permissões de mídia automáticas para áudio, microfone e captura de tela no Electron
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowed = ['media', 'display-capture', 'audio-capture', 'notifications', 'fullscreen', 'pointerLock'];

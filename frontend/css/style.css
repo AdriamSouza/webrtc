@@ -3399,6 +3399,57 @@ body.dark-theme {
   font-weight: 600;
 }
 
+.version-matrix-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.version-matrix-card {
+  background: #14151e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.version-matrix-card .matrix-card-title {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.version-matrix-card .matrix-card-val {
+  font-size: 0.92rem;
+  color: #f1f5f9;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.version-matrix-card .matrix-card-sub {
+  font-size: 0.72rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.version-matrix-card.compat-ok .matrix-card-val {
+  color: #4ade80;
+}
+
+.version-matrix-card.compat-warning .matrix-card-val {
+  color: #fbbf24;
+}
+
+.version-matrix-card.compat-danger .matrix-card-val {
+  color: #f87171;
+}
+
 .update-status-box {
   background: #161720;
   border: 1px solid rgba(255, 255, 255, 0.12);

@@ -30,28 +30,43 @@ export class SignalingClient {
       return this._pendingConnectPromise;
     }
 
-    this._pendingConnectPromise = new Promise((resolve, reject) => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws`;
+    this._pendingConnectPromise = (async () => {
+      let wsUrl = null;
+      if (window.desktopAPI && typeof window.desktopAPI.getServerUrl === 'function') {
+        try {
+          const sUrl = await window.desktopAPI.getServerUrl();
+          if (sUrl && (sUrl.startsWith('http://') || sUrl.startsWith('https://'))) {
+            const u = new URL(sUrl);
+            const proto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+            wsUrl = `${proto}//${u.host}/ws`;
+          }
+        } catch (_) {}
+      }
+
+      if (!wsUrl) {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        wsUrl = `${protocol}//${host}/ws`;
+      }
 
       console.log(`[SignalingClient] Conectando ao servidor em ${wsUrl}...`);
 
-      let connectionTimeout = setTimeout(() => {
-        if (!this.isConnected) {
-          try { if (this.ws) this.ws.close(); } catch (_) {}
-          this._pendingConnectPromise = null;
-          reject(new Error('Tempo limite de conexão esgotado ao contatar o servidor de sinalização.'));
-        }
-      }, 8000);
+      return new Promise((resolve, reject) => {
+        let connectionTimeout = setTimeout(() => {
+          if (!this.isConnected) {
+            try { if (this.ws) this.ws.close(); } catch (_) {}
+            this._pendingConnectPromise = null;
+            reject(new Error('Tempo limite de conexão esgotado ao contatar o servidor de sinalização.'));
+          }
+        }, 8000);
 
-      try {
-        this.ws = new WebSocket(wsUrl);
-      } catch (e) {
-        clearTimeout(connectionTimeout);
-        this._pendingConnectPromise = null;
-        return reject(e);
-      }
+        try {
+          this.ws = new WebSocket(wsUrl);
+        } catch (e) {
+          clearTimeout(connectionTimeout);
+          this._pendingConnectPromise = null;
+          return reject(e);
+        }
 
       this.ws.onopen = () => {
         clearTimeout(connectionTimeout);
@@ -96,9 +111,10 @@ export class SignalingClient {
         }
       };
     });
+  })();
 
-    return this._pendingConnectPromise;
-  }
+  return this._pendingConnectPromise;
+}
 
   /**
    * Tenta reconectar com intervalo progressivo (backoff exponencial) e jitter aleatório

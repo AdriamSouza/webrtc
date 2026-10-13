@@ -2,7 +2,7 @@
 
 > Plataforma de Transmissão P2P de Alta Performance a 60 FPS via WebRTC Mesh, com Aceleração por Hardware (Windows Graphics Capture - WGC), Mixer Seletivo de Áudio, Suporte Mobile Completo e Privacidade Absoluta (Zero Armazenamento de Dados).
 
-[![Versão](https://img.shields.io/badge/versão-v1.3.1-blue.svg)](https://github.com/AdriamSouza/webrtc/releases)
+[![Versão](https://img.shields.io/badge/versão-v1.3.2-blue.svg)](https://github.com/AdriamSouza/webrtc/releases)
 [![Licença](https://img.shields.io/badge/licença-MIT-green.svg)](LICENSE)
 [![WebRTC](https://img.shields.io/badge/WebRTC-P2P%20Mesh-orange.svg)](https://webrtc.org/)
 [![60 FPS](https://img.shields.io/badge/taxa%20de%20quadros-60%20FPS-purple.svg)]()
@@ -171,24 +171,30 @@ O HyperStream inclui um painel de diagnóstico em tempo real (botão **Telemetri
   - ⚖️ **Equilibrado:** 60 FPS até 3.5 Mbps (ideal para transmissões de jogos pela internet).
   - 🍃 **Econômico:** 30 FPS até 1.8 Mbps (ideal para conexões instáveis ou dados móveis).
 
-## 🔬 Auditoria Técnica, Codecs e Otimizações de CPU (v1.3.1)
+## 🔬 Auditoria Técnica, Telemetria e Servidor Embutido (v1.3.2)
 
-A versão **v1.3.1** consolida melhorias fundamentais desenvolvidas e auditadas em condições de estresse com múltiplos participantes:
+A versão **v1.3.2** consolida melhorias de precisão de telemetria, estabilidade de retransmissão de pacotes e empacotamento desktop:
 
-1. **Streaming Sob Demanda no Mesh P2P:**
-   - Em arquiteturas Mesh puras, transmitir vídeo para múltiplos participantes sem controle consome sessões redundantes de codificação.
-   - O HyperStream agora aplica subscrição sob demanda: apenas espectadores que escolhem assistir ao stream consomem codificação ativa. Para espectadores não inscritos, as trilhas de vídeo locais são substituídas por `replaceTrack(null)`, desligando a sessão do encoder na GPU/CPU.
-2. **Proteção contra Tempestade de Mensagens (Token Bucket):**
-   - O limitador de taxa de mensagens do backend agora implementa o algoritmo de **Token Bucket** com capacidade de rajada de **160 tokens** e reposição contínua de **60/s**.
+1. **Servidor Local Embutido no App Desktop:**
+   - O executável Desktop agora inicializa um servidor HTTP local nativo em porta efêmera com os arquivos do frontend embutidos diretamente no pacote da aplicação.
+   - Detecta automaticamente se há backend local ativo (`localhost:3000`). Caso contrário, carrega a interface local atualizada e conecta a sinalização ao servidor oficial no Render (`https://hyperstream-g9gz.onrender.com`), eliminando discrepâncias com versões em cache na nuvem.
+2. **Taxonomia Estrita de Telemetria e GPU (Sem Métricas Fabricadas):**
+   - O painel de diagnóstico classifica encoders e decoders em 4 estados rigorosos:
+     - ⚡ **Hardware (GPU):** `ExternalEncoder` via D3D11 / MediaFoundation / NVENC / AMF / QSV.
+     - ⚠️ **Software (CPU):** `libaom` (AV1), `OpenH264` (H264), `libvpx` (VP8/VP9) ou `dav1d` (AV1 decode).
+     - ⏸️ **Inativo:** Transmissões não subscritas ou com `replaceTrack(null)`.
+     - ❓ **Inconclusivo:** Quando a engine WebRTC ainda não populou identificadores.
+   - FPS e resolução reportam estritamente o valor medido em `RTCPeerConnection.getStats()` — zero FPS ou resolução estimada quando a trilha está pausada/muda.
+3. **Munging de SDP Seguro (Proteção de Retransmissão RTX):**
+   - A injeção de `x-google-max-bitrate` no SDP agora preserva intactas as linhas de payload RTX (`a=fmtp:XX apt=YY`) e parâmetros de áudio (`minptime=`), evitando corrupção da negociação de retransmissão de pacotes de vídeo.
+4. **Resolução de Codecs e Normalização AV1:**
+   - Negociação de `setCodecPreferences()` com suporte normalizado a `video/av1` e `video/av01`, garantindo priorização real do codec selecionado pelo usuário.
+5. **Streaming Sob Demanda no Mesh P2P:**
+   - Em arquiteturas Mesh puras, apenas espectadores que escolhem assistir ao stream consomem codificação ativa. Para espectadores não inscritos, as trilhas de vídeo locais são substituídas por `replaceTrack(null)`, desligando a sessão do encoder na GPU/CPU.
+6. **Proteção contra Tempestade de Mensagens (Token Bucket):**
+   - O limitador de taxa de mensagens do backend implementa o algoritmo de **Token Bucket** com capacidade de rajada de **160 tokens** e reposição contínua de **60/s**.
    - Candidatos ICE são agrupados em lote com debounce de 35ms no cliente, eliminando mensagens rejeitadas durante o handshake de novos pares.
-3. **Detecção Fidedigna de Hardware e Codecs:**
-   - Codecs suportados (H.264, AV1, VP9, VP8) são reordenados dinamicamente via `setCodecPreferences()` no emissor e no receptor.
-   - O sistema inspeciona as estatísticas reais do WebRTC (`encoderImplementation` e `decoderImplementation`):
-     - Hardware: reporta `GPU ⚡ (ExternalEncoder via D3D11/MediaFoundation)`.
-     - Software: reporta `Software ⚠️ (OpenH264 / libvpx / dav1d)`.
-4. **Painel de Diagnóstico em Tempo Real:**
-   - Botão **Diagnóstico** no cabeçalho da sala abre uma visualização transparente com telemetria direta da GPU do Electron (`desktop:get-gpu-diagnostics`), uso percentual de CPU, memória RAM do processo e métricas de cada trilha (resolução, FPS, bitrate, jitter e perda de pacotes).
-5. **Reconexão Resiliente e Reingresso Seguro:**
+7. **Reconexão Resiliente e Reingresso Seguro:**
    - Reconexão WebSocket com backoff exponencial e jitter pseudo-aleatório (1s a 12s) para evitar sobrecarga sincronizada no servidor.
    - Botão **"Voltar para a última sala"** no Lobby permite reentrar com 1 clique. Por padrão, microfone, webcam e compartilhamento de tela permanecem desligados até que o usuário decida ativá-los.
 

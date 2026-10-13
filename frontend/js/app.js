@@ -11,6 +11,7 @@ const media = new MediaManager();
 const webrtc = new WebRTCManager(signaling);
 webrtc.setMediaManager(media);
 const qualityController = new QualityController();
+qualityController.setWebRTC(webrtc);
 const roomState = new RoomState();
 webrtc.setRoomState(roomState);
 
@@ -1753,8 +1754,8 @@ async function renderDiagnosticsData() {
     try {
       const gpuDiag = await window.desktopAPI.getGpuDiagnostics();
       if (gpuDiag) {
-        if (diagGpuRenderer) diagGpuRenderer.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || 'GPU Dedicada (Desktop)';
-        if (diagGpuDriver) diagGpuDriver.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.driverVersion || 'Nativo Windows';
+        if (diagGpuRenderer) diagGpuRenderer.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || gpuDiag.gpuInfo?.gpuDevice?.[0]?.deviceString || 'GPU Dedicada (Desktop)';
+        if (diagGpuDriver) diagGpuDriver.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.driverVersion || 'Nativo Windows (DirectX/MediaFoundation)';
 
         const videoDecodeStatus = gpuDiag.featureStatus?.video_decode || 'unknown';
         const videoEncodeStatus = gpuDiag.featureStatus?.video_encode || gpuDiag.featureStatus?.accelerated_video_encode || 'unknown';
@@ -1764,7 +1765,7 @@ async function renderDiagnosticsData() {
 
         if (diagGpuDecode) {
           diagGpuDecode.innerHTML = isDecodeHw
-            ? '<span class="diag-badge-hw">Ativa (Hardware ⚡)</span>'
+            ? '<span class="diag-badge-hw">Ativa (MediaFoundation/D3D11 ⚡)</span>'
             : `<span class="diag-badge-sw">${videoDecodeStatus}</span>`;
         }
         if (diagGpuEncode) {
@@ -1775,13 +1776,18 @@ async function renderDiagnosticsData() {
 
         if (diagCpuUsage && gpuDiag.cpuUsagePercent !== undefined) {
           diagCpuUsage.textContent = `${gpuDiag.cpuUsagePercent.toFixed(1)}%`;
+          if (Array.isArray(gpuDiag.processBreakdown) && gpuDiag.processBreakdown.length > 0) {
+            const tip = gpuDiag.processBreakdown.map(p => `${p.name}: ${p.cpuPercent}% CPU (${p.memoryMB} MB)`).join('\n');
+            diagCpuUsage.title = tip;
+            if (diagMemoryUsage) diagMemoryUsage.title = tip;
+          }
         }
         if (diagMemoryUsage && gpuDiag.memoryUsageMB !== undefined) {
-          diagMemoryUsage.textContent = `${gpuDiag.memoryUsageMB.toFixed(0)} MB`;
+          diagMemoryUsage.textContent = `${gpuDiag.memoryUsageMB} MB`;
         }
         if (diagGpuStatusBadge) {
-          diagGpuStatusBadge.textContent = 'Hardware Ativo ⚡';
-          diagGpuStatusBadge.className = 'badge badge-success';
+          diagGpuStatusBadge.textContent = isEncodeHw ? 'Hardware Suportado ⚡' : 'GPU Detectada';
+          diagGpuStatusBadge.className = isEncodeHw ? 'badge badge-success' : 'badge';
         }
       }
     } catch (e) {
@@ -1802,6 +1808,14 @@ async function renderDiagnosticsData() {
       }
       if (diagGpuDecode) diagGpuDecode.textContent = 'Decodificador WebRTC do Navegador';
       if (diagGpuEncode) diagGpuEncode.textContent = 'Codificador WebRTC do Navegador';
+      if (diagCpuUsage) {
+        diagCpuUsage.textContent = 'N/A (Navegador)';
+        diagCpuUsage.title = 'Métricas de CPU do sistema não são expostas pela Sandbox do Navegador';
+      }
+      if (diagMemoryUsage) {
+        const heapMem = (window.performance && performance.memory) ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
+        diagMemoryUsage.textContent = heapMem ? `${heapMem} MB (Heap JS)` : 'N/A (Navegador)';
+      }
       if (diagGpuStatusBadge) {
         diagGpuStatusBadge.textContent = 'Web Runtime';
         diagGpuStatusBadge.className = 'badge';
@@ -1809,29 +1823,68 @@ async function renderDiagnosticsData() {
     } catch (_) {}
   }
 
+  try {
+    await qualityController.collectMetrics();
+  } catch (err) {
+    console.warn('[Diagnostics] Erro ao coletar métricas no QualityController:', err);
+  }
+
   const detailed = qualityController.getDetailedDiagnostics();
   const outboundTbody = document.getElementById('diagOutboundTableBody');
   const inboundTbody = document.getElementById('diagInboundTableBody');
 
+  const outboundStreams = detailed?.outboundStreams || detailed?.outbound || [];
+  const inboundStreams = detailed?.inboundStreams || detailed?.inbound || [];
+  const localCaptures = detailed?.localCaptures || [];
+
   if (outboundTbody) {
-    if (detailed.outboundStreams.length === 0) {
-      outboundTbody.innerHTML = '<tr><td colspan="7" class="diag-empty">Nenhum fluxo de vídeo sendo transmitido no momento.</td></tr>';
+    if (outboundStreams.length === 0) {
+      if (localCaptures.length > 0) {
+        const cap = localCaptures[0];
+        const prefCodec = detailed?.preferredCodec || 'AV1';
+        outboundTbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="diag-empty" style="text-align: left; padding: 14px 16px !important;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span class="diag-badge-hw" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.35);">Captura Local Ativa</span>
+                <strong style="color: #f0f2f5;">${escapeHtml(cap.label)} (${cap.width}x${cap.height} @ ${cap.fps} fps)</strong>
+              </div>
+              <div style="color: #94a3b8; font-size: 0.75rem; line-height: 1.4;">
+                Transmissão local em execução com preferência de codec <strong>${escapeHtml(prefCodec)}</strong>.<br>
+                Codificadores RTP por hardware/software são acionados sob demanda assim que outros participantes ingressarem e assistirem à transmissão.
+              </div>
+            </td>
+          </tr>
+        `;
+      } else {
+        outboundTbody.innerHTML = '<tr><td colspan="7" class="diag-empty">Nenhum fluxo de vídeo sendo transmitido no momento.</td></tr>';
+      }
     } else {
-      outboundTbody.innerHTML = detailed.outboundStreams.map(s => {
-        const isHw = s.isHardware;
-        const targetName = roomState.participants.get(s.targetPeerId)?.name || s.targetPeerId || 'Todos';
-        const implBadge = isHw
-          ? `<span class="diag-badge-hw">GPU ⚡ (${escapeHtml(s.encoderImplementation)})</span>`
-          : `<span class="diag-badge-sw">Software ⚠️ (${escapeHtml(s.encoderImplementation)})</span>`;
+      outboundTbody.innerHTML = outboundStreams.map(s => {
+        const targetName = roomState.participants.get(s.targetUserId || s.targetPeerId)?.name || s.targetPeerName || s.targetUserId || 'Todos';
+        const badgeClass = s.hwBadgeClass || (s.isHardware ? 'diag-badge-hw' : 'diag-badge-sw');
+        const badgeLabel = s.hwLabel || (s.isHardware ? 'GPU Hardware ⚡' : 'Software ⚠️');
+        const rawImpl = s.rawImplementation || s.encoderImplementation || 'Padrão';
+        const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>`;
+
+        const limitDisplay = s.qualityLimitationReason === 'none'
+          ? '<span style="color: #10b981;">Nenhuma</span>'
+          : (s.qualityLimitationReason === 'cpu'
+            ? '<span style="color: #ef4444; font-weight: 600;">CPU</span>'
+            : (s.qualityLimitationReason === 'bandwidth'
+              ? '<span style="color: #f59e0b; font-weight: 600;">Banda / Rede</span>'
+              : `<span style="color: #a1a1aa;">${escapeHtml(s.qualityLimitationReason || 'none')}</span>`));
+        const bitrateStr = s.bitrateMbps ? `${s.bitrateMbps} Mbps` : `${s.bitrateKbps || 0} kbps`;
+        const fpsStr = (s.fps !== undefined && s.fps !== null && s.fps !== '') ? `${s.fps} fps` : '--';
         return `
           <tr>
             <td><strong>${escapeHtml(targetName)}</strong></td>
-            <td>${escapeHtml(s.streamType || 'video')}</td>
-            <td>${escapeHtml(s.codec || '---')}</td>
+            <td>${escapeHtml(s.streamType || 'Tela / Desktop')}</td>
+            <td><strong>${escapeHtml(s.codec || '---')}</strong></td>
             <td>${implBadge}</td>
-            <td>${s.width}x${s.height} @ ${s.fps} fps</td>
-            <td>${s.bitrateKbps} kbps</td>
-            <td>${escapeHtml(s.qualityLimitationReason || 'none')}</td>
+            <td>${s.width}x${s.height} @ ${fpsStr}</td>
+            <td>${bitrateStr}</td>
+            <td>${limitDisplay}</td>
           </tr>
         `;
       }).join('');
@@ -1839,24 +1892,28 @@ async function renderDiagnosticsData() {
   }
 
   if (inboundTbody) {
-    if (detailed.inboundStreams.length === 0) {
+    if (inboundStreams.length === 0) {
       inboundTbody.innerHTML = '<tr><td colspan="7" class="diag-empty">Nenhum fluxo de vídeo remoto recebido no momento.</td></tr>';
     } else {
-      inboundTbody.innerHTML = detailed.inboundStreams.map(s => {
-        const isHw = s.isHardware;
-        const senderName = roomState.participants.get(s.peerId)?.name || s.peerId;
-        const implBadge = isHw
-          ? `<span class="diag-badge-hw">GPU ⚡ (${escapeHtml(s.decoderImplementation)})</span>`
-          : `<span class="diag-badge-sw">Software ⚠️ (${escapeHtml(s.decoderImplementation)})</span>`;
+      inboundTbody.innerHTML = inboundStreams.map(s => {
+        const senderName = roomState.participants.get(s.peerId)?.name || s.senderName || s.peerId;
+        const badgeClass = s.hwBadgeClass || (s.isHardware ? 'diag-badge-hw' : 'diag-badge-sw');
+        const badgeLabel = s.hwLabel || (s.isHardware ? 'GPU Hardware ⚡' : 'Software ⚠️');
+        const rawImpl = s.rawImplementation || s.decoderImplementation || 'Padrão';
+        const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>`;
+
+        const bitrateStr = s.bitrateMbps ? `${s.bitrateMbps} Mbps` : `${s.bitrateKbps || 0} kbps`;
+        const fpsStr = (s.fps !== undefined && s.fps !== null && s.fps !== '') ? `${s.fps} fps` : '--';
+        const jitterDisplay = s.jitterMs !== undefined ? `${s.jitterMs}ms` : `${((s.jitter || 0) * 1000).toFixed(0)}ms`;
         return `
           <tr>
             <td><strong>${escapeHtml(senderName)}</strong></td>
-            <td>${escapeHtml(s.streamType || 'video')}</td>
-            <td>${escapeHtml(s.codec || '---')}</td>
+            <td>${escapeHtml(s.streamType || 'Tela / Desktop')}</td>
+            <td><strong>${escapeHtml(s.codec || '---')}</strong></td>
             <td>${implBadge}</td>
-            <td>${s.width}x${s.height} @ ${s.fps} fps</td>
-            <td>${s.bitrateKbps} kbps</td>
-            <td>${s.packetLossPercent}% / ${(s.jitter * 1000).toFixed(1)}ms</td>
+            <td>${s.width}x${s.height} @ ${fpsStr}</td>
+            <td>${bitrateStr}</td>
+            <td>${s.packetLossPercent || '0.0'}% / ${jitterDisplay}</td>
           </tr>
         `;
       }).join('');
@@ -1864,14 +1921,16 @@ async function renderDiagnosticsData() {
   }
 }
 
-function openDiagnosticsModal() {
+async function openDiagnosticsModal() {
   const modal = document.getElementById('diagnosticsModal');
   if (!modal) return;
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
-  renderDiagnosticsData();
+  await renderDiagnosticsData();
   if (!diagnosticsInterval) {
-    diagnosticsInterval = setInterval(renderDiagnosticsData, 1500);
+    diagnosticsInterval = setInterval(() => {
+      renderDiagnosticsData().catch(e => console.warn('[Diagnostics] Erro na atualização periódica:', e));
+    }, 1500);
   }
 }
 
@@ -4085,10 +4144,13 @@ function setupSettingsModal() {
     settingPreferredCodec.addEventListener('change', async () => {
       const chosen = settingPreferredCodec.value;
       console.log(`[Settings] Codec preferencial selecionado: ${chosen}`);
-      webrtc.setPreferredCodec(chosen);
-      await webrtc.applyCodecPreferencesToAllPeers();
+      await webrtc.setPreferredCodec(chosen);
       saveSettingsState();
       appendSystemChat(`Codec de vídeo preferido alterado para: ${chosen.toUpperCase()}`);
+      const diagModal = document.getElementById('diagnosticsModal');
+      if (diagModal && !diagModal.classList.contains('hidden')) {
+        renderDiagnosticsData().catch(() => {});
+      }
     });
   }
 
@@ -4105,10 +4167,13 @@ function setupSettingsModal() {
       el.style.cursor = 'pointer';
       el.addEventListener('click', async () => {
         if (settingPreferredCodec) settingPreferredCodec.value = val;
-        webrtc.setPreferredCodec(val);
-        await webrtc.applyCodecPreferencesToAllPeers();
+        await webrtc.setPreferredCodec(val);
         saveSettingsState();
         appendSystemChat(`Codec de vídeo priorizado: ${val.toUpperCase()}`);
+        const diagModal = document.getElementById('diagnosticsModal');
+        if (diagModal && !diagModal.classList.contains('hidden')) {
+          renderDiagnosticsData().catch(() => {});
+        }
       });
     }
   });

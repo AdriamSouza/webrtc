@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, desktopCapturer, shell, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import http from 'node:http';
 import https from 'node:https';
 import { spawn, exec, execSync, execFile, execFileSync } from 'node:child_process';
 import util from 'node:util';
@@ -16,7 +17,7 @@ const __dirname = path.dirname(__filename);
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
 // Habilita aceleração por hardware completa para codificação/decodificação WebRTC e WGC
-app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,AcceleratedVideoEncoder,AcceleratedVideoDecoder');
+app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 // Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
@@ -69,7 +70,124 @@ let cachedCapturerSources = [];
 
 const RENDER_DEFAULT_URL = 'https://hyperstream-g9gz.onrender.com';
 
-function getInitialUrl() {
+let localFrontendPort = null;
+let localFrontendServer = null;
+
+function findFrontendDir() {
+  const candidates = [
+    path.resolve(__dirname, '../../frontend'), // dev mode
+    path.resolve(__dirname, '../frontend'),    // packaged mode
+    path.join(process.resourcesPath, 'app/frontend'),
+    path.join(process.resourcesPath, 'frontend')
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'index.html'))) {
+      return c;
+    }
+  }
+  return null;
+}
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.webm': 'video/webm'
+};
+
+function startLocalFrontendServer() {
+  const frontendDir = findFrontendDir();
+  if (!frontendDir) {
+    console.warn('[Desktop Main] Diretório frontend não encontrado para servidor local embutido.');
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      try {
+        let reqPath = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
+        if (reqPath === '/' || !path.extname(reqPath)) {
+          reqPath = '/index.html';
+        }
+        const filePath = path.join(frontendDir, reqPath);
+        if (filePath.startsWith(frontendDir) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          const ext = path.extname(filePath).toLowerCase();
+          const mime = MIME_TYPES[ext] || 'application/octet-stream';
+          res.writeHead(200, {
+            'Content-Type': mime,
+            'Cache-Control': 'no-cache, no-store, must-revalidate'
+          });
+          fs.createReadStream(filePath).pipe(res);
+        } else {
+          const indexPath = path.join(frontendDir, 'index.html');
+          if (fs.existsSync(indexPath)) {
+            res.writeHead(200, {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'no-cache'
+            });
+            fs.createReadStream(indexPath).pipe(res);
+          } else {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Not Found');
+          }
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end(`Internal Server Error: ${err.message}`);
+      }
+    });
+
+    server.listen(0, '127.0.0.1', () => {
+      localFrontendPort = server.address().port;
+      localFrontendServer = server;
+      console.log(`[Desktop Main] Servidor local embutido iniciado em http://127.0.0.1:${localFrontendPort} (servindo ${frontendDir})`);
+      resolve(`http://127.0.0.1:${localFrontendPort}`);
+    });
+
+    server.on('error', (err) => {
+      console.warn('[Desktop Main] Falha ao iniciar servidor local embutido:', err.message);
+      resolve(null);
+    });
+  });
+}
+
+function checkUrlReachable(targetUrl, timeoutMs = 300) {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(targetUrl);
+      const req = http.get({
+        hostname: u.hostname,
+        port: u.port || 80,
+        path: u.pathname,
+        timeout: timeoutMs
+      }, (res) => {
+        resolve(res.statusCode >= 200 && res.statusCode < 400);
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+    } catch (_) {
+      resolve(false);
+    }
+  });
+}
+
+async function getInitialUrl() {
   if (process.env.APP_URL) {
     return process.env.APP_URL;
   }
@@ -77,7 +195,20 @@ function getInitialUrl() {
   if (saved) {
     return saved;
   }
-  // Padrão oficial de produção: Render
+
+  // Se o backend local de desenvolvimento estiver ativo em localhost:3000, conecta diretamente
+  const isLocalBackendRunning = await checkUrlReachable('http://localhost:3000/api/health', 300);
+  if (isLocalBackendRunning) {
+    console.log('[Desktop Main] Backend local detectado em http://localhost:3000. Conectando diretamente.');
+    return 'http://localhost:3000';
+  }
+
+  // Se o servidor local embutido estiver ativo, carrega a interface embutida com código atualizado!
+  if (localFrontendPort) {
+    console.log(`[Desktop Main] Carregando interface embutida em http://127.0.0.1:${localFrontendPort}`);
+    return `http://127.0.0.1:${localFrontendPort}`;
+  }
+
   return RENDER_DEFAULT_URL;
 }
 
@@ -140,7 +271,7 @@ function getErrorPageHtml(failedUrl) {
 </html>`;
 }
 
-function createWindow() {
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -166,7 +297,7 @@ function createWindow() {
     event.preventDefault();
   });
 
-  const targetUrl = getInitialUrl();
+  const targetUrl = await getInitialUrl();
   console.log('[Desktop Main] Janela principal iniciada apontando para:', targetUrl);
 
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
@@ -183,9 +314,6 @@ function createWindow() {
     shell.openExternal(url);
     return { action: 'deny' };
   });
-
-  // Inicia monitoramento de sessões do Mixer de Áudio em segundo plano com baixo impacto
-  startBackgroundAudioQueryLoop();
 }
 
 // IPC: Retorna lista de telas e janelas ativas com thumbnails para seleção WGC
@@ -225,7 +353,9 @@ ipcMain.handle('desktop:set-selected-source', async (event, sourceId) => {
 
 // IPC: Obter / Definir URL do servidor
 ipcMain.handle('desktop:get-server-url', () => {
-  return getInitialUrl();
+  const saved = loadSavedServerUrl();
+  if (saved) return saved;
+  return RENDER_DEFAULT_URL;
 });
 
 ipcMain.handle('desktop:set-server-url', async (event, newUrl) => {
@@ -240,9 +370,9 @@ ipcMain.handle('desktop:set-server-url', async (event, newUrl) => {
 });
 
 // IPC: Recarregar aplicação
-ipcMain.handle('desktop:reload-app', () => {
+ipcMain.handle('desktop:reload-app', async () => {
   if (mainWindow) {
-    const target = getInitialUrl();
+    const target = await getInitialUrl();
     mainWindow.loadURL(target);
   }
   return true;
@@ -277,20 +407,69 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
     gpuInfo = { error: e.message };
   }
 
-  let memoryInfo = null;
-  try {
-    memoryInfo = process.getProcessMemoryInfo ? await process.getProcessMemoryInfo() : null;
-  } catch (_) {}
+  let totalCpuPercent = 0;
+  let totalMemoryKB = 0;
+  const processBreakdown = [];
 
-  const cpuUsage = process.getCPUUsage ? process.getCPUUsage() : null;
+  try {
+    if (typeof app.getAppMetrics === 'function') {
+      const metrics = app.getAppMetrics();
+      for (const m of metrics) {
+        const cpu = m.cpu?.percentCPUUsage || 0;
+        const memKB = m.memory?.workingSetSize || 0;
+        totalCpuPercent += cpu;
+        totalMemoryKB += memKB;
+
+        let friendlyName = m.type;
+        if (m.type === 'Browser') friendlyName = 'Principal (Main)';
+        else if (m.type === 'Tab') friendlyName = 'Interface & WebRTC (Renderer)';
+        else if (m.type === 'GPU') friendlyName = 'Aceleração GPU & Captura';
+        else if (m.type === 'Utility') friendlyName = 'Utilitário de Sistema';
+
+        processBreakdown.push({
+          pid: m.pid,
+          type: m.type,
+          name: friendlyName,
+          cpuPercent: Number(cpu.toFixed(1)),
+          memoryMB: Math.round(memKB / 1024)
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[Desktop Main] Erro ao consultar app.getAppMetrics():', err.message);
+  }
+
+  // Fallback caso app.getAppMetrics esteja vazio
+  if (processBreakdown.length === 0) {
+    let mainMemKB = 0;
+    try {
+      const memInfo = process.getProcessMemoryInfo ? await process.getProcessMemoryInfo() : null;
+      if (memInfo?.workingSetSize) mainMemKB = memInfo.workingSetSize;
+    } catch (_) {}
+    const cpuInfo = process.getCPUUsage ? process.getCPUUsage() : null;
+    const cpuPct = cpuInfo?.percentCPUUsage || 0;
+    totalCpuPercent = cpuPct;
+    totalMemoryKB = mainMemKB;
+    processBreakdown.push({
+      pid: process.pid,
+      type: 'Browser',
+      name: 'Processo Principal',
+      cpuPercent: Number(cpuPct.toFixed(1)),
+      memoryMB: Math.round(mainMemKB / 1024)
+    });
+  }
+
+  const memoryUsageMB = Math.round(totalMemoryKB / 1024);
+  const cpuUsagePercent = Number(totalCpuPercent.toFixed(1));
 
   return {
     featureStatus,
     gpuInfo,
     platform: process.platform,
     arch: process.arch,
-    memoryInfo,
-    cpuUsage,
+    cpuUsagePercent,
+    memoryUsageMB,
+    processBreakdown,
     electronVersion: process.versions.electron,
     chromeVersion: process.versions.chrome
   };
@@ -999,11 +1178,12 @@ app.whenReady().then(() => {
     }
   });
 
-  createWindow();
+  await startLocalFrontendServer();
+  await createWindow();
 
-  app.on('activate', () => {
+  app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      await createWindow();
     }
   });
 });
@@ -1012,6 +1192,10 @@ app.on('before-quit', () => {
   if (mixerQueryTimer) {
     clearTimeout(mixerQueryTimer);
     mixerQueryTimer = null;
+  }
+  if (localFrontendServer) {
+    try { localFrontendServer.close(); } catch (_) {}
+    localFrontendServer = null;
   }
   stopAllActiveLoopbacks();
 });

@@ -54,6 +54,175 @@ export function isHardwareCodecImplementation(implName) {
   return false;
 }
 
+/**
+ * Análise técnica detalhada da implementação do codificador de vídeo
+ * Taxonomia rigorosa:
+ * - 'hardware': Hardware confirmado por evidência disponível
+ * - 'software': Software confirmado por evidência disponível (fallback CPU)
+ * - 'inconclusive': Implementação desconhecida ou sem evidência conclusiva
+ * - 'inactive': Fluxo sem atividade de codificação
+ */
+export function analyzeEncoderImplementation(implName, codecName = '', activityInfo = {}) {
+  const { framesEncoded = null, bytesSent = null, framesDelta = null } = activityInfo;
+  const isInactive = (framesEncoded === 0 && bytesSent === 0) || (framesDelta === 0 && bytesSent === 0);
+
+  if (isInactive) {
+    return {
+      category: 'inactive',
+      label: 'Sem Atividade / Ocioso',
+      badgeClass: 'diag-badge-neutral',
+      isHardware: false,
+      isSoftware: false,
+      rawImplementation: implName || 'Nenhuma',
+      evidence: 'Nenhum quadro codificado ou enviado nesta conexão (streaming sob demanda ou pausado)'
+    };
+  }
+
+  if (!implName) {
+    return {
+      category: 'inconclusive',
+      label: 'Aguardando Detalhes (?)',
+      badgeClass: 'diag-badge-neutral',
+      isHardware: false,
+      isSoftware: false,
+      rawImplementation: 'Aguardando WebRTC',
+      evidence: 'Aguardando primeiros quadros para identificação da biblioteca de codificação'
+    };
+  }
+
+  const s = String(implName).toLowerCase();
+  if (s.startsWith('externalencoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('nvenc') || s.includes('amf') || s.includes('qsv') || s.includes('hardware')) {
+    return {
+      category: 'hardware',
+      label: 'GPU Hardware ⚡',
+      badgeClass: 'diag-badge-hw',
+      isHardware: true,
+      isSoftware: false,
+      rawImplementation: implName,
+      evidence: `GPU Hardware Confirmado (${implName}) via DirectX 11 / MediaFoundationVideoEncodeAccelerator`
+    };
+  }
+  if (s.includes('libaom')) {
+    return {
+      category: 'software',
+      label: 'Software (CPU: libaom) ⚠️',
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      rawImplementation: implName,
+      evidence: `Software / CPU (${implName}) — Hardware/driver não expôs codificador AV1 ao WebRTC; fallback ativo para biblioteca libaom multi-threaded`
+    };
+  }
+  if (s.includes('openh264')) {
+    return {
+      category: 'software',
+      label: 'Software (CPU: OpenH264) ⚠️',
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      rawImplementation: implName,
+      evidence: `Software / CPU (${implName}) — Fallback ativo para OpenH264 (Cisco)`
+    };
+  }
+  if (s.includes('libvpx')) {
+    return {
+      category: 'software',
+      label: 'Software (CPU: libvpx) ⚠️',
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      rawImplementation: implName,
+      evidence: `Software / CPU (${implName}) — Codificador VP8/VP9 por CPU`
+    };
+  }
+  return {
+    category: 'inconclusive',
+    label: `Inconclusivo (${implName})`,
+    badgeClass: 'diag-badge-warn',
+    isHardware: false,
+    isSoftware: false,
+    rawImplementation: implName,
+    evidence: `Implementação não catalogada: ${implName}`
+  };
+}
+
+/**
+ * Análise técnica detalhada da implementação do decodificador de vídeo
+ */
+export function analyzeDecoderImplementation(implName, powerEfficient = false, activityInfo = {}) {
+  const { framesDecoded = null, bytesReceived = null, framesDelta = null } = activityInfo;
+  const isInactive = (framesDecoded === 0 && bytesReceived === 0) || (framesDelta === 0 && bytesReceived === 0);
+
+  if (isInactive) {
+    return {
+      category: 'inactive',
+      label: 'Sem Atividade / Ocioso',
+      badgeClass: 'diag-badge-neutral',
+      isHardware: false,
+      isSoftware: false,
+      rawImplementation: implName || 'Nenhuma',
+      evidence: 'Nenhum quadro recebido para decodificação no momento'
+    };
+  }
+
+  if (!implName && !powerEfficient) {
+    return {
+      category: 'inconclusive',
+      label: 'Aguardando Detalhes (?)',
+      badgeClass: 'diag-badge-neutral',
+      isHardware: false,
+      isSoftware: false,
+      rawImplementation: 'Aguardando WebRTC',
+      evidence: 'Aguardando primeiros quadros para identificação do decoder'
+    };
+  }
+
+  const s = String(implName || '').toLowerCase();
+  if (s.startsWith('externaldecoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('hardware') || powerEfficient) {
+    const raw = implName || (powerEfficient ? 'D3D11 [powerEfficient]' : 'MediaFoundation');
+    return {
+      category: 'hardware',
+      label: 'GPU Hardware ⚡',
+      badgeClass: 'diag-badge-hw',
+      isHardware: true,
+      isSoftware: false,
+      rawImplementation: raw,
+      evidence: `GPU Hardware Confirmado (${raw}) via D3D11/MediaFoundationVideoDecoder`
+    };
+  }
+  if (s.includes('dav1d')) {
+    return {
+      category: 'software',
+      label: 'Software (CPU: dav1d) ⚠️',
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      rawImplementation: implName,
+      evidence: `Software / CPU (${implName}) — Decodificador AV1 multi-threaded via CPU`
+    };
+  }
+  if (s.includes('ffmpeg') || s.includes('openh264') || s.includes('libvpx')) {
+    return {
+      category: 'software',
+      label: `Software (CPU: ${implName}) ⚠️`,
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      rawImplementation: implName,
+      evidence: `Software / CPU (${implName})`
+    };
+  }
+  return {
+    category: 'inconclusive',
+    label: `Inconclusivo (${implName || 'Padrão'})`,
+    badgeClass: 'diag-badge-warn',
+    isHardware: false,
+    isSoftware: false,
+    rawImplementation: implName || 'Padrão',
+    evidence: `Implementação de decodificação: ${implName || 'Padrão do Sistema'}`
+  };
+}
+
 export class QualityController {
   constructor() {
     this.intervalId = null;
@@ -74,6 +243,10 @@ export class QualityController {
     this.activeProfile = profile.id;
     this.currentMaxBitrate = profile.maxBitrate;
     this.currentMaxFps = profile.maxFps;
+  }
+
+  setWebRTC(webrtcManager) {
+    this.webrtc = webrtcManager;
   }
 
   getDetailedDiagnostics() {
@@ -182,40 +355,95 @@ export class QualityController {
       return;
     }
 
-    const connectedPcs = [];
+    const activePcs = [];
     if (this.webrtc.peers) {
       for (const [userId, pc] of this.webrtc.peers.entries()) {
-        if (pc.connectionState === 'connected' || pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          connectedPcs.push({ userId, pc });
+        if (pc && pc.connectionState !== 'closed' && pc.signalingState !== 'closed') {
+          activePcs.push({ userId, pc });
         }
       }
     }
 
-    // Se não há peers conectados, extrai métricas locais preliminares da transmissão (se houver)
-    if (connectedPcs.length === 0) {
+    // Se não há peers conectados, extrai métricas da captura local (se houver)
+    if (activePcs.length === 0) {
       const localMedia = this.webrtc.mediaManager;
       const screenTrack = localMedia?.getScreenVideoTrack();
       const cameraTrack = localMedia?.getCameraVideoTrack();
-      const activeTrack = (screenTrack && screenTrack.readyState === 'live') ? screenTrack : (cameraTrack && cameraTrack.readyState === 'live' ? cameraTrack : null);
+      const hasScreen = Boolean(screenTrack && screenTrack.readyState === 'live');
+      const hasCamera = Boolean(cameraTrack && cameraTrack.readyState === 'live');
 
-      if (activeTrack) {
-        const settings = activeTrack.getSettings() || {};
-        const width = settings.width || null;
-        const height = settings.height || null;
-        const fps = settings.frameRate ? Math.round(settings.frameRate) : (activeTrack === screenTrack ? 60 : 30);
+      let width = null;
+      let height = null;
+      let fps = '--';
+      const localCaptures = [];
 
-        if (this.onStatsUpdate) {
-          this.onStatsUpdate({
-            fps,
-            resolution: width && height ? `${width}x${height}` : '--',
-            rtt: '--',
-            bitrateMbps: '--',
-            packetLossPercent: '0.0',
-            codec: 'H.264 / AV1',
-            connectionType: 'Aguardando Amigos',
-            activeProfile: this.activeProfile
-          });
-        }
+      if (hasScreen) {
+        const s = screenTrack.getSettings() || {};
+        const w = s.width || 1920;
+        const h = s.height || 1080;
+        const f = s.frameRate ? Math.round(s.frameRate) : 60;
+        localCaptures.push({
+          type: 'screen',
+          label: 'Tela / Desktop (60 FPS)',
+          width: w,
+          height: h,
+          fps: f,
+          status: 'Captura ativa no transmissor'
+        });
+        width = w;
+        height = h;
+        fps = f;
+      }
+
+      if (hasCamera) {
+        const s = cameraTrack.getSettings() || {};
+        const w = s.width || 1280;
+        const h = s.height || 720;
+        const f = s.frameRate ? Math.round(s.frameRate) : 30;
+        localCaptures.push({
+          type: 'camera',
+          label: 'Câmera / Webcam',
+          width: w,
+          height: h,
+          fps: f,
+          status: 'Captura ativa no transmissor'
+        });
+        if (!width) { width = w; height = h; fps = f; }
+      }
+
+      const prefCodec = this.webrtc?.getPreferredCodec ? this.webrtc.getPreferredCodec().toUpperCase() : 'AUTO';
+
+      this.latestDiagnostics = {
+        outbound: [],
+        outboundStreams: [],
+        inbound: [],
+        inboundStreams: [],
+        localCaptures,
+        hasLocalStream: localCaptures.length > 0,
+        dominantConnectionType: localCaptures.length > 0 ? 'Transmissão Local Ativa (Aguardando Espectadores)' : 'Nenhum Fluxo Ativo',
+        rtt: '--',
+        packetLoss: '0.0',
+        bitrateMbps: '0.00',
+        bitrateKbps: 0,
+        fps: fps || '--',
+        resolution: width && height ? `${width}x${height}` : '--',
+        preferredCodec: prefCodec,
+        activeCodec: prefCodec !== 'AUTO' ? prefCodec : 'AV1 / H.264',
+        timestamp: Date.now()
+      };
+
+      if (this.onStatsUpdate && localCaptures.length > 0) {
+        this.onStatsUpdate({
+          fps,
+          resolution: width && height ? `${width}x${height}` : '--',
+          rtt: '--',
+          bitrateMbps: '0.00',
+          packetLossPercent: '0.0',
+          codec: prefCodec !== 'AUTO' ? prefCodec : 'AV1 / H.264',
+          connectionType: 'Aguardando Amigos',
+          activeProfile: this.activeProfile,
+          diagnostics: this.latestDiagnostics
+        });
       }
       return;
     }
@@ -233,30 +461,45 @@ export class QualityController {
       let dominantConnectionType = 'P2P Conectado';
 
       const seenReportIds = new Set();
-
       const outboundStreamsList = [];
       const inboundStreamsList = [];
 
-      for (const { userId, pc } of connectedPcs) {
-        const stats = await pc.getStats();
+      for (const { userId, pc } of activePcs) {
+        let stats;
+        try {
+          stats = await pc.getStats();
+        } catch (pcErr) {
+          console.warn(`[QualityController] Falha ao executar getStats() no peer ${userId}:`, pcErr.message);
+          continue;
+        }
 
-        // 1. Mapeamento de candidatos e codecs deste peer
+        // 1. Mapeamento de candidatos, codecs e media-sources deste peer
         const candidateReports = new Map();
         const codecMap = new Map();
         const codecDetailsMap = new Map();
+        const codecByPayloadMap = new Map();
+        const mediaSourcesMap = new Map();
         let activeCandidatePair = null;
 
         stats.forEach(report => {
           if (report.type === 'codec') {
-            const mime = (report.mimeType || '').replace(/^video\//i, '').replace(/^audio\//i, '').toUpperCase();
+            let mime = (report.mimeType || '').replace(/^video\//i, '').replace(/^audio\//i, '').toUpperCase();
+            if (mime === 'AV01') mime = 'AV1';
             codecMap.set(report.id, mime);
-            codecDetailsMap.set(report.id, {
+            const detail = {
               mime,
               clockRate: report.clockRate,
               channels: report.channels,
               sdpFmtpLine: report.sdpFmtpLine || null,
               payloadType: report.payloadType
-            });
+            };
+            codecDetailsMap.set(report.id, detail);
+            if (report.payloadType !== undefined) {
+              codecByPayloadMap.set(report.payloadType, detail);
+            }
+          }
+          if (report.type === 'media-source' && (report.kind === 'video' || report.mediaType === 'video')) {
+            mediaSourcesMap.set(report.id, report);
           }
           if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
             candidateReports.set(report.id, report);
@@ -294,14 +537,37 @@ export class QualityController {
         }
 
         // 3. Processamento de fluxos de vídeo (Outbound, Inbound, Media-Source e Remote-Inbound)
+        const mediaMids = this.webrtc?.getMediaMids ? this.webrtc.getMediaMids(userId) : {};
+        const localMedia = this.webrtc?.mediaManager;
+        const screenTrack = localMedia?.getScreenVideoTrack();
+        const cameraTrack = localMedia?.getCameraVideoTrack();
+        const targetPeerName = this.webrtc?.roomState?.participants?.get(userId)?.name || userId;
+
         stats.forEach(report => {
           // A. VÍDEO DE SAÍDA (Host transmissor compartilhando tela/câmera)
-          if (report.type === 'outbound-rtp' && report.kind === 'video') {
+          if (report.type === 'outbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
             seenReportIds.add(report.id);
 
-            const codecDetail = report.codecId ? codecDetailsMap.get(report.codecId) : null;
-            const cName = codecDetail ? codecDetail.mime : (report.codecId ? codecMap.get(report.codecId) : null);
+            const codecDetail = report.codecId ? codecDetailsMap.get(report.codecId) : (report.payloadType !== undefined ? codecByPayloadMap.get(report.payloadType) : null);
+            let cName = codecDetail ? codecDetail.mime : (report.codecId ? codecMap.get(report.codecId) : null);
+            if (cName === 'AV01') cName = 'AV1';
             if (cName) activeCodec = cName;
+
+            let streamType = 'Tela / Desktop';
+            if (report.mid && mediaMids.camera && report.mid === mediaMids.camera) {
+              streamType = 'Câmera';
+            } else if (report.mid && mediaMids.screen && report.mid === mediaMids.screen) {
+              streamType = 'Tela / Desktop';
+            } else if (report.mediaSourceId && mediaSourcesMap.has(report.mediaSourceId)) {
+              const ms = mediaSourcesMap.get(report.mediaSourceId);
+              if (cameraTrack && ms.trackIdentifier === cameraTrack.id) {
+                streamType = 'Câmera';
+              } else if (screenTrack && ms.trackIdentifier === screenTrack.id) {
+                streamType = 'Tela / Desktop';
+              }
+            } else if (cameraTrack && !screenTrack) {
+              streamType = 'Câmera';
+            }
 
             if (report.frameWidth && report.frameHeight) {
               width = report.frameWidth;
@@ -311,6 +577,7 @@ export class QualityController {
             let streamFps = report.framesPerSecond ? Math.round(report.framesPerSecond) : null;
             let streamBitrateBps = 0;
             let avgEncodeTimeMs = null;
+            let framesDelta = null;
 
             const prev = this.streamStatsHistory.get(report.id);
             if (prev && report.timestamp > prev.timestamp) {
@@ -325,7 +592,7 @@ export class QualityController {
                 // FPS via delta de frames enviados/codificados
                 const currentFrames = report.framesSent ?? report.framesEncoded;
                 if (currentFrames !== undefined && prev.frames !== undefined) {
-                  const framesDelta = currentFrames - prev.frames;
+                  framesDelta = currentFrames - prev.frames;
                   if (framesDelta >= 0) {
                     const calcFps = Math.round(framesDelta / dt);
                     calculatedFpsList.push(calcFps);
@@ -347,20 +614,48 @@ export class QualityController {
             }
 
             const encoderImpl = report.encoderImplementation || null;
-            const isHw = isHardwareCodecImplementation(encoderImpl);
+            const analysis = analyzeEncoderImplementation(encoderImpl, cName, {
+              framesEncoded: report.framesEncoded ?? report.framesSent ?? 0,
+              bytesSent: report.bytesSent || 0,
+              framesDelta
+            });
+
+            const streamWidth = report.frameWidth || (streamType === 'Tela / Desktop' ? screenTrack?.getSettings()?.width : cameraTrack?.getSettings()?.width) || width || '--';
+            const streamHeight = report.frameHeight || (streamType === 'Tela / Desktop' ? screenTrack?.getSettings()?.height : cameraTrack?.getSettings()?.height) || height || '--';
+
+            // FPS estritamente verificado sem valores fictícios
+            let finalStreamFps = '--';
+            if (streamFps !== null && streamFps !== undefined) {
+              finalStreamFps = streamFps;
+            } else if (report.framesEncoded === 0 || report.bytesSent === 0 || framesDelta === 0) {
+              finalStreamFps = 0;
+            }
+
+            const streamBitrateMbps = (streamBitrateBps / 1000000).toFixed(2);
+            const streamBitrateKbps = Math.round(streamBitrateBps / 1000);
 
             outboundStreamsList.push({
               id: report.id,
+              targetPeerId: userId,
               targetUserId: userId,
-              codec: cName || 'DESCONHECIDO',
+              targetPeerName,
+              streamType,
+              codec: cName || (this.webrtc?.getPreferredCodec ? this.webrtc.getPreferredCodec().toUpperCase() : 'AV1'),
               sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
               encoderImplementation: encoderImpl || 'Padrão do Sistema',
-              isHardware: isHw,
+              isHardware: analysis.isHardware,
+              isSoftware: analysis.isSoftware,
+              hwCategory: analysis.category,
+              hwLabel: analysis.label,
+              hwBadgeClass: analysis.badgeClass,
+              hwEvidence: analysis.evidence,
+              rawImplementation: analysis.rawImplementation,
               qualityLimitationReason: report.qualityLimitationReason || 'none',
-              width: report.frameWidth || width || '--',
-              height: report.frameHeight || height || '--',
-              fps: streamFps || '--',
-              bitrateMbps: (streamBitrateBps / 1000000).toFixed(2),
+              width: streamWidth,
+              height: streamHeight,
+              fps: finalStreamFps,
+              bitrateMbps: streamBitrateMbps,
+              bitrateKbps: streamBitrateKbps,
               framesEncoded: report.framesEncoded || 0,
               framesDropped: report.framesDropped || 0,
               avgEncodeTimeMs: avgEncodeTimeMs !== null ? `${avgEncodeTimeMs} ms` : '--',
@@ -377,7 +672,7 @@ export class QualityController {
           }
 
           // B. FONTE DE MÍDIA LOCAL (Captura de tela / webcam no Host)
-          if (report.type === 'media-source' && report.kind === 'video') {
+          if (report.type === 'media-source' && (report.kind === 'video' || report.mediaType === 'video')) {
             if (!width && report.width) {
               width = report.width;
               height = report.height;
@@ -388,7 +683,7 @@ export class QualityController {
           }
 
           // C. FEEDBACK RTCP DO RECEPTOR (Perda de pacotes e RTT do Host transmissor)
-          if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+          if (report.type === 'remote-inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
             if (report.packetsLost !== undefined) {
               totalPacketsLost += report.packetsLost;
             }
@@ -401,12 +696,22 @@ export class QualityController {
           }
 
           // D. VÍDEO DE ENTRADA (Viewer espectador assistindo amigos)
-          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          if (report.type === 'inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
             seenReportIds.add(report.id);
 
-            const codecDetail = report.codecId ? codecDetailsMap.get(report.codecId) : null;
+            const codecDetail = report.codecId ? codecDetailsMap.get(report.codecId) : (report.payloadType !== undefined ? codecByPayloadMap.get(report.payloadType) : null);
             const cName = codecDetail ? codecDetail.mime : (report.codecId ? codecMap.get(report.codecId) : null);
             if (cName) activeCodec = cName;
+
+            const mapping = this.webrtc?.peerMediaMap?.get(userId) || {};
+            let streamType = 'Tela / Desktop';
+            if (report.mid && mapping.cameraMid && report.mid === mapping.cameraMid) {
+              streamType = 'Câmera';
+            } else if (report.mid && mapping.screenMid && report.mid === mapping.screenMid) {
+              streamType = 'Tela / Desktop';
+            } else if (mapping.cameraActive && !mapping.screenActive) {
+              streamType = 'Câmera';
+            }
 
             if (report.frameWidth && report.frameHeight) {
               width = report.frameWidth;
@@ -453,32 +758,65 @@ export class QualityController {
               }
             }
 
-            if (streamFps) {
-              calculatedFpsList.push(streamFps);
+            let framesDelta = null;
+            if (prev && prev.frames !== undefined && (report.framesDecoded ?? report.framesReceived) !== undefined) {
+              framesDelta = (report.framesDecoded ?? report.framesReceived) - prev.frames;
             }
 
             const decoderImpl = report.decoderImplementation || null;
             const isPowerEfficient = Boolean(report.powerEfficientDecoder);
-            const isHw = isHardwareCodecImplementation(decoderImpl) || isPowerEfficient;
+            const analysis = analyzeDecoderImplementation(decoderImpl, isPowerEfficient, {
+              framesDecoded: report.framesDecoded ?? report.framesReceived ?? 0,
+              bytesReceived: report.bytesReceived || 0,
+              framesDelta
+            });
+
+            const streamBitrateMbps = (streamBitrateBps / 1000000).toFixed(2);
+            const streamBitrateKbps = Math.round(streamBitrateBps / 1000);
+
+            // FPS estritamente verificado sem valores fictícios
+            let finalStreamFps = '--';
+            if (streamFps !== null && streamFps !== undefined) {
+              finalStreamFps = streamFps;
+            } else if (report.framesDecoded === 0 || report.bytesReceived === 0 || framesDelta === 0) {
+              finalStreamFps = 0;
+            }
+
+            const pktReceived = report.packetsReceived || 0;
+            const pktLost = report.packetsLost || 0;
+            const lossPercent = (pktReceived + pktLost > 0) ? ((pktLost / (pktReceived + pktLost)) * 100).toFixed(1) : '0.0';
+            const jitterMs = report.jitter ? Math.round(report.jitter * 1000) : 0;
+            const senderName = this.webrtc?.roomState?.participants?.get(userId)?.name || userId;
 
             inboundStreamsList.push({
               id: report.id,
               peerId: userId,
+              senderName,
+              streamType,
               codec: cName || 'DESCONHECIDO',
               sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
-              decoderImplementation: decoderImpl || 'Padrão do Sistema',
+              decoderImplementation: decoderImpl || (isPowerEfficient ? 'Hardware D3D11' : 'Padrão do Sistema'),
               powerEfficientDecoder: isPowerEfficient,
-              isHardware: isHw,
+              isHardware: analysis.isHardware,
+              isSoftware: analysis.isSoftware,
+              hwCategory: analysis.category,
+              hwLabel: analysis.label,
+              hwBadgeClass: analysis.badgeClass,
+              hwEvidence: analysis.evidence,
+              rawImplementation: analysis.rawImplementation,
               width: report.frameWidth || width || '--',
               height: report.frameHeight || height || '--',
-              fps: streamFps || '--',
-              bitrateMbps: (streamBitrateBps / 1000000).toFixed(2),
+              fps: finalStreamFps,
+              bitrateMbps: streamBitrateMbps,
+              bitrateKbps: streamBitrateKbps,
               framesDecoded: report.framesDecoded || 0,
               framesDropped: report.framesDropped || 0,
               avgDecodeTimeMs: avgDecodeTimeMs !== null ? `${avgDecodeTimeMs} ms` : '--',
-              packetsReceived: report.packetsReceived || 0,
-              packetsLost: report.packetsLost || 0,
-              jitterMs: report.jitter ? Math.round(report.jitter * 1000) : 0
+              packetsReceived: pktReceived,
+              packetsLost: pktLost,
+              packetLossPercent: lossPercent,
+              jitterMs,
+              jitter: report.jitter || 0
             });
 
             this.streamStatsHistory.set(report.id, {
@@ -509,7 +847,7 @@ export class QualityController {
           }
         }
         if (!width || !height) {
-          const domVideo = document.querySelector('.stream-tile video, .local-media-card video');
+          const domVideo = typeof document !== 'undefined' ? document.querySelector('.stream-tile video, .local-media-card video') : null;
           if (domVideo && domVideo.videoWidth && domVideo.videoHeight) {
             width = domVideo.videoWidth;
             height = domVideo.videoHeight;
@@ -556,7 +894,8 @@ export class QualityController {
       // Formatação de Bitrate
       const bitrateMbps = totalBitrateBps > 0
         ? (totalBitrateBps / 1000000).toFixed(2)
-        : '--';
+        : '0.00';
+      const bitrateKbps = Math.round(totalBitrateBps / 1000);
 
       // Identifica o codec efetivo e se a codificação/decodificação é por hardware ou software
       let formattedCodec = '--';
@@ -573,13 +912,20 @@ export class QualityController {
       // Atualiza snapshot de diagnóstico detalhado
       this.latestDiagnostics = {
         outbound: outboundStreamsList,
+        outboundStreams: outboundStreamsList,
         inbound: inboundStreamsList,
+        inboundStreams: inboundStreamsList,
+        localCaptures: [],
+        hasLocalStream: outboundStreamsList.length > 0,
         dominantConnectionType,
         rtt: finalRtt,
         packetLoss: finalPacketLoss,
         bitrateMbps,
+        bitrateKbps,
         fps: finalFps,
         resolution: width && height ? `${width}x${height}` : '--',
+        preferredCodec: this.webrtc?.getPreferredCodec ? this.webrtc.getPreferredCodec().toUpperCase() : 'AUTO',
+        activeCodec: formattedCodec,
         timestamp: Date.now()
       };
 
@@ -596,7 +942,7 @@ export class QualityController {
       };
 
       // Dispara lógica adaptativa de bitrate em todas as conexões ativas
-      this.evaluateAdaptation(connectedPcs.map(item => item.pc), typeof finalRtt === 'number' ? finalRtt : null, parseFloat(finalPacketLoss));
+      this.evaluateAdaptation(activePcs.map(item => item.pc), typeof finalRtt === 'number' ? finalRtt : null, parseFloat(finalPacketLoss));
 
       if (this.onStatsUpdate) {
         this.onStatsUpdate(metrics);

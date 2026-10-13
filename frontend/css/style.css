@@ -4617,5 +4617,23 @@ body.dark-theme {
   font-weight: 600;
 }
 
+.diag-badge-warn {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.diag-badge-neutral {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
 
 

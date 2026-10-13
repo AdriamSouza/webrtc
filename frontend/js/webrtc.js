@@ -273,87 +273,135 @@ export class WebRTCManager {
     if (!sdp) return sdp;
     const bps = bitrateBps || 8000000;
     const bitrateKbps = Math.round(bps / 1000);
-
-    let lines = sdp.split('\r\n');
-    let inVideo = false;
-    let hasAS = false;
-    let hasTIAS = false;
-    let newLines = [];
-    let videoLineIndex = -1;
-    const codecPayloadMap = new Map(); // payload -> codecName
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith('m=video')) {
-        inVideo = true;
-        hasAS = false;
-        hasTIAS = false;
-        videoLineIndex = newLines.length;
-        newLines.push(line);
-        continue;
-      }
-      if (line.startsWith('m=') && !line.startsWith('m=video')) {
-        inVideo = false;
-      }
-
-      if (inVideo) {
-        if (line.startsWith('a=rtpmap:')) {
-          const match = line.match(/^a=rtpmap:(\d+)\s+([^\/]+)/i);
-          if (match) {
-            codecPayloadMap.set(match[1], match[2].toUpperCase());
-          }
-        }
-        if (line.startsWith('b=AS:')) {
-          newLines.push(`b=AS:${bitrateKbps}`);
-          hasAS = true;
-          continue;
-        }
-        if (line.startsWith('b=TIAS:')) {
-          newLines.push(`b=TIAS:${bps}`);
-          hasTIAS = true;
-          continue;
-        }
-        if (line.startsWith('a=') && !hasAS) {
-          newLines.push(`b=AS:${bitrateKbps}`);
-          newLines.push(`b=TIAS:${bps}`);
-          hasAS = true;
-          hasTIAS = true;
-        }
-      }
-      newLines.push(line);
-    }
-
-    // Reordena m=video para colocar o codec preferencial em 1º lugar na negociação
     const pref = (this.preferredCodec || 'auto').toUpperCase();
-    if (pref !== 'AUTO' && videoLineIndex !== -1 && codecPayloadMap.size > 0) {
-      const videoLine = newLines[videoLineIndex];
-      const parts = videoLine.split(' ');
-      if (parts.length > 3) {
-        const header = parts.slice(0, 3);
-        const payloads = parts.slice(3);
-        const preferredPayloads = [];
-        const otherPayloads = [];
 
-        for (const pt of payloads) {
-          const cName = codecPayloadMap.get(pt);
-          if (cName === pref || (pref === 'H264' && cName === 'H264') || (pref === 'AV1' && cName === 'AV1')) {
-            preferredPayloads.push(pt);
-          } else {
-            otherPayloads.push(pt);
+    // Divide SDP em seções de mídia
+    const rawSections = sdp.split(/\r\n(?=m=)/);
+    const modifiedSections = [];
+
+    for (const section of rawSections) {
+      if (section.startsWith('m=video')) {
+        let lines = section.split('\r\n');
+        let mLine = lines[0];
+        let hasAS = false;
+        let hasTIAS = false;
+        const codecPayloadMap = new Map(); // pt -> codecName
+        const rtxAptMap = new Map(); // rtxPt -> aptPt
+
+        // 1. Mapeia codecs e rtx desta seção de vídeo
+        for (const line of lines) {
+          if (line.startsWith('a=rtpmap:')) {
+            const match = line.match(/^a=rtpmap:(\d+)\s+([^\/]+)/i);
+            if (match) {
+              let cName = match[2].toUpperCase();
+              if (cName === 'AV01') cName = 'AV1';
+              codecPayloadMap.set(match[1], cName);
+            }
           }
+          if (line.startsWith('a=fmtp:')) {
+            const match = line.match(/^a=fmtp:(\d+)\s+apt=(\d+)/i);
+            if (match) {
+              rtxAptMap.set(match[1], match[2]);
+            }
+          }
+          if (line.startsWith('b=AS:')) hasAS = true;
+          if (line.startsWith('b=TIAS:')) hasTIAS = true;
         }
 
-        if (preferredPayloads.length > 0) {
-          newLines[videoLineIndex] = [...header, ...preferredPayloads, ...otherPayloads].join(' ');
-          console.log(`[WebRTC SDP] m=video reordenado para priorizar ${pref}:`, preferredPayloads);
+        // 2. Reordena m=video para priorizar o codec preferido
+        const mParts = mLine.split(' ');
+        if (mParts.length > 3 && codecPayloadMap.size > 0) {
+          const header = mParts.slice(0, 3);
+          const payloads = mParts.slice(3);
+
+          const order = (pref === 'AV1')
+            ? ['AV1', 'H264', 'VP9', 'VP8']
+            : ((pref === 'H264')
+              ? ['H264', 'AV1', 'VP9', 'VP8']
+              : ((pref === 'VP9')
+                ? ['VP9', 'AV1', 'H264', 'VP8']
+                : ((pref === 'VP8')
+                  ? ['VP8', 'H264', 'AV1']
+                  : ['AV1', 'H264', 'VP9', 'VP8']))); // AUTO: AV1 prioritário
+
+          const groupedPayloads = new Map();
+          for (const c of order) groupedPayloads.set(c, []);
+          const otherPayloads = [];
+          const rtxPayloads = new Set(rtxAptMap.keys());
+
+          for (const pt of payloads) {
+            if (rtxPayloads.has(pt)) continue;
+            const cName = codecPayloadMap.get(pt);
+            if (cName && groupedPayloads.has(cName)) {
+              groupedPayloads.get(cName).push(pt);
+            } else {
+              otherPayloads.push(pt);
+            }
+          }
+
+          // Reconstrói lista de payloads com codecs na ordem e seus respectivos RTX logo após
+          const orderedPayloads = [];
+          for (const c of order) {
+            const list = groupedPayloads.get(c) || [];
+            for (const pt of list) {
+              orderedPayloads.push(pt);
+              for (const [rtxPt, aptPt] of rtxAptMap.entries()) {
+                if (aptPt === pt && !orderedPayloads.includes(rtxPt)) {
+                  orderedPayloads.push(rtxPt);
+                }
+              }
+            }
+          }
+          for (const pt of otherPayloads) {
+            if (!orderedPayloads.includes(pt)) {
+              orderedPayloads.push(pt);
+              for (const [rtxPt, aptPt] of rtxAptMap.entries()) {
+                if (aptPt === pt && !orderedPayloads.includes(rtxPt)) {
+                  orderedPayloads.push(rtxPt);
+                }
+              }
+            }
+          }
+
+          lines[0] = [...header, ...orderedPayloads].join(' ');
+          console.log(`[WebRTC SDP] m=video reordenado (ordem ${pref}):`, orderedPayloads.map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`).slice(0, 4));
         }
+
+        // 3. Aplica limites de banda b=AS e b=TIAS na seção
+        const newLines = [];
+        let bInserted = false;
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i];
+          if (l.startsWith('b=AS:')) {
+            newLines.push(`b=AS:${bitrateKbps}`);
+            bInserted = true;
+            continue;
+          }
+          if (l.startsWith('b=TIAS:')) {
+            newLines.push(`b=TIAS:${bps}`);
+            bInserted = true;
+            continue;
+          }
+          if (i === 1 && !bInserted) {
+            newLines.push(`b=AS:${bitrateKbps}`);
+            newLines.push(`b=TIAS:${bps}`);
+            bInserted = true;
+          }
+          newLines.push(l);
+        }
+        modifiedSections.push(newLines.join('\r\n'));
+      } else {
+        modifiedSections.push(section);
       }
     }
 
-    let modified = newLines.join('\r\n');
+    let modified = modifiedSections.join('\r\n');
 
-    // Munge de Bitrates para x-google
-    modified = modified.replace(/(a=fmtp:\d+ .*)([\r\n]+)/g, (match, p1, p2) => {
+    // Munge de Bitrates para x-google (Apenas em formatos de vídeo, NUNCA em RTX ou Áudio)
+    modified = modified.replace(/(a=fmtp:(\d+)\s+.*)([\r\n]+)/g, (match, p1, pt, p2) => {
+      if (p1.includes('apt=') || p1.includes('minptime=') || p1.includes('maxplaybackrate=')) {
+        return match;
+      }
       if (!p1.includes('x-google-max-bitrate')) {
         return `${p1};x-google-min-bitrate=2000;x-google-start-bitrate=4000;x-google-max-bitrate=${bitrateKbps}${p2}`;
       }
@@ -533,7 +581,14 @@ export class WebRTCManager {
    */
   async applyCodecPreferencesToAllPeers() {
     for (const [userId, pc] of this.peers.entries()) {
-      const transceivers = pc.getTransceivers().filter(t => t.sender && t.sender.track && t.sender.track.kind === 'video');
+      if (pc.signalingState === 'closed') continue;
+      const senders = this.peerSenders.get(userId) || {};
+      const transceivers = pc.getTransceivers().filter(t => {
+        const isVideoSender = t.sender && t.sender.track && t.sender.track.kind === 'video';
+        const isVideoReceiver = t.receiver && t.receiver.track && t.receiver.track.kind === 'video';
+        const isRegisteredVideoSender = t.sender === senders.screenVideo || t.sender === senders.cameraVideo;
+        return isVideoSender || isVideoReceiver || isRegisteredVideoSender;
+      });
       for (const t of transceivers) {
         this.configureCodecPreferences(t);
       }
@@ -565,7 +620,7 @@ export class WebRTCManager {
 
       for (const codec of capabilities.codecs) {
         const mime = codec.mimeType.toLowerCase();
-        if (mime === 'video/av1') {
+        if (mime === 'video/av1' || mime === 'video/av01') {
           av1Codecs.push(codec);
         } else if (mime === 'video/h264') {
           h264Codecs.push(codec);

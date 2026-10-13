@@ -2,7 +2,7 @@
 
 > Plataforma de Transmissão P2P de Alta Performance a 60 FPS via WebRTC Mesh, com Aceleração por Hardware (Windows Graphics Capture - WGC), Mixer Seletivo de Áudio, Suporte Mobile Completo e Privacidade Absoluta (Zero Armazenamento de Dados).
 
-[![Versão](https://img.shields.io/badge/versão-v1.1.7-blue.svg)](https://github.com/AdriamSouza/webrtc/releases)
+[![Versão](https://img.shields.io/badge/versão-v1.3.1-blue.svg)](https://github.com/AdriamSouza/webrtc/releases)
 [![Licença](https://img.shields.io/badge/licença-MIT-green.svg)](LICENSE)
 [![WebRTC](https://img.shields.io/badge/WebRTC-P2P%20Mesh-orange.svg)](https://webrtc.org/)
 [![60 FPS](https://img.shields.io/badge/taxa%20de%20quadros-60%20FPS-purple.svg)]()
@@ -16,6 +16,10 @@
 O **HyperStream** é uma solução de transmissão ponto a ponto (Peer-to-Peer) de ultrabaixa latência projetada especificamente para streamers, gamers, amigos e equipes que buscam máxima fidelidade audiovisual com total privacidade e sem dependência de plataformas proprietárias:
 
 - **🎮 60 FPS Nativos e Estáveis:** Pipeline otimizado para captura e envio de jogos rápidos e telas em alta taxa de quadros e baixa latência.
+- **⚡ Streaming Sob Demanda & Baixa Carga de CPU:** O transmissor envia pacotes de vídeo codificados exclusivamente para participantes que optarem por assistir (`SUBSCRIBE_STREAM`), substituindo trilhas ociosas por `replaceTrack(null)` e evitando saturação de encoders na GPU/CPU em salas com muitos participantes.
+- **🛡️ Sinalização Resiliente (Token Bucket com Rajada de 160):** Mecanismo de rate limiting inteligente no backend que absorve handshakes massivos de candidatos ICE em salas cheias sem quedas e sem diálogos bloqueantes.
+- **📊 Telemetria Transparente & Diagnóstico de GPU:** Detecção em tempo real da implementação de codificação/decodificação (`ExternalEncoder` D3D11/MediaFoundation vs software `OpenH264`/`libvpx`/`dav1d`), eliminando métricas simuladas ou estimadas.
+- **🔄 Reconexão Automática & Reingresso Seguro com 1 Clique:** Retomada contínua de conexão via backoff exponencial com jitter aleatório e histórico da última sala no Lobby (com webcam e tela desligadas por padrão, respeitando a privacidade do usuário).
 - **🛡️ Privacidade Absoluta (Zero Dados Armazenados):** Nenhuma mensagem de chat, áudio, vídeo ou imagem enviada é gravada em disco ou banco de dados no servidor. Todo o tráfego de mídia é direto P2P criptografado (SRTP/DTLS).
 - **📱 Suporte Mobile Completo (Celulares e Tablets):** Acesse diretamente pelo navegador do smartphone (Android e iOS Safari) sem precisar baixar aplicativo. Possui layout responsivo touch-friendly e rotação inteligente em tela cheia na vertical.
 - **🎚️ Mixer de Áudio do Windows com Isolamento Seletivo (Desktop):** No aplicativo Desktop, detecta em tempo real os programas com som ativo no Windows (jogos, navegadores, reprodutores) e permite escolher exatamente quais aplicativos transmitir e quais mutar (ex: transmite o som do jogo sem vazar o Discord, Spotify ou notificações).
@@ -166,6 +170,27 @@ O HyperStream inclui um painel de diagnóstico em tempo real (botão **Telemetri
   - ⚡ **Ultra 60:** 1080p60 até 8 Mbps (para rede local ou conexões de fibra de alta velocidade).
   - ⚖️ **Equilibrado:** 60 FPS até 3.5 Mbps (ideal para transmissões de jogos pela internet).
   - 🍃 **Econômico:** 30 FPS até 1.8 Mbps (ideal para conexões instáveis ou dados móveis).
+
+## 🔬 Auditoria Técnica, Codecs e Otimizações de CPU (v1.3.1)
+
+A versão **v1.3.1** consolida melhorias fundamentais desenvolvidas e auditadas em condições de estresse com múltiplos participantes:
+
+1. **Streaming Sob Demanda no Mesh P2P:**
+   - Em arquiteturas Mesh puras, transmitir vídeo para múltiplos participantes sem controle consome sessões redundantes de codificação.
+   - O HyperStream agora aplica subscrição sob demanda: apenas espectadores que escolhem assistir ao stream consomem codificação ativa. Para espectadores não inscritos, as trilhas de vídeo locais são substituídas por `replaceTrack(null)`, desligando a sessão do encoder na GPU/CPU.
+2. **Proteção contra Tempestade de Mensagens (Token Bucket):**
+   - O limitador de taxa de mensagens do backend agora implementa o algoritmo de **Token Bucket** com capacidade de rajada de **160 tokens** e reposição contínua de **60/s**.
+   - Candidatos ICE são agrupados em lote com debounce de 35ms no cliente, eliminando mensagens rejeitadas durante o handshake de novos pares.
+3. **Detecção Fidedigna de Hardware e Codecs:**
+   - Codecs suportados (H.264, AV1, VP9, VP8) são reordenados dinamicamente via `setCodecPreferences()` no emissor e no receptor.
+   - O sistema inspeciona as estatísticas reais do WebRTC (`encoderImplementation` e `decoderImplementation`):
+     - Hardware: reporta `GPU ⚡ (ExternalEncoder via D3D11/MediaFoundation)`.
+     - Software: reporta `Software ⚠️ (OpenH264 / libvpx / dav1d)`.
+4. **Painel de Diagnóstico em Tempo Real:**
+   - Botão **Diagnóstico** no cabeçalho da sala abre uma visualização transparente com telemetria direta da GPU do Electron (`desktop:get-gpu-diagnostics`), uso percentual de CPU, memória RAM do processo e métricas de cada trilha (resolução, FPS, bitrate, jitter e perda de pacotes).
+5. **Reconexão Resiliente e Reingresso Seguro:**
+   - Reconexão WebSocket com backoff exponencial e jitter pseudo-aleatório (1s a 12s) para evitar sobrecarga sincronizada no servidor.
+   - Botão **"Voltar para a última sala"** no Lobby permite reentrar com 1 clique. Por padrão, microfone, webcam e compartilhamento de tela permanecem desligados até que o usuário decida ativá-los.
 
 ---
 

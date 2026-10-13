@@ -499,17 +499,12 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
     *Definido:* O catálogo lista `desktop` (telas) e `camera` (webcams), cada um com seu identificador canônico `${userId}-${sourceType}`.
 -   [x] **Como o projeto atual organiza `RTCPeerConnection`: por participante, por fonte ou de outra forma?**\
     *Definido:* 1 `RTCPeerConnection` por participante remoto (`webrtc.peers.get(targetUserId)`), com transceivers e MIDs determinísticos mapeados via WebRTC Unified Plan. A subscrição controla se a mídia é decodificada/montada no grid e solicita recepção sob demanda.
--   [ ] Qual a política de qualidade inicial para fontes adicionais?
--   [ ] Como medir de maneira confiável a pressão de CPU/GPU em cada
-    plataforma?
--   [ ] Quais limites de FPS, perda, jitter e bitrate serão usados nos
-    estados de desempenho?
--   [ ] A adaptação será automática por padrão ou configurável pelo
-    usuário?
--   [ ] Quais codecs estarão habilitados inicialmente em cada
-    plataforma?
--   [ ] Quais benchmarks serão exigidos para considerar a atualização
-    pronta?
+-   [x] **Qual a política de qualidade inicial para fontes adicionais?**\
+    *Definido:* Streaming sob demanda. O transmissor apenas envia pacotes de vídeo codificados para participantes inscritos (`SUBSCRIBE_STREAM`). Para espectadores não inscritos, aplica-se `replaceTrack(null)`, encerrando instâncias ociosas de codificação na GPU/CPU.
+-   [x] **Como medir de maneira confiável a pressão de CPU/GPU em cada plataforma?**\
+    *Definido:* Em desktop, via IPC nativo `desktopAPI.getGpuDiagnostics()` (`app.getGPUFeatureStatus()`, `app.getGPUInfo('basic')`, CPU % e memória). Na camada WebRTC, via inspeção estrita de `report.encoderImplementation` e `report.decoderImplementation` (`ExternalEncoder` D3D11/MediaFoundation vs `OpenH264`/`libvpx`).
+-   [x] **Quais codecs estarão habilitados inicialmente em cada plataforma?**\
+    *Definido:* H.264, AV1, VP9 e VP8, com preferências de codec aplicadas via `setCodecPreferences()` na oferta e na resposta (Answer).
 
 ## 15. Registro de alterações do plano
 
@@ -538,6 +533,12 @@ Use esta seção para registrar decisões que ainda precisam ser tomadas.
   2026-10-11              Correção de Acesso à Transmissão (Sem Tela Preta) e Remoção de Teatro:  Remoção definitiva do botão/modo Teatro (permanecendo Mosaico e Palco). Resolução completa da tela preta
                           Sincronização de Stream IDs (-desktop e -screen), Fallback Autoplay      ao clicar em "Assistir Transmissão" via normalização de aliases, registro no remoteUserMedia e fallback
                           e Reprodução Estável no Desktop, Navegador e Mobile (Versão 1.2.4).      de reprodução com áudio/mudo em navegadores e dispositivos móveis.
+
+  2026-10-13              Auditoria Completa, Otimização de CPU e Estabilização WebRTC:           Streaming de vídeo sob demanda com replaceTrack(null) para participantes não inscritos,
+                          Streaming Sob Demanda, Token Bucket Rate Limiter, Aceleração Real       eliminando instâncias duplicadas de encoders na GPU/CPU. Token Bucket com burst de 160 tokens
+                          por Hardware e Reconexão Automática Resiliente (Versão 1.3.1).          e taxa de 60/s no backend, loteamento de candidatos ICE e remoção de alert() bloqueante.
+                                                                                                  Telemetria fidedigna via getStats() e IPC do Electron, com modal de diagnóstico em tempo real.
+                                                                                                  Reconexão automática com backoff exponencial + jitter e histórico da última sala no Lobby.
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 16. Próximas Atualizações Planejadas (Backlog de Personalização de Usuário)

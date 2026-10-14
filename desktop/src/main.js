@@ -23,11 +23,13 @@ const __dirname = path.dirname(__filename);
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
 // Habilita aceleração por hardware completa para codificação/decodificação WebRTC e WGC
-app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding');
+app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationD3D11VideoCapture,MediaFoundationVideoEncode,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
+app.commandLine.appendSwitch('force-high-performance-gpu');
 app.commandLine.appendSwitch('force_high_performance_gpu');
+app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 // Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-gpu-rasterization');

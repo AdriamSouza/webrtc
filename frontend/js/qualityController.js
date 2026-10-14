@@ -78,8 +78,14 @@ export function isHardwareCodecImplementation(implName) {
  * - 'unknown': Implementação não informada pelo WebRTC ou não catalogada (sem suposição de CPU)
  * - 'inactive': Fluxo sem atividade de codificação
  */
-export function analyzeEncoderImplementation(implName, codecName = '', activityInfo = {}) {
-  const { framesEncoded = null, bytesSent = null, framesDelta = null } = activityInfo;
+export function analyzeEncoderImplementation(implName, codecName = '', isPowerEfficient = null, activityInfo = {}) {
+  // Trata caso onde activityInfo foi passado como 3º argumento para compatibilidade reversa
+  if (typeof isPowerEfficient === 'object' && isPowerEfficient !== null && Object.keys(activityInfo).length === 0) {
+    activityInfo = isPowerEfficient;
+    isPowerEfficient = null;
+  }
+
+  const { framesEncoded = null, bytesSent = null, framesDelta = null, qualityLimitationReason = 'none' } = activityInfo;
   const isInactive = (framesEncoded === 0 && bytesSent === 0) || (framesDelta === 0 && bytesSent === 0);
 
   if (isInactive) {
@@ -92,10 +98,61 @@ export function analyzeEncoderImplementation(implName, codecName = '', activityI
       isSoftware: false,
       isUnknown: false,
       rawImplementation: implName || 'Nenhuma',
+      powerEfficient: isPowerEfficient,
+      qualityLimitationReason,
       evidence: 'Nenhum quadro codificado ou enviado nesta conexão (streaming sob demanda ou pausado)'
     };
   }
 
+  const s = String(implName || '').toLowerCase();
+  const isHwImpl = s.startsWith('externalencoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('nvenc') || s.includes('amf') || s.includes('vcn') || s.includes('qsv') || s.includes('vaapi') || s.includes('hardware');
+  const isSwImpl = s.includes('openh264') || s.includes('libaom') || s.includes('libvpx') || s.includes('dav1d') || s.includes('ffmpeg') || s.includes('software');
+
+  // 1. Hardware confirmado: powerEfficient === true OU nome comprovadamente de hardware (sem indicador de software)
+  if (isPowerEfficient === true || (isHwImpl && !isSwImpl && isPowerEfficient !== false)) {
+    const rawImpl = implName ? `${implName}${isPowerEfficient === true ? ' [powerEfficient]' : ''}` : 'Hardware GPU [powerEfficient]';
+    return {
+      state: 'hardware_confirmed',
+      category: 'hardware',
+      label: 'GPU Hardware ⚡',
+      badgeClass: 'diag-badge-hw',
+      isHardware: true,
+      isSoftware: false,
+      isUnknown: false,
+      rawImplementation: rawImpl,
+      powerEfficient: isPowerEfficient ?? true,
+      qualityLimitationReason,
+      evidence: `GPU Hardware Confirmado (${rawImpl}) via DirectX 11 / MediaFoundationVideoEncodeAccelerator`
+    };
+  }
+
+  // 2. Software confirmado: powerEfficient === false (quando framesEncoded > 15) OU nome de software
+  if (isPowerEfficient === false || isSwImpl) {
+    const rawImpl = implName || `${codecName} Software`;
+    let evidenceText = `Software / CPU (${rawImpl}) — Fallback ativo para codificador de software`;
+    if (s.includes('libaom')) {
+      evidenceText = `Software / CPU (${rawImpl}) — Hardware/driver não expôs codificador AV1 ao WebRTC; fallback ativo para biblioteca libaom multi-threaded`;
+    } else if (s.includes('openh264')) {
+      evidenceText = `Software / CPU (${rawImpl}) — Fallback ativo para OpenH264 (Cisco)`;
+    } else if (s.includes('libvpx')) {
+      evidenceText = `Software / CPU (${rawImpl}) — Codificador VP8/VP9 por CPU`;
+    }
+    return {
+      state: 'software_confirmed',
+      category: 'software',
+      label: `Software (CPU: ${implName || codecName}) ⚠️`,
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      isUnknown: false,
+      rawImplementation: rawImpl,
+      powerEfficient: false,
+      qualityLimitationReason,
+      evidence: evidenceText
+    };
+  }
+
+  // 3. Ausência de implementação e de sinal de powerEfficient
   if (!implName) {
     return {
       state: 'unknown',
@@ -106,76 +163,12 @@ export function analyzeEncoderImplementation(implName, codecName = '', activityI
       isSoftware: false,
       isUnknown: true,
       rawImplementation: 'Não informado pelo WebRTC',
+      powerEfficient: null,
+      qualityLimitationReason,
       evidence: 'A API getStats() do Chromium nesta plataforma não expôs encoderImplementation no relatório outbound-rtp. Não é possível determinar se a codificação é executada via GPU (MFT/D3D11) ou CPU.'
     };
   }
 
-  const s = String(implName).toLowerCase();
-  if (s.startsWith('externalencoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('nvenc') || s.includes('amf') || s.includes('qsv') || s.includes('hardware')) {
-    return {
-      state: 'hardware_confirmed',
-      category: 'hardware',
-      label: 'GPU Hardware ⚡',
-      badgeClass: 'diag-badge-hw',
-      isHardware: true,
-      isSoftware: false,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `GPU Hardware Confirmado (${implName}) via DirectX 11 / MediaFoundationVideoEncodeAccelerator`
-    };
-  }
-  if (s.includes('libaom')) {
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: 'Software (CPU: libaom) ⚠️',
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `Software / CPU (${implName}) — Hardware/driver não expôs codificador AV1 ao WebRTC; fallback ativo para biblioteca libaom multi-threaded`
-    };
-  }
-  if (s.includes('openh264')) {
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: 'Software (CPU: OpenH264) ⚠️',
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `Software / CPU (${implName}) — Fallback ativo para OpenH264 (Cisco)`
-    };
-  }
-  if (s.includes('libvpx')) {
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: 'Software (CPU: libvpx) ⚠️',
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `Software / CPU (${implName}) — Codificador VP8/VP9 por CPU`
-    };
-  }
-  if (s.includes('dav1d') || s.includes('ffmpeg')) {
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: `Software (CPU: ${implName}) ⚠️`,
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `Software / CPU (${implName}) — Codificador por software`
-    };
-  }
   return {
     state: 'unknown',
     category: 'inconclusive',
@@ -185,6 +178,8 @@ export function analyzeEncoderImplementation(implName, codecName = '', activityI
     isSoftware: false,
     isUnknown: true,
     rawImplementation: implName,
+    powerEfficient: isPowerEfficient,
+    qualityLimitationReason,
     evidence: `Implementação não catalogada: ${implName}`
   };
 }
@@ -817,11 +812,15 @@ export class QualityController {
               calculatedFpsList.push(streamFps);
             }
 
+            const isPowerEfficient = typeof report.powerEfficientEncoder === 'boolean'
+              ? report.powerEfficientEncoder
+              : (typeof report.powerEfficient === 'boolean' ? report.powerEfficient : null);
             const encoderImpl = report.encoderImplementation || null;
-            const analysis = analyzeEncoderImplementation(encoderImpl, cName, {
+            const analysis = analyzeEncoderImplementation(encoderImpl, cName, isPowerEfficient, {
               framesEncoded: report.framesEncoded ?? report.framesSent ?? 0,
               bytesSent: report.bytesSent || 0,
-              framesDelta
+              framesDelta,
+              qualityLimitationReason: report.qualityLimitationReason || 'none'
             });
 
             const streamWidth = report.frameWidth || (streamType === 'Tela / Desktop' ? screenTrack?.getSettings()?.width : cameraTrack?.getSettings()?.width) || width || '--';
@@ -854,6 +853,7 @@ export class QualityController {
               codec: cName || (this.webrtc?.getPreferredCodec ? this.webrtc.getPreferredCodec().toUpperCase() : 'AV1'),
               sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
               encoderImplementation: encoderImpl || 'Não informado',
+              powerEfficientEncoder: isPowerEfficient,
               hwState: analysis.state,
               isHardware: analysis.isHardware,
               isSoftware: analysis.isSoftware,
@@ -1056,6 +1056,17 @@ export class QualityController {
         }
       }
 
+      // AUTO-RECOVERY OBRIGATÓRIO ANTI-CPU:
+      // Se algum stream de saída estiver ativo (framesEncoded > 20) e classificado como software_confirmed,
+      // e o usuário não selecionou deliberadamente o modo CPU, aciona o WebRTCManager para migrar para GPU
+      if (this.webrtc && this.webrtc.encoderPreference !== 'cpu' && typeof this.webrtc.handleSoftwareFallbackDetected === 'function') {
+        for (const s of outboundStreamsList) {
+          if (s.hwState === 'software_confirmed' && (s.framesEncoded > 20 || s.bytesSent > 50000)) {
+            this.webrtc.handleSoftwareFallbackDetected(s.targetUserId, s.codec, s.sdpFmtpLine, s.rawImplementation);
+          }
+        }
+      }
+
       // Fallback robusto para resolução
       if (!width || !height) {
         const localTrack = this.webrtc.mediaManager?.getScreenVideoTrack() || this.webrtc.mediaManager?.getCameraVideoTrack();
@@ -1128,13 +1139,17 @@ export class QualityController {
 
         const codecBase = uniqueCodecs.join(' / ') || outboundStreamsList[0].codec || '--';
         if (allHw) {
-          formattedCodec = `${codecBase} (GPU ⚡)`;
+          const raw = outboundStreamsList[0]?.rawImplementation || 'ExternalEncoder';
+          formattedCodec = `${codecBase} (GPU: ${raw} ⚡)`;
         } else if (allSw) {
-          formattedCodec = `${codecBase} (Software CPU ⚠️)`;
+          const raw = outboundStreamsList[0]?.rawImplementation || 'OpenH264';
+          formattedCodec = `${codecBase} (CPU: ${raw} ⚠️)`;
         } else if (anyHw && anySw) {
           formattedCodec = `${codecBase} (Misto GPU/CPU)`;
         } else if (anyHw) {
-          formattedCodec = `${codecBase} (GPU ⚡)`;
+          const hwStream = outboundStreamsList.find(s => s.isHardware);
+          const raw = hwStream?.rawImplementation || 'Hardware';
+          formattedCodec = `${codecBase} (GPU: ${raw} ⚡)`;
         } else {
           // Estado 'unknown': NUNCA emitir alarme falso de software!
           formattedCodec = codecBase;

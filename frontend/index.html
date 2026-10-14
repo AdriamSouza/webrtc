@@ -1054,7 +1054,7 @@
             <div class="update-card-header">
               <div class="app-version-badge">
                 <span class="version-label">Versão Instalada:</span>
-                <strong id="currentAppVersionDisplay">v1.4.0</strong>
+                <strong id="currentAppVersionDisplay">v1.4.1</strong>
               </div>
               <button type="button" id="btnCheckUpdatesManual" class="btn btn-secondary btn-sm btn-icon-inline">
                 <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1070,12 +1070,12 @@
             <div class="version-matrix-container">
               <div class="version-matrix-card">
                 <span class="matrix-card-title">App Desktop</span>
-                <strong class="matrix-card-val" id="matrixDesktopVal">v1.4.0</strong>
+                <strong class="matrix-card-val" id="matrixDesktopVal">v1.4.1</strong>
                 <span class="matrix-card-sub" id="matrixDesktopCommit">Nativo Windows x64</span>
               </div>
               <div class="version-matrix-card">
                 <span class="matrix-card-title">Frontend Embutido</span>
-                <strong class="matrix-card-val" id="matrixFrontendVal">v1.4.0</strong>
+                <strong class="matrix-card-val" id="matrixFrontendVal">v1.4.1</strong>
                 <span class="matrix-card-sub" id="matrixFrontendSub">Protocolo v2</span>
               </div>
               <div class="version-matrix-card">
@@ -1217,6 +1217,10 @@
           <div class="diag-section-header">
             <h4>Transmissões Locais de Saída (Outbound Encoders)</h4>
             <span class="diag-sublabel">Apenas inscritos ativos consomem encoders</span>
+          </div>
+          <div id="hardwareFallbackAlert" class="alert-banner alert-banner-danger hidden" style="margin: 8px 0 12px 0; padding: 10px 14px; border-radius: 6px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; font-size: 0.8rem;">
+            <div style="font-weight: 600; margin-bottom: 3px;">⚠️ ALERTA CRÍTICO: Fallback de Codificação para CPU Detectado</div>
+            <div id="hardwareFallbackAlertText">A aceleração por hardware GPU falhou e o vídeo está sendo codificado por software no processador.</div>
           </div>
           <div class="diag-table-container">
             <table class="diag-table">

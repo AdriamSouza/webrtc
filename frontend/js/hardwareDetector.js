@@ -148,36 +148,219 @@ export function evaluateCodecCapabilities(gpuInfo = {}, featureStatus = {}) {
 }
 
 /**
+ * Realiza sondagem assíncrona de capacidades reais de codificação por hardware no motor do Chromium.
+ * Consulta navigator.mediaCapabilities.encodingInfo() para cada codec/perfil exposto por RTCRtpSender.getCapabilities('video').codecs.
+ *
+ * @param {number} width - Largura em pixels (padrão: 1920)
+ * @param {number} height - Altura em pixels (padrão: 1080)
+ * @param {number} framerate - FPS (padrão: 60)
+ * @param {number} bitrate - Taxa de bits em bps (padrão: 8000000)
+ * @returns {Promise<Object>} Resultado detalhado da sondagem
+ */
+export async function probeRealHardwareEncoders(width = 1920, height = 1080, framerate = 60, bitrate = 8000000) {
+  let senderCodecs = [];
+  try {
+    if (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function') {
+      senderCodecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
+    } else if (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function') {
+      senderCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs || [];
+    }
+  } catch (_) {}
+
+  const isExcluded = (mime = '') => {
+    const m = mime.toLowerCase();
+    return m.includes('rtx') || m.includes('red') || m.includes('ulpfec') || m.includes('flexfec');
+  };
+
+  const probedCodecs = [];
+  const hardwareCodecs = [];
+  const softwareCodecs = [];
+  const h264ProfilesMap = new Map();
+
+  console.log(`%c[Hardware Probe] Iniciando sondagem de encoders no motor Chromium (${width}x${height} @ ${framerate}fps, ${(bitrate / 1000000).toFixed(1)} Mbps)...`, 'color: #38bdf8; font-weight: bold;');
+
+  for (const c of senderCodecs) {
+    if (isExcluded(c.mimeType)) continue;
+
+    const mime = c.mimeType;
+    const mimeLower = mime.toLowerCase();
+    const fmtp = c.sdpFmtpLine || '';
+    let contentType = `${mime}; ${fmtp}`.trim().replace(/;\s*$/, '');
+
+    // Formata contentType compatível com mediaCapabilities para navegadores modernos
+    if (mimeLower.includes('h264')) {
+      const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/i);
+      const profileId = match ? match[1].toLowerCase() : '42e01f';
+      contentType = `video/mp4; codecs="avc1.${profileId}"`;
+    } else if (mimeLower.includes('av1') || mimeLower.includes('av01')) {
+      contentType = 'video/mp4; codecs="av01.0.08M.10"';
+    } else if (mimeLower.includes('vp9')) {
+      contentType = 'video/webm; codecs="vp09.00.10.08"';
+    } else if (mimeLower.includes('vp8')) {
+      contentType = 'video/webm; codecs="vp8"';
+    }
+
+    let supported = false;
+    let smooth = false;
+    let powerEfficient = false;
+    let rawInfo = null;
+
+    if (typeof navigator !== 'undefined' && navigator.mediaCapabilities?.encodingInfo) {
+      try {
+        rawInfo = await navigator.mediaCapabilities.encodingInfo({
+          type: 'webrtc',
+          video: { contentType, width, height, bitrate, framerate }
+        });
+      } catch (_) {}
+
+      // Fallback para type: 'record' se type: 'webrtc' for recusado pelo navegador
+      if (!rawInfo || !rawInfo.supported) {
+        try {
+          const recInfo = await navigator.mediaCapabilities.encodingInfo({
+            type: 'record',
+            video: { contentType, width, height, bitrate, framerate }
+          });
+          if (recInfo && (recInfo.supported || recInfo.powerEfficient)) {
+            rawInfo = recInfo;
+          }
+        } catch (_) {}
+      }
+
+      if (rawInfo) {
+        supported = Boolean(rawInfo.supported);
+        smooth = Boolean(rawInfo.smooth);
+        powerEfficient = Boolean(rawInfo.powerEfficient);
+      }
+    }
+
+    // Regra estrita de classificação de Hardware Confirmado:
+    // 1. powerEfficient === true no encodingInfo(), OU
+    // 2. Para H.264: packetization-mode=1 obrigatório e profile-level-id 42e0, 4d00 ou 6400
+    const fmtpLower = fmtp.toLowerCase();
+    const isPacketizationMode1 = fmtpLower.includes('packetization-mode=1');
+    const isPacketizationMode0 = fmtpLower.includes('packetization-mode=0');
+    const isH264 = mimeLower.includes('h264');
+
+    let isHwConfirmed = false;
+    if (powerEfficient === true) {
+      isHwConfirmed = true;
+    } else if (isH264 && !isPacketizationMode0 && isPacketizationMode1) {
+      const match = fmtpLower.match(/profile-level-id=([0-9a-f]{6})/);
+      const pid = match ? match[1] : '';
+      if (pid.startsWith('42e0') || pid.startsWith('4d00') || pid.startsWith('6400')) {
+        isHwConfirmed = true;
+      }
+    }
+
+    const entry = {
+      codec: c,
+      mimeType: mime,
+      sdpFmtpLine: fmtp,
+      contentType,
+      supported: supported || isHwConfirmed,
+      smooth,
+      powerEfficient: powerEfficient || isHwConfirmed,
+      isHwConfirmed,
+      isPacketizationMode1,
+      isPacketizationMode0
+    };
+
+    probedCodecs.push(entry);
+
+    if (entry.isHwConfirmed) {
+      hardwareCodecs.push(entry);
+    } else {
+      softwareCodecs.push(entry);
+    }
+
+    if (isH264) {
+      const match = fmtpLower.match(/profile-level-id=([0-9a-f]{6})/);
+      const pid = match ? match[1] : 'unknown';
+      h264ProfilesMap.set(pid, entry);
+    }
+
+    const statusTag = entry.isHwConfirmed
+      ? '⚡ GPU HARDWARE (powerEfficient: true)'
+      : '⚠️ SOFTWARE CPU (powerEfficient: false)';
+    console.log(`  • ${mime} [${fmtp || 'default'}]: ${statusTag}`);
+  }
+
+  // Identifica melhor codec H.264 de hardware (prioridade: 42e01f > 4d001f > 64001f)
+  let bestH264Codec = null;
+  const h264HwList = hardwareCodecs.filter(c => c.mimeType.toLowerCase().includes('h264') && c.isPacketizationMode1);
+  if (h264HwList.length > 0) {
+    bestH264Codec = h264HwList.find(c => c.sdpFmtpLine.includes('42e01f')) ||
+                    h264HwList.find(c => c.sdpFmtpLine.includes('4d001f')) ||
+                    h264HwList.find(c => c.sdpFmtpLine.includes('64001f')) ||
+                    h264HwList[0];
+  }
+
+  const results = {
+    probedAt: new Date().toISOString(),
+    probedCodecs,
+    hardwareCodecs,
+    softwareCodecs,
+    bestH264Codec,
+    hasHardwareH264: hardwareCodecs.some(c => c.mimeType.toLowerCase().includes('h264')),
+    hasHardwareAV1: hardwareCodecs.some(c => c.mimeType.toLowerCase().includes('av1') || c.mimeType.toLowerCase().includes('av01')),
+    hasHardwareVP9: hardwareCodecs.some(c => c.mimeType.toLowerCase().includes('vp9')),
+    h264ProfilesMap
+  };
+
+  console.log('[Hardware Probe] Resumo da sondagem:', {
+    totalProbed: probedCodecs.length,
+    hardwareCount: hardwareCodecs.length,
+    softwareCount: softwareCodecs.length,
+    hasHardwareH264: results.hasHardwareH264,
+    bestH264: results.bestH264Codec?.sdpFmtpLine || 'Nenhum'
+  });
+
+  return results;
+}
+
+/**
  * Determina a ordem prioritária de codecs para o WebRTC (setCodecPreferences)
- * respeitando a preferência do usuário (Auto, GPU, CPU) e os recursos reais do hardware.
+ * respeitando a preferência do usuário (Auto, GPU, CPU), os recursos reais do hardware
+ * e a rejeição de perfis que falharam em runtime (anti-CPU fallback).
  *
  * @param {Object} params
  * @param {string} params.preference - 'auto' | 'gpu' | 'cpu'
  * @param {string} params.preferredCodec - 'auto' | 'H264' | 'AV1' | 'VP9' | 'VP8'
- * @param {Array} params.availableCodecs - Array de codecs do RTCRtpReceiver.getCapabilities('video').codecs
+ * @param {Array} params.availableCodecs - Array de codecs do RTCRtpSender.getCapabilities('video').codecs
  * @param {Object} params.capabilities - Resultado de evaluateCodecCapabilities()
+ * @param {Object} [params.hardwareProbe] - Resultado de probeRealHardwareEncoders()
+ * @param {Set|Array} [params.rejectedProfiles] - Perfis rejeitados que caíram na CPU em runtime
  * @returns {Object} { preferredOrder, selectedCodec, isHardwareExpected, reason }
  */
 export function determineOptimalCodecOrder({
-  preference = 'auto',
-  preferredCodec = 'auto',
+  preference = 'gpu',
+  preferredCodec = 'H264',
   availableCodecs = [],
-  capabilities = {}
+  capabilities = {},
+  hardwareProbe = null,
+  rejectedProfiles = new Set()
 }) {
   const normPref = String(preference).toLowerCase();
   const normCodec = String(preferredCodec).toUpperCase();
-  const isEncodeHw = capabilities.isVideoEncodeAccelerated !== false;
+  const rejectedSet = rejectedProfiles instanceof Set ? rejectedProfiles : new Set(rejectedProfiles || []);
 
-  // Agrupa os codecs disponíveis por família
+  const isHelperCodec = (mime = '') => {
+    const m = mime.toLowerCase();
+    return m.includes('rtx') || m.includes('red') || m.includes('ulpfec') || m.includes('flexfec');
+  };
+
   const av1Codecs = [];
   const h264Codecs = [];
   const vp9Codecs = [];
   const vp8Codecs = [];
+  const helperCodecs = [];
   const otherCodecs = [];
 
   for (const c of availableCodecs) {
     const mime = (c.mimeType || '').toLowerCase();
-    if (mime === 'video/av1' || mime === 'video/av01') {
+    if (isHelperCodec(mime)) {
+      helperCodecs.push(c);
+    } else if (mime === 'video/av1' || mime === 'video/av01') {
       av1Codecs.push(c);
     } else if (mime === 'video/h264') {
       h264Codecs.push(c);
@@ -190,17 +373,45 @@ export function determineOptimalCodecOrder({
     }
   }
 
+  // Ordenação cirúrgica dos codecs H.264:
+  // 1. powerEfficient === true e packetization-mode=1 no topo (42e01f > 4d001f > 64001f)
+  // 2. packetization-mode=0 jogado para o final da fila (força software no Chromium)
+  // 3. Perfis em rejectedSet descartados para o fim absoluto
+  const scoreH264 = (c) => {
+    const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+    if (rejectedSet.has(c.sdpFmtpLine) || rejectedSet.has(fmtp)) return 9999;
+
+    const isMode0 = fmtp.includes('packetization-mode=0');
+    const isMode1 = fmtp.includes('packetization-mode=1');
+    const basePenalty = isMode0 ? 1000 : 0;
+
+    if (fmtp.includes('profile-level-id=42e01f')) return basePenalty + 10;
+    if (fmtp.includes('profile-level-id=42e0')) return basePenalty + 20;
+    if (fmtp.includes('profile-level-id=4d001f')) return basePenalty + 30;
+    if (fmtp.includes('profile-level-id=4d00')) return basePenalty + 40;
+    if (fmtp.includes('profile-level-id=64001f')) return basePenalty + 50;
+    if (fmtp.includes('profile-level-id=6400')) return basePenalty + 60;
+    if (fmtp.includes('profile-level-id=42001f')) return basePenalty + 70;
+    return basePenalty + (isMode1 ? 80 : 900);
+  };
+
+  h264Codecs.sort((a, b) => scoreH264(a) - scoreH264(b));
+
   let preferredOrder = [];
   let selectedCodec = 'H264';
-  let isHardwareExpected = false;
+  let isHardwareExpected = true;
   let reason = '';
 
-  // 1. MODO CPU (Software explícito)
+  const isEncodeHw = capabilities.isVideoEncodeAccelerated !== false;
+  const hasHwAv1 = Boolean(hardwareProbe?.hasHardwareAV1 || capabilities.codecs?.AV1?.hardwareSupported);
+  const hasHwH264 = hardwareProbe ? Boolean(hardwareProbe.hasHardwareH264) : isEncodeHw;
+
+  // 1. MODO CPU (Software explícito solicitado pelo usuário)
   if (normPref === 'cpu') {
     if (normCodec === 'AV1' && av1Codecs.length > 0) {
       preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'AV1';
-      reason = 'Modo CPU selecionado com AV1: codificação executada pela biblioteca libaom (multi-threaded).';
+      reason = 'Modo CPU selecionado com AV1: codificação executada pela biblioteca libaom.';
     } else if (normCodec === 'VP9' && vp9Codecs.length > 0) {
       preferredOrder = [...vp9Codecs, ...av1Codecs, ...h264Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'VP9';
@@ -208,86 +419,53 @@ export function determineOptimalCodecOrder({
     } else if (normCodec === 'VP8' && vp8Codecs.length > 0) {
       preferredOrder = [...vp8Codecs, ...h264Codecs, ...av1Codecs, ...otherCodecs];
       selectedCodec = 'VP8';
-      reason = 'Modo CPU selecionado com VP8: codificação legada via libvpx.';
+      reason = 'Modo CPU selecionado com VP8.';
     } else {
-      // Padrão no modo CPU: H.264 via software (OpenH264) ou AV1 libaom
       preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'H264';
-      reason = 'Modo CPU selecionado: codificação prioritária por processador com limites de conservação de energia.';
+      reason = 'Modo CPU selecionado: codificação por software.';
     }
     isHardwareExpected = false;
   }
-  // 2. MODO GPU (Hardware explícito)
-  else if (normPref === 'gpu') {
-    if (normCodec === 'AV1' && capabilities.codecs?.AV1?.hardwareSupported && av1Codecs.length > 0) {
-      preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = 'AV1';
-      isHardwareExpected = true;
-      reason = 'GPU selecionada: codificador AV1 acelerado por hardware ativo.';
-    } else if (h264Codecs.length > 0) {
-      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = 'H264';
-      isHardwareExpected = true;
-      if (normCodec === 'AV1' && !capabilities.codecs?.AV1?.hardwareSupported) {
-        reason = 'GPU selecionada: H.264 priorizado com aceleração por hardware (NVENC/AMF/DirectX 11), pois o WebRTC do Chromium não disponibiliza encoder AV1 por GPU para este driver.';
-      } else {
-        reason = 'GPU selecionada: codificação H.264 acelerada por hardware via MediaFoundation / DirectX 11.';
-      }
-    } else {
-      // Fallback seguro se não houver H.264 por hardware
-      preferredOrder = [...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = av1Codecs.length > 0 ? 'AV1' : 'VP8';
-      isHardwareExpected = false;
-      reason = 'Aviso: H.264 não encontrado no navegador. Operando com codificador alternativo.';
-    }
-  }
-  // 3. MODO AUTOMÁTICO (Recomendado)
+  // 2. MODO GPU OU AUTOMÁTICO (Prioriza Aceleração por Hardware)
   else {
-    // Se o usuário selecionou manualmente um codec específico (ex: H264 ou AV1 explícito no dropdown de codecs)
-    if (normCodec === 'H264' && h264Codecs.length > 0) {
-      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = 'H264';
-      isHardwareExpected = true;
-      reason = 'H.264 selecionado com aceleração nativa por hardware GPU.';
-    } else if (normCodec === 'AV1' && av1Codecs.length > 0) {
+    // Se AV1 foi explicitamente pedido e possui hardware comprovado na sondagem
+    if (normCodec === 'AV1' && hasHwAv1 && av1Codecs.length > 0 && !rejectedSet.has('AV1')) {
       preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'AV1';
-      isHardwareExpected = Boolean(capabilities.codecs?.AV1?.hardwareSupported);
-      reason = isHardwareExpected
-        ? 'AV1 selecionado com aceleração de hardware GPU.'
-        : 'AV1 selecionado manualmente: codificação via software libaom (atenção ao uso de CPU).';
-    } else if (normCodec === 'VP9' && vp9Codecs.length > 0) {
-      preferredOrder = [...vp9Codecs, ...h264Codecs, ...av1Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = 'VP9';
-      isHardwareExpected = false;
-      reason = 'VP9 selecionado manualmente: codificação via software libvpx.';
-    } else if (normCodec === 'VP8' && vp8Codecs.length > 0) {
-      preferredOrder = [...vp8Codecs, ...h264Codecs, ...av1Codecs, ...otherCodecs];
-      selectedCodec = 'VP8';
-      isHardwareExpected = false;
-      reason = 'VP8 selecionado manualmente.';
+      isHardwareExpected = true;
+      reason = 'AV1 selecionado com aceleração nativa por hardware GPU comprovada.';
     }
-    // Caso padrão do Modo Automático (normCodec === 'AUTO'): prioriza aceleração por hardware
-    else {
-      // Se houver H.264 disponível, prioriza GPU Direct3D 11 / MediaFoundation (zero CPU, 60 FPS)
-      if (h264Codecs.length > 0 && isEncodeHw !== false) {
-        preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-        selectedCodec = 'H264';
-        isHardwareExpected = true;
-        reason = 'Automático: H.264 selecionado por dispor de aceleração nativa por GPU (DirectX 11 / NVENC / AMF) com baixíssima latência e 60 FPS.';
-      } else if (av1Codecs.length > 0) {
-        preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-        selectedCodec = 'AV1';
-        isHardwareExpected = false;
-        reason = 'Automático: AV1 selecionado como fallback de alta eficiência (libaom CPU).';
+    // Caso padrão (GPU ou Auto): prioriza H.264 por hardware (42e01f / 4d001f packetization-mode=1)
+    else if (h264Codecs.length > 0 && !rejectedSet.has('H264_ALL')) {
+      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      selectedCodec = 'H264';
+      isHardwareExpected = hasHwH264;
+      if (normCodec === 'AV1' && !hasHwAv1) {
+        reason = 'H.264 priorizado para aceleração por hardware (AMD VCN / NVENC / QuickSync), pois AV1 opera via software libaom (CPU) neste ambiente. WebRTC do Chromium não disponibiliza encoder AV1 por GPU nesta GPU/driver.';
+      } else if (!hasHwH264) {
+        reason = 'Automático: codec padrão WebRTC do sistema (aceleração por GPU não detectada).';
       } else {
-        preferredOrder = [...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-        selectedCodec = h264Codecs.length > 0 ? 'H264' : 'VP8';
-        isHardwareExpected = false;
-        reason = 'Automático: codec padrão WebRTC do sistema.';
+        const topFmtp = h264Codecs[0]?.sdpFmtpLine || '';
+        reason = `H.264 selecionado por dispor de aceleração nativa por GPU (${topFmtp.includes('42e01f') ? 'Constrained Baseline 42e01f' : (topFmtp.includes('4d001f') ? 'Main 4d001f' : 'GPU Hardware')}) com baixíssima latência e 60 FPS.`;
       }
     }
+    // Fallback se H.264 foi completamente rejeitado ou não existe
+    else if (av1Codecs.length > 0 && !rejectedSet.has('AV1')) {
+      preferredOrder = [...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      selectedCodec = 'AV1';
+      isHardwareExpected = hasHwAv1;
+      reason = 'Fallback para AV1 após rejeição de perfil H.264.';
+    } else {
+      preferredOrder = [...vp9Codecs, ...vp8Codecs, ...h264Codecs, ...otherCodecs];
+      selectedCodec = vp9Codecs.length > 0 ? 'VP9' : 'VP8';
+      isHardwareExpected = false;
+      reason = 'Fallback para codecs WebRTC padrão.';
+    }
   }
+
+  // Anexa codecs auxiliares (rtx, red, ulpfec) no final para manter suporte pleno a retransmissão e FEC
+  preferredOrder = [...preferredOrder, ...helperCodecs];
 
   // Garante fallback se a lista filtrada estiver vazia
   if (preferredOrder.length === 0 && availableCodecs.length > 0) {

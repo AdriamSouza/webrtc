@@ -9,7 +9,7 @@
  * - Compatibilidade robusta com Chrome, Edge e Firefox
  */
 
-import { determineOptimalCodecOrder, evaluateCodecCapabilities } from './hardwareDetector.js';
+import { determineOptimalCodecOrder, evaluateCodecCapabilities, probeRealHardwareEncoders } from './hardwareDetector.js';
 
 export class WebRTCManager {
   constructor(signalingClient, iceServers = []) {
@@ -36,16 +36,25 @@ export class WebRTCManager {
     this.onRemoteTrackUnmuted = null;
     this.onNegotiationComplete = null;
     this.preferredCodec = (() => {
-      try { return localStorage.getItem('hyperstream_preferred_codec') || 'auto'; } catch (_) { return 'auto'; }
+      try { return localStorage.getItem('hyperstream_preferred_codec') || 'H264'; } catch (_) { return 'H264'; }
     })();
     this.encoderPreference = (() => {
-      try { return localStorage.getItem('hyperstream_encoder_preference') || 'auto'; } catch (_) { return 'auto'; }
+      try { return localStorage.getItem('hyperstream_encoder_preference') || 'gpu'; } catch (_) { return 'gpu'; }
     })();
+    this.rejectedHardwareProfiles = new Set();
+    this.attemptedFallbacks = new Map();
+    this.hardwareProbe = null;
+    this.lastPreferredCodecs = null;
     this.hardwareCapabilities = evaluateCodecCapabilities();
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
     this.targetMaxFps = 60; // 60 FPS padrão
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
     this.roomState = null;
+
+    // Dispara sondagem assíncrona de hardware imediatamente na inicialização
+    this.probeHardware().catch(err => {
+      console.warn('[WebRTC] Erro inicial ao sondar hardware:', err.message);
+    });
   }
 
   setIceServers(servers) {
@@ -317,86 +326,32 @@ export class WebRTCManager {
           if (line.startsWith('b=TIAS:')) hasTIAS = true;
         }
 
-        // 2. Reordena m=video para priorizar o codec preferido
+        // 2. Preserva a ordem exata de codecs gerada pelo transceiver.setCodecPreferences()
+        // NÃO reagrupa payloads por nome genérico de codec ('H264') para não destruir o profile-level-id e packetization-mode=1
         const mParts = mLine.split(' ');
         if (mParts.length > 3 && codecPayloadMap.size > 0) {
           const header = mParts.slice(0, 3);
           const payloads = mParts.slice(3);
 
-          // Determina a ordem de codecs conforme a preferência de aceleração (GPU / CPU / Auto)
-          const encPref = (this.encoderPreference || 'auto').toLowerCase();
-          const hasAv1Hw = Boolean(this.hardwareCapabilities?.codecs?.AV1?.hardwareSupported);
-
-          let order;
-          if (encPref === 'gpu') {
-            // Em modo GPU: H.264 é prioridade máxima acelerada por hardware MFT/NVENC/AMF (a menos que AV1 de hardware esteja comprovado)
-            order = (pref === 'AV1' && hasAv1Hw)
-              ? ['AV1', 'H264', 'VP9', 'VP8']
-              : ['H264', 'AV1', 'VP9', 'VP8'];
-          } else if (encPref === 'cpu') {
-            // Em modo CPU: obedece a seleção do usuário para software
-            order = (pref === 'AV1')
-              ? ['AV1', 'H264', 'VP9', 'VP8']
-              : ((pref === 'VP9')
-                ? ['VP9', 'AV1', 'H264', 'VP8']
-                : ((pref === 'VP8')
-                  ? ['VP8', 'H264', 'AV1']
-                  : ['H264', 'AV1', 'VP9', 'VP8']));
+          // Se transceiver.setCodecPreferences não foi suportado, aplica ordenação defensiva priorizando packetization-mode=1
+          if (!this.lastPreferredCodecs || this.lastPreferredCodecs.length === 0) {
+            const isCpuPref = this.encoderPreference === 'cpu';
+            const scorePayload = (pt) => {
+              const cName = codecPayloadMap.get(pt) || '';
+              if (isCpuPref && pref !== 'AUTO' && cName === pref) return 5;
+              if (cName === 'H264') return 10;
+              if (cName === 'AV1') return 20;
+              if (cName === 'VP9') return 30;
+              if (cName === 'VP8') return 40;
+              return 90;
+            };
+            const sortedPayloads = [...payloads].sort((a, b) => scorePayload(a) - scorePayload(b));
+            lines[0] = [...header, ...sortedPayloads].join(' ');
           } else {
-            // Modo Automático: prioriza GPU H.264 para evitar libaom CPU a 100%
-            if (pref === 'AV1' && !hasAv1Hw) {
-              order = ['AV1', 'H264', 'VP9', 'VP8']; // Usuário escolheu AV1 manualmente
-            } else if (pref === 'VP9') {
-              order = ['VP9', 'H264', 'AV1', 'VP8'];
-            } else if (pref === 'VP8') {
-              order = ['VP8', 'H264', 'AV1'];
-            } else {
-              // Padrão Auto: H.264 primeiro (GPU Direct3D 11 / MediaFoundation a 60 FPS)
-              order = ['H264', 'AV1', 'VP9', 'VP8'];
-            }
+            // Mantém a ordem cirúrgica do setCodecPreferences já refletida no SDP
+            lines[0] = [...header, ...payloads].join(' ');
           }
-
-          const groupedPayloads = new Map();
-          for (const c of order) groupedPayloads.set(c, []);
-          const otherPayloads = [];
-          const rtxPayloads = new Set(rtxAptMap.keys());
-
-          for (const pt of payloads) {
-            if (rtxPayloads.has(pt)) continue;
-            const cName = codecPayloadMap.get(pt);
-            if (cName && groupedPayloads.has(cName)) {
-              groupedPayloads.get(cName).push(pt);
-            } else {
-              otherPayloads.push(pt);
-            }
-          }
-
-          // Reconstrói lista de payloads com codecs na ordem e seus respectivos RTX logo após
-          const orderedPayloads = [];
-          for (const c of order) {
-            const list = groupedPayloads.get(c) || [];
-            for (const pt of list) {
-              orderedPayloads.push(pt);
-              for (const [rtxPt, aptPt] of rtxAptMap.entries()) {
-                if (aptPt === pt && !orderedPayloads.includes(rtxPt)) {
-                  orderedPayloads.push(rtxPt);
-                }
-              }
-            }
-          }
-          for (const pt of otherPayloads) {
-            if (!orderedPayloads.includes(pt)) {
-              orderedPayloads.push(pt);
-              for (const [rtxPt, aptPt] of rtxAptMap.entries()) {
-                if (aptPt === pt && !orderedPayloads.includes(rtxPt)) {
-                  orderedPayloads.push(rtxPt);
-                }
-              }
-            }
-          }
-
-          lines[0] = [...header, ...orderedPayloads].join(' ');
-          console.log(`[WebRTC SDP] m=video reordenado (ordem ${pref}):`, orderedPayloads.map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`).slice(0, 4));
+          console.log('[WebRTC SDP] m=video mantido na ordem de perfil do hardware:', payloads.slice(0, 4).map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`));
         }
 
         // 3. Aplica limites de banda b=AS e b=TIAS na seção
@@ -644,36 +599,106 @@ export class WebRTCManager {
   }
 
   /**
-   * Configura preferência de codecs no Transceiver WebRTC conforme seleção do usuário
-   * e capacidades reais de hardware (GPU vs CPU).
+   * Executa sondagem real de hardware com probeRealHardwareEncoders
+   */
+  async probeHardware(options = {}) {
+    try {
+      this.hardwareProbe = await probeRealHardwareEncoders(
+        options.width || 1920,
+        options.height || 1080,
+        options.framerate || 60,
+        options.bitrate || this.targetMaxBitrate || 8000000
+      );
+      this.hardwareCapabilities = evaluateCodecCapabilities({}, {}, this.hardwareProbe);
+      return this.hardwareProbe;
+    } catch (err) {
+      console.warn('[WebRTC] Erro durante probeRealHardwareEncoders:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Configura preferência de codecs no Transceiver WebRTC conforme seleção do usuário,
+   * capacidades reais de hardware (GPU vs CPU) e descarte de perfis com falha de runtime.
    */
   configureCodecPreferences(transceiver) {
     if (!transceiver || typeof transceiver.setCodecPreferences !== 'function') {
       return;
     }
 
-    if (typeof RTCRtpReceiver.getCapabilities !== 'function') {
-      return;
-    }
-
     try {
-      const capabilities = RTCRtpReceiver.getCapabilities('video');
+      // 1. Obtém lista real de codecs de envio com RTCRtpSender.getCapabilities (fallback para Receiver)
+      const capabilities = (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function')
+        ? RTCRtpSender.getCapabilities('video')
+        : (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function' ? RTCRtpReceiver.getCapabilities('video') : null);
+
       if (!capabilities || !capabilities.codecs) return;
 
       const caps = this.hardwareCapabilities || evaluateCodecCapabilities();
       const optimal = determineOptimalCodecOrder({
-        preference: this.encoderPreference || 'auto',
-        preferredCodec: this.preferredCodec || 'auto',
+        preference: this.encoderPreference || 'gpu',
+        preferredCodec: this.preferredCodec || 'H264',
         availableCodecs: capabilities.codecs,
-        capabilities: caps
+        capabilities: caps,
+        hardwareProbe: this.hardwareProbe,
+        rejectedProfiles: this.rejectedHardwareProfiles
       });
 
       if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
         transceiver.setCodecPreferences(optimal.preferredOrder);
-        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${optimal.preferredOrder[0]?.mimeType} (${optimal.reason})`);
+        this.lastPreferredCodecs = optimal.preferredOrder;
+        const top = optimal.preferredOrder[0];
+        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
       }
     } catch (err) {
       console.warn('[WebRTC] Não foi possível definir preferência de codecs (usando padrão):', err.message);
+    }
+  }
+
+  /**
+   * Auto-recovery obrigatório anti-CPU: disparado quando o QualityController detecta que
+   * um stream ativo (framesEncoded > 20) caiu em software_confirmed (OpenH264 / libaom).
+   */
+  async handleSoftwareFallbackDetected(targetUserId, failedCodec, failedFmtp = '', implName = '') {
+    if (this.encoderPreference === 'cpu') return;
+
+    const lockKey = `${targetUserId}:${failedCodec}:${failedFmtp || 'default'}`;
+    const attempts = this.attemptedFallbacks.get(lockKey) || 0;
+    if (attempts >= 2) {
+      console.warn(`[WebRTC Anti-Fallback] Limite de tentativas atingido para ${lockKey}. Mantendo stream.`);
+      return;
+    }
+    this.attemptedFallbacks.set(lockKey, attempts + 1);
+
+    console.warn(`[WebRTC Anti-Fallback] Detectado fallback para CPU (${implName || failedCodec}) com peer ${targetUserId}. Disparando recuperação para GPU...`);
+
+    // Registra perfil rejeitado
+    if (failedFmtp) {
+      this.rejectedHardwareProfiles.add(failedFmtp);
+    }
+    if (failedCodec === 'AV1' || failedCodec === 'VP8' || failedCodec === 'VP9') {
+      this.preferredCodec = 'H264';
+    }
+
+    const pc = this.peers.get(targetUserId);
+    if (!pc || pc.signalingState === 'closed') return;
+
+    // Reaplica configureCodecPreferences nos transceivers de vídeo do peer
+    const transceivers = pc.getTransceivers().filter(t => {
+      return (t.sender && t.sender.track && t.sender.track.kind === 'video') ||
+             (t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
+    });
+
+    for (const t of transceivers) {
+      this.configureCodecPreferences(t);
+    }
+
+    // Dispara nova oferta SDP para migrar a codificação para a GPU
+    try {
+      console.log(`[WebRTC Anti-Fallback] Renegociando com ${targetUserId} para perfil acelerado por GPU...`);
+      await this.createOfferForPeer(targetUserId);
+    } catch (err) {
+      console.error(`[WebRTC Anti-Fallback] Falha ao renegociar com ${targetUserId}:`, err.message);
     }
   }
 

@@ -4,7 +4,7 @@ import { WebRTCManager } from './webrtc.js';
 import { QualityController } from './qualityController.js';
 import { RoomState, getParticipantColor, getUserInitials } from './room.js';
 import { Icons } from './icons.js';
-import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS } from './hardwareDetector.js';
+import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS, probeRealHardwareEncoders } from './hardwareDetector.js';
 
 // Instanciação dos Módulos Centrais
 const signaling = new SignalingClient();
@@ -1873,12 +1873,26 @@ async function renderDiagnosticsData() {
   const inboundStreams = detailed?.inboundStreams || detailed?.inbound || [];
   const localCaptures = detailed?.localCaptures || [];
 
+  const fallbackAlert = document.getElementById('hardwareFallbackAlert');
+  const fallbackAlertText = document.getElementById('hardwareFallbackAlertText');
+  const activeSoftwareOutbound = outboundStreams.find(s => s.hwState === 'software_confirmed' && (s.framesEncoded > 15 || s.bytesSent > 30000));
+  if (fallbackAlert) {
+    if (activeSoftwareOutbound && (webrtc.getEncoderPreference ? webrtc.getEncoderPreference() : 'gpu') !== 'cpu') {
+      if (fallbackAlertText) {
+        fallbackAlertText.innerHTML = `Codificador ativo: <strong style="color: #fca5a5;">[SOFTWARE (CPU): ${escapeHtml(activeSoftwareOutbound.rawImplementation || activeSoftwareOutbound.encoderImplementation)}]</strong> no codec <strong>${escapeHtml(activeSoftwareOutbound.codec)}</strong>.<br>Motivo: A aceleração por hardware GPU não pôde ser ativada para este perfil no driver. O sistema está renegociando para restaurar a GPU ou operando via CPU.`;
+      }
+      fallbackAlert.classList.remove('hidden');
+    } else {
+      fallbackAlert.classList.add('hidden');
+    }
+  }
+
   if (outboundTbody) {
     if (outboundStreams.length === 0) {
       if (localCaptures.length > 0) {
         const cap = localCaptures[0];
-        const prefCodec = detailed?.preferredCodec || 'AV1';
-        const prefEnc = (webrtc.getEncoderPreference ? webrtc.getEncoderPreference() : 'auto').toUpperCase();
+        const prefCodec = detailed?.preferredCodec || 'H264';
+        const prefEnc = (webrtc.getEncoderPreference ? webrtc.getEncoderPreference() : 'gpu').toUpperCase();
         outboundTbody.innerHTML = `
           <tr>
             <td colspan="7" class="diag-empty" style="text-align: left; padding: 14px 16px !important;">
@@ -1902,7 +1916,24 @@ async function renderDiagnosticsData() {
         const badgeClass = s.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
         const badgeLabel = s.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software ⚠️' : 'Não determinado'));
         const rawImpl = s.rawImplementation || s.encoderImplementation || 'Não informado';
-        const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>`;
+
+        const peTag = typeof s.powerEfficientEncoder === 'boolean'
+          ? (s.powerEfficientEncoder
+            ? '<span class="diag-badge-hw" style="margin-left: 4px; font-size: 0.65rem; padding: 1px 5px;" title="Chromium WebRTC confirma aceleração nativa por hardware">[powerEfficient: true]</span>'
+            : '<span class="diag-badge-sw" style="margin-left: 4px; font-size: 0.65rem; padding: 1px 5px;" title="Chromium WebRTC acusa codificador por software">[powerEfficient: false]</span>')
+          : '';
+
+        const fmtpDisplay = (s.sdpFmtpLine && s.sdpFmtpLine !== '--')
+          ? `<div style="font-size: 0.68rem; color: #94a3b8; font-family: monospace; margin-top: 3px; word-break: break-all;">${escapeHtml(s.sdpFmtpLine)}</div>`
+          : '';
+
+        const implBadge = `
+          <div>
+            <span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>
+            ${peTag}
+            ${fmtpDisplay}
+          </div>
+        `;
 
         const limitDisplay = s.qualityLimitationReason === 'none'
           ? '<span style="color: #10b981;">Nenhuma</span>'
@@ -4222,37 +4253,59 @@ function setupSettingsModal() {
   // Verificação e Diagnóstico de Aceleração por Hardware GPU dos Codecs
   async function refreshCodecsList() {
     try {
-      const gpuInfo = WebRTCManager.detectGpuHardwareAcceleration();
+      const probe = webrtc.hardwareProbe || await webrtc.probeHardware();
       
       const badgeH264 = document.getElementById('badgeH264Status');
       const descH264 = document.getElementById('descH264Status');
-      if (badgeH264) {
-        badgeH264.textContent = gpuInfo.h264.badge;
-        badgeH264.className = `badge ${gpuInfo.h264.gpuAccelerated ? 'badge-success' : 'badge-secondary'}`;
-      }
-      if (descH264 && gpuInfo.h264.description) {
-        descH264.textContent = gpuInfo.h264.description;
+      if (badgeH264 && probe) {
+        if (probe.hasHardwareH264) {
+          badgeH264.textContent = 'GPU Hardware ⚡';
+          badgeH264.className = 'badge badge-success';
+          if (descH264) {
+            const bestFmtp = probe.bestH264Codec?.sdpFmtpLine || '42e01f';
+            descH264.textContent = `Aceleração nativa por GPU confirmada no Chromium (powerEfficient: true). Perfil: ${bestFmtp}. Latência ultrabaixa para jogos a 60 FPS.`;
+          }
+        } else {
+          badgeH264.textContent = 'Software CPU ⚠️';
+          badgeH264.className = 'badge badge-secondary';
+          if (descH264) {
+            descH264.textContent = 'Codificação H.264 por software (OpenH264 / powerEfficient: false). Custo moderado de CPU.';
+          }
+        }
       }
 
       const badgeAv1 = document.getElementById('badgeAv1Status');
       const descAv1 = document.getElementById('descAv1Status');
-      if (badgeAv1) {
-        badgeAv1.textContent = gpuInfo.av1.badge;
-        badgeAv1.className = `badge ${gpuInfo.av1.gpuAccelerated ? 'badge-success' : 'badge-secondary'}`;
-      }
-      if (descAv1 && gpuInfo.av1.description) {
-        descAv1.textContent = gpuInfo.av1.description;
+      if (badgeAv1 && probe) {
+        if (probe.hasHardwareAV1) {
+          badgeAv1.textContent = 'GPU Hardware ⚡';
+          badgeAv1.className = 'badge badge-success';
+          if (descAv1) {
+            descAv1.textContent = 'Aceleração nativa AV1 por hardware ativa na GPU (powerEfficient: true).';
+          }
+        } else {
+          badgeAv1.textContent = 'Software CPU ⚠️';
+          badgeAv1.className = 'badge badge-secondary';
+          if (descAv1) {
+            descAv1.textContent = 'No WebRTC do Chromium atual, AV1 opera via software (libaom CPU - powerEfficient: false).';
+          }
+        }
       }
 
       const badgeVp9 = document.getElementById('badgeVp9Status');
-      if (badgeVp9) {
-        badgeVp9.textContent = gpuInfo.vp9.badge;
-        badgeVp9.className = `badge ${gpuInfo.vp9.gpuAccelerated ? 'badge-success' : 'badge-secondary'}`;
+      if (badgeVp9 && probe) {
+        if (probe.hasHardwareVP9) {
+          badgeVp9.textContent = 'GPU Hardware ⚡';
+          badgeVp9.className = 'badge badge-success';
+        } else {
+          badgeVp9.textContent = 'Software CPU ⚠️';
+          badgeVp9.className = 'badge badge-secondary';
+        }
       }
 
       const badgeVp8 = document.getElementById('badgeVp8Status');
       if (badgeVp8) {
-        badgeVp8.textContent = gpuInfo.vp8.badge;
+        badgeVp8.textContent = 'Software ⚠️';
         badgeVp8.className = 'badge badge-secondary';
       }
     } catch (err) {

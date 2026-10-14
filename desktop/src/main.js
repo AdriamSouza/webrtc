@@ -26,6 +26,8 @@ const __dirname = path.dirname(__filename);
 app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
+app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
+app.commandLine.appendSwitch('force_high_performance_gpu');
 // Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-gpu-rasterization');

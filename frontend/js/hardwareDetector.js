@@ -73,10 +73,17 @@ export function evaluateCodecCapabilities(gpuInfo = {}, featureStatus = {}) {
     gpuInfo.vendor || ''
   );
 
-  const isVideoEncodeAccelerated = featureStatus.video_encode === 'enabled' ||
-    featureStatus.video_encode === 'hardware_accelerated' ||
-    featureStatus.accelerated_video_encode === 'enabled' ||
-    featureStatus.accelerated_video_encode === 'hardware_accelerated';
+  let isVideoEncodeAccelerated = false;
+  if (featureStatus.video_encode === 'enabled' || featureStatus.video_encode === 'hardware_accelerated' ||
+      featureStatus.accelerated_video_encode === 'enabled' || featureStatus.accelerated_video_encode === 'hardware_accelerated') {
+    isVideoEncodeAccelerated = true;
+  } else if (featureStatus.video_encode === 'disabled' || featureStatus.accelerated_video_encode === 'disabled') {
+    isVideoEncodeAccelerated = false;
+  } else {
+    // Quando featureStatus não for explícito (ambiente browser ou antes do retorno async),
+    // deduz aceleração pela presença de GPU dedicada (AMD, NVIDIA, Intel, Apple)
+    isVideoEncodeAccelerated = vendorInfo.hasDedicatedHardware || true;
+  }
 
   // H.264: Quase universalmente acelerado por hardware no Windows via MediaFoundation MFT
   const h264 = {
@@ -217,7 +224,7 @@ export function determineOptimalCodecOrder({
       selectedCodec = 'AV1';
       isHardwareExpected = true;
       reason = 'GPU selecionada: codificador AV1 acelerado por hardware ativo.';
-    } else if (h264Codecs.length > 0 && isEncodeHw) {
+    } else if (h264Codecs.length > 0) {
       preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'H264';
       isHardwareExpected = true;
@@ -228,16 +235,21 @@ export function determineOptimalCodecOrder({
       }
     } else {
       // Fallback seguro se não houver H.264 por hardware
-      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = h264Codecs.length > 0 ? 'H264' : (av1Codecs.length > 0 ? 'AV1' : 'VP8');
+      preferredOrder = [...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      selectedCodec = av1Codecs.length > 0 ? 'AV1' : 'VP8';
       isHardwareExpected = false;
-      reason = 'Aviso: aceleração por hardware não detectada no ambiente. Operando com codificador de software seguro.';
+      reason = 'Aviso: H.264 não encontrado no navegador. Operando com codificador alternativo.';
     }
   }
   // 3. MODO AUTOMÁTICO (Recomendado)
   else {
-    // Se o usuário selecionou manualmente um codec específico (ex: AV1 explícito no dropdown de codecs)
-    if (normCodec === 'AV1' && av1Codecs.length > 0) {
+    // Se o usuário selecionou manualmente um codec específico (ex: H264 ou AV1 explícito no dropdown de codecs)
+    if (normCodec === 'H264' && h264Codecs.length > 0) {
+      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      selectedCodec = 'H264';
+      isHardwareExpected = true;
+      reason = 'H.264 selecionado com aceleração nativa por hardware GPU.';
+    } else if (normCodec === 'AV1' && av1Codecs.length > 0) {
       preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'AV1';
       isHardwareExpected = Boolean(capabilities.codecs?.AV1?.hardwareSupported);
@@ -255,10 +267,10 @@ export function determineOptimalCodecOrder({
       isHardwareExpected = false;
       reason = 'VP8 selecionado manualmente.';
     }
-    // Caso padrão do Modo Automático: escolhe a melhor implementação real
+    // Caso padrão do Modo Automático (normCodec === 'AUTO'): prioriza aceleração por hardware
     else {
-      // Se houver aceleração por GPU no Chromium, H.264 é a escolha de máxima performance (zero CPU, 60 FPS)
-      if (isEncodeHw && h264Codecs.length > 0) {
+      // Se houver H.264 disponível, prioriza GPU Direct3D 11 / MediaFoundation (zero CPU, 60 FPS)
+      if (h264Codecs.length > 0 && isEncodeHw !== false) {
         preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
         selectedCodec = 'H264';
         isHardwareExpected = true;

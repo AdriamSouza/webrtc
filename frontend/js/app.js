@@ -2023,6 +2023,33 @@ function init() {
     }
   }
 
+  // Inicialização autônoma de diagnóstico de hardware e aceleração GPU
+  (async () => {
+    try {
+      if (window.desktopAPI && typeof window.desktopAPI.getGpuDiagnostics === 'function') {
+        const gpuDiag = await window.desktopAPI.getGpuDiagnostics();
+        if (gpuDiag) {
+          const gpuName = gpuDiag.systemGpu?.name || gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || gpuDiag.gpuInfo?.gpuDevice?.[0]?.deviceString || 'GPU Dedicada (Desktop)';
+          const evaluated = evaluateCodecCapabilities(
+            { description: gpuName, vendor: gpuName },
+            gpuDiag.featureStatus || {}
+          );
+          webrtc.setHardwareCapabilities(evaluated);
+          console.log('[App] Diagnóstico inicial de GPU carregado com sucesso:', gpuName);
+        }
+      } else {
+        const webGpu = WebRTCManager.detectGpuHardwareAcceleration();
+        const evaluated = evaluateCodecCapabilities(
+          { description: webGpu.renderer || '', vendor: webGpu.vendor || '' },
+          { video_encode: 'enabled' }
+        );
+        webrtc.setHardwareCapabilities(evaluated);
+      }
+    } catch (err) {
+      console.warn('[App] Erro na detecção inicial de hardware:', err);
+    }
+  })();
+
   // Sincronização em tempo real do nome de usuário entre as abas e persistência imediata
   const handleUsernameSync = (val) => {
     const trimmed = (val || '').trim();
@@ -2275,8 +2302,20 @@ function setupEventListeners() {
   }
 
   if (btnCopyLink) {
-    btnCopyLink.addEventListener('click', () => {
-      let inviteUrl = `${window.location.origin}/?room=${encodeURIComponent(roomState.roomId)}`;
+    btnCopyLink.addEventListener('click', async () => {
+      let baseUrl = window.location.origin;
+      if (window.desktopAPI && typeof window.desktopAPI.getServerUrl === 'function') {
+        try {
+          const sUrl = await window.desktopAPI.getServerUrl();
+          if (sUrl && (sUrl.startsWith('http://') || sUrl.startsWith('https://'))) {
+            baseUrl = sUrl.replace(/\/$/, '');
+          }
+        } catch (_) {}
+      } else if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+        baseUrl = 'https://hyperstream-g9gz.onrender.com';
+      }
+
+      let inviteUrl = `${baseUrl}/?room=${encodeURIComponent(roomState.roomId)}`;
       if (roomState.hasPassword && roomState.roomPin) {
         inviteUrl += `&pin=${encodeURIComponent(roomState.roomPin)}`;
       }
@@ -4129,7 +4168,7 @@ function setupSettingsModal() {
     const matrixCompatSub = document.getElementById('matrixCompatSub');
     const matrixCompatCard = document.getElementById('matrixCompatCard');
 
-    let clientVer = '1.3.4';
+    let clientVer = '1.3.5';
     let clientCommit = 'a186ed0';
     let clientProto = 2;
 
@@ -4181,7 +4220,7 @@ function setupSettingsModal() {
       const resp = await fetch(`${serverBaseUrl.replace(/\/$/, '')}/api/version`, { cache: 'no-store' });
       if (resp.ok) {
         const serverMeta = await resp.json();
-        const sVer = serverMeta.version || '1.3.4';
+        const sVer = serverMeta.version || '1.3.5';
         const sCommit = serverMeta.gitCommit || 'online';
         const sProto = serverMeta.protocolVersion || 2;
         const minClientProto = serverMeta.minClientProtocolVersion || 1;
@@ -4739,8 +4778,12 @@ function setupSettingsModal() {
         webrtc.setEncoderPreference(s.encoderPreference);
       }
       if (s.codec && settingPreferredCodec) {
-        settingPreferredCodec.value = s.codec;
-        webrtc.setPreferredCodec(s.codec);
+        let appliedCodec = s.codec;
+        if (s.encoderPreference === 'gpu' && s.codec === 'AV1') {
+          appliedCodec = 'auto';
+        }
+        settingPreferredCodec.value = appliedCodec;
+        webrtc.setPreferredCodec(appliedCodec);
       }
       if (s.captureSystemAudio !== undefined && settingCaptureSystemAudio) {
         settingCaptureSystemAudio.checked = Boolean(s.captureSystemAudio);

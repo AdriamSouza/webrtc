@@ -41,7 +41,7 @@ export class WebRTCManager {
     this.encoderPreference = (() => {
       try { return localStorage.getItem('hyperstream_encoder_preference') || 'auto'; } catch (_) { return 'auto'; }
     })();
-    this.hardwareCapabilities = null;
+    this.hardwareCapabilities = evaluateCodecCapabilities();
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
     this.targetMaxFps = 60; // 60 FPS padrão
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
@@ -167,6 +167,9 @@ export class WebRTCManager {
             console.log(`[WebRTC] Atualizando sender (${key}) com novo track para ${targetUserId}`);
             await existingSender.replaceTrack(track);
             if (isVideo) {
+              const transceivers = pc.getTransceivers();
+              const vt = transceivers.find(t => t.sender === existingSender);
+              if (vt) this.configureCodecPreferences(vt);
               await this.applyVideoSenderLimits(existingSender);
             }
           } catch (err) {
@@ -320,15 +323,38 @@ export class WebRTCManager {
           const header = mParts.slice(0, 3);
           const payloads = mParts.slice(3);
 
-          const order = (pref === 'AV1')
-            ? ['AV1', 'H264', 'VP9', 'VP8']
-            : ((pref === 'H264')
-              ? ['H264', 'AV1', 'VP9', 'VP8']
+          // Determina a ordem de codecs conforme a preferência de aceleração (GPU / CPU / Auto)
+          const encPref = (this.encoderPreference || 'auto').toLowerCase();
+          const hasAv1Hw = Boolean(this.hardwareCapabilities?.codecs?.AV1?.hardwareSupported);
+
+          let order;
+          if (encPref === 'gpu') {
+            // Em modo GPU: H.264 é prioridade máxima acelerada por hardware MFT/NVENC/AMF (a menos que AV1 de hardware esteja comprovado)
+            order = (pref === 'AV1' && hasAv1Hw)
+              ? ['AV1', 'H264', 'VP9', 'VP8']
+              : ['H264', 'AV1', 'VP9', 'VP8'];
+          } else if (encPref === 'cpu') {
+            // Em modo CPU: obedece a seleção do usuário para software
+            order = (pref === 'AV1')
+              ? ['AV1', 'H264', 'VP9', 'VP8']
               : ((pref === 'VP9')
                 ? ['VP9', 'AV1', 'H264', 'VP8']
                 : ((pref === 'VP8')
                   ? ['VP8', 'H264', 'AV1']
-                  : ['AV1', 'H264', 'VP9', 'VP8']))); // AUTO: AV1 prioritário
+                  : ['H264', 'AV1', 'VP9', 'VP8']));
+          } else {
+            // Modo Automático: prioriza GPU H.264 para evitar libaom CPU a 100%
+            if (pref === 'AV1' && !hasAv1Hw) {
+              order = ['AV1', 'H264', 'VP9', 'VP8']; // Usuário escolheu AV1 manualmente
+            } else if (pref === 'VP9') {
+              order = ['VP9', 'H264', 'AV1', 'VP8'];
+            } else if (pref === 'VP8') {
+              order = ['VP8', 'H264', 'AV1'];
+            } else {
+              // Padrão Auto: H.264 primeiro (GPU Direct3D 11 / MediaFoundation a 60 FPS)
+              order = ['H264', 'AV1', 'VP9', 'VP8'];
+            }
+          }
 
           const groupedPayloads = new Map();
           for (const c of order) groupedPayloads.set(c, []);
@@ -986,6 +1012,17 @@ export class WebRTCManager {
         offerToReceiveVideo: true,
         ...options
       };
+
+      // Garante que TODOS os transceivers de vídeo tenham a ordem de codecs configurada antes de gerar o SDP Offer
+      const videoTransceivers = pc.getTransceivers().filter(t => {
+        const isVideoSender = t.sender && t.sender.track && t.sender.track.kind === 'video';
+        const isVideoReceiver = t.receiver && t.receiver.track && t.receiver.track.kind === 'video';
+        const isUntrackedVideo = (t.sender && !t.sender.track) || (t.receiver && !t.receiver.track);
+        return isVideoSender || isVideoReceiver || isUntrackedVideo;
+      });
+      for (const vt of videoTransceivers) {
+        this.configureCodecPreferences(vt);
+      }
 
       const offer = await pc.createOffer(offerOptions);
 

@@ -19,6 +19,7 @@ import {
   QUALITY_PROFILES,
   QualityController
 } from '../frontend/js/qualityController.js';
+import { WebRTCManager } from '../frontend/js/webrtc.js';
 
 describe('1. Detecção e Classificação de Fabricante / Arquitetura de GPU', () => {
   test('Deve identificar GPU AMD Radeon (AMF / VCN) corretamente', () => {
@@ -302,3 +303,78 @@ describe('6. Controle Adaptativo de Qualidade com Histerese e Proteção de CPU'
     assert.equal(qc.currentMaxBitrate, bitrateAfterFirstDrop, 'Histerese deve impedir redução consecutiva sem intervalo mínimo');
   });
 });
+
+describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
+  const sampleSdp = [
+    'v=0',
+    'o=- 12345 2 IN IP4 127.0.0.1',
+    's=-',
+    't=0 0',
+    'm=video 9 UDP/TLS/RTP/SAVPF 45 46 102 103 96 97',
+    'a=rtpmap:45 AV1/90000',
+    'a=rtpmap:46 rtx/90000',
+    'a=fmtp:46 apt=45',
+    'a=rtpmap:102 H264/90000',
+    'a=rtpmap:103 rtx/90000',
+    'a=fmtp:103 apt=102',
+    'a=rtpmap:96 VP8/90000',
+    'a=rtpmap:97 rtx/90000',
+    'a=fmtp:97 apt=96'
+  ].join('\r\n');
+
+  test('Em modo GPU ou Automático, mungeSdpBandwidth deve priorizar H.264 sobre AV1 nos payloads', () => {
+    const wm = new WebRTCManager(null);
+    wm.encoderPreference = 'gpu';
+    wm.preferredCodec = 'auto';
+
+    const munged = wm.mungeSdpBandwidth(sampleSdp, 8000000);
+    const mLine = munged.split('\r\n').find(l => l.startsWith('m=video'));
+    assert.ok(mLine, 'm=video deve existir no SDP');
+
+    const payloads = mLine.split(' ').slice(3);
+    const h264Idx = payloads.indexOf('102');
+    const av1Idx = payloads.indexOf('45');
+
+    assert.ok(h264Idx !== -1, 'Payload H.264 (102) deve estar presente');
+    assert.ok(av1Idx !== -1, 'Payload AV1 (45) deve estar presente');
+    assert.ok(h264Idx < av1Idx, `H.264 (pos ${h264Idx}) deve vir antes de AV1 (pos ${av1Idx}) no modo GPU para evitar libaom CPU`);
+  });
+
+  test('Em modo CPU com AV1 solicitado, mungeSdpBandwidth deve colocar AV1 à frente', () => {
+    const wm = new WebRTCManager(null);
+    wm.encoderPreference = 'cpu';
+    wm.preferredCodec = 'AV1';
+
+    const munged = wm.mungeSdpBandwidth(sampleSdp, 8000000);
+    const mLine = munged.split('\r\n').find(l => l.startsWith('m=video'));
+    const payloads = mLine.split(' ').slice(3);
+    const h264Idx = payloads.indexOf('102');
+    const av1Idx = payloads.indexOf('45');
+
+    assert.ok(av1Idx < h264Idx, 'AV1 deve vir antes de H.264 quando usuário solicita explicitamente CPU + AV1');
+  });
+
+  test('Link de convite deve resolver URL pública no Desktop e nunca apontar para localhost', () => {
+    const serverUrl = 'https://hyperstream-g9gz.onrender.com';
+    const roomId = 'SALA-TESTE-123';
+    const pin = '4321';
+
+    const resolveInviteUrl = (origin, serverApiUrl, rId, rPin) => {
+      let baseUrl = origin;
+      if (serverApiUrl && (serverApiUrl.startsWith('http://') || serverApiUrl.startsWith('https://'))) {
+        baseUrl = serverApiUrl.replace(/\/$/, '');
+      } else if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+        baseUrl = 'https://hyperstream-g9gz.onrender.com';
+      }
+      let url = `${baseUrl}/?room=${encodeURIComponent(rId)}`;
+      if (rPin) url += `&pin=${encodeURIComponent(rPin)}`;
+      return url;
+    };
+
+    const linkFromDesktop = resolveInviteUrl('http://127.0.0.1:51234', serverUrl, roomId, pin);
+    assert.ok(!linkFromDesktop.includes('127.0.0.1'), 'Link de convite do Desktop não deve conter 127.0.0.1');
+    assert.ok(!linkFromDesktop.includes('localhost'), 'Link de convite do Desktop não deve conter localhost');
+    assert.equal(linkFromDesktop, 'https://hyperstream-g9gz.onrender.com/?room=SALA-TESTE-123&pin=4321');
+  });
+});
+

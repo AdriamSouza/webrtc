@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag de versão para release (ex: v1.3.4)'
+        description: 'Tag de versão para release (ex: v1.3.5)'
         required: false
-        default: 'v1.3.4'
+        default: 'v1.3.5'
 
 permissions:
   contents: write
@@ -45,8 +45,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.3.4' }}
-          name: HyperStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.3.4' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.3.5' }}
+          name: HyperStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.3.5' }}
           draft: false
           prerelease: false
           generate_release_notes: true

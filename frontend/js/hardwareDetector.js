@@ -157,6 +157,75 @@ export function evaluateCodecCapabilities(gpuInfo = {}, featureStatus = {}) {
  * @param {number} bitrate - Taxa de bits em bps (padrão: 8000000)
  * @returns {Promise<Object>} Resultado detalhado da sondagem
  */
+/**
+ * Extrai e interpreta os campos profile-level-id de um fmtp H.264
+ * Hexadecimal de 6 dígitos: XX YY ZZ
+ * XX: profile_idc (42 = Baseline/Constrained, 4d = Main, 64 = High)
+ * YY: profile_iop (flags de restrição)
+ * ZZ: level_idc (1f = 31 [720p30], 20 = 32 [720p60], 29 = 41 [1080p30], 2a = 42 [1080p60], 32 = 50 [4K30], 33 = 51 [4K60], 34 = 52)
+ */
+export function parseH264ProfileLevel(fmtp = '') {
+  const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})/i);
+  if (!match) return null;
+  const profileHex = match[1].toLowerCase();
+  const iopHex = match[2].toLowerCase();
+  const levelHex = match[3].toLowerCase();
+  const profileIdc = parseInt(profileHex, 16);
+  const levelIdc = parseInt(levelHex, 16);
+  const fmtpLower = fmtp.toLowerCase();
+  const isPacketizationMode1 = fmtpLower.includes('packetization-mode=1');
+  const isPacketizationMode0 = fmtpLower.includes('packetization-mode=0');
+  const hasAsymmetry = fmtpLower.includes('level-asymmetry-allowed=1');
+  // Level >= 4.2 (0x2a = 42 em decimal) suporta 1080p @ 60 FPS sem rejeição MF_E_INVALIDMEDIATYPE
+  const isLevel42Plus = levelIdc >= 0x2a;
+
+  return {
+    fullPid: `${profileHex}${iopHex}${levelHex}`,
+    profileHex,
+    iopHex,
+    levelHex,
+    profileIdc,
+    levelIdc,
+    isLevel42Plus,
+    hasAsymmetry,
+    isPacketizationMode1,
+    isPacketizationMode0
+  };
+}
+
+/**
+ * Pontua codecs H.264 para priorizar Level >= 4.2 (2a, 32, 33, 34) e descartar Level 3.1 (1f)
+ */
+export function scoreH264Candidate(c) {
+  const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+  const isMode0 = fmtp.includes('packetization-mode=0');
+  const basePenalty = isMode0 ? 3000 : 0;
+  const parsed = parseH264ProfileLevel(fmtp);
+  if (!parsed) return basePenalty + 2000;
+
+  let levelScore = 500;
+  // Level 5.1 / 5.2 (33, 34) -> Suporta até 4K @ 60 FPS
+  if (parsed.levelIdc >= 0x33) levelScore = 10;
+  // Level 5.0 (32)
+  else if (parsed.levelIdc >= 0x32) levelScore = 20;
+  // Level 4.2 (2a) -> Padrão ideal para 1080p @ 60 FPS
+  else if (parsed.levelIdc >= 0x2a) levelScore = 30;
+  // Perfis com level-asymmetry-allowed=1 permitem upgrade transparente no SDP
+  else if (parsed.hasAsymmetry) levelScore = 40;
+  // Level 4.1 (29) -> 1080p30
+  else if (parsed.levelIdc >= 0x29) levelScore = 60;
+  // Level 3.1 (1f) ou 3.2 (20) sem assimetria -> Baixa prioridade (rejeitado por MFT em 1080p60)
+  else levelScore = 200;
+
+  // Preferência de Profile: High (64) > Main (4d) > Constrained Baseline (42e0) > Baseline (4200)
+  let profileScore = 5;
+  if (parsed.profileHex === '64') profileScore = 1;
+  else if (parsed.profileHex === '4d') profileScore = 2;
+  else if (parsed.profileHex === '42') profileScore = 3;
+
+  return basePenalty + levelScore + profileScore;
+}
+
 export async function probeRealHardwareEncoders(width = 1920, height = 1080, framerate = 60, bitrate = 8000000) {
   let senderCodecs = [];
   try {
@@ -166,6 +235,20 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
       senderCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs || [];
     }
   } catch (_) {}
+
+  // CAUSA 1: Imprime no console TODOS os codecs H.264 brutos retornados pelo navegador
+  const allH264List = senderCodecs.filter(c => (c.mimeType || '').toLowerCase() === 'video/h264');
+  console.group('%c[Hardware Probe] Codecs H.264 brutos de RTCRtpSender.getCapabilities("video"):', 'color: #38bdf8; font-weight: bold;');
+  if (allH264List.length === 0) {
+    console.warn('  Nenhum codec H.264 retornado por RTCRtpSender.getCapabilities!');
+  } else {
+    allH264List.forEach((c, idx) => {
+      const parsed = parseH264ProfileLevel(c.sdpFmtpLine || '');
+      const lvlStr = parsed ? `Level ${parsed.levelIdc / 10} (0x${parsed.levelHex})${parsed.isLevel42Plus ? ' [>=4.2 1080p60 OK]' : ' [AVISO: <4.2 720p]'}` : 'Level desconhecido';
+      console.log(`  [${idx + 1}] ${c.mimeType} | "${c.sdpFmtpLine || ''}" -> ${lvlStr}`);
+    });
+  }
+  console.groupEnd();
 
   const isExcluded = (mime = '') => {
     const m = mime.toLowerCase();
@@ -190,7 +273,11 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     // Formata contentType compatível com mediaCapabilities para navegadores modernos
     if (mimeLower.includes('h264')) {
       const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/i);
-      const profileId = match ? match[1].toLowerCase() : '42e01f';
+      let profileId = match ? match[1].toLowerCase() : '42e01f';
+      // Se for testar 1080p60 no encodingInfo, verifica compatibilidade com Level 4.2 (2a) ou 5.1 (33)
+      if (profileId.endsWith('1f') || profileId.endsWith('20')) {
+        profileId = profileId.slice(0, 4) + '2a';
+      }
       contentType = `video/mp4; codecs="avc1.${profileId}"`;
     } else if (mimeLower.includes('av1') || mimeLower.includes('av01')) {
       contentType = 'video/mp4; codecs="av01.0.08M.10"';
@@ -285,14 +372,15 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     console.log(`  • ${mime} [${fmtp || 'default'}]: ${statusTag}`);
   }
 
-  // Identifica melhor codec H.264 de hardware (prioridade: 42e01f > 4d001f > 64001f)
+  // Identifica melhor codec H.264 de hardware priorizando Level >= 4.2 (2a, 32, 33) e packetization-mode=1
   let bestH264Codec = null;
   const h264HwList = hardwareCodecs.filter(c => c.mimeType.toLowerCase().includes('h264') && c.isPacketizationMode1);
   if (h264HwList.length > 0) {
-    bestH264Codec = h264HwList.find(c => c.sdpFmtpLine.includes('42e01f')) ||
-                    h264HwList.find(c => c.sdpFmtpLine.includes('4d001f')) ||
-                    h264HwList.find(c => c.sdpFmtpLine.includes('64001f')) ||
-                    h264HwList[0];
+    const sortedHw = [...h264HwList].sort((a, b) => scoreH264Candidate(a.codec) - scoreH264Candidate(b.codec));
+    bestH264Codec = sortedHw[0];
+  } else if (allH264List.length > 0) {
+    const sortedAll = [...allH264List].sort((a, b) => scoreH264Candidate(a) - scoreH264Candidate(b));
+    bestH264Codec = probedCodecs.find(p => p.codec === sortedAll[0]) || null;
   }
 
   const results = {
@@ -374,25 +462,13 @@ export function determineOptimalCodecOrder({
   }
 
   // Ordenação cirúrgica dos codecs H.264:
-  // 1. powerEfficient === true e packetization-mode=1 no topo (42e01f > 4d001f > 64001f)
+  // 1. Prioriza Level >= 4.2 (2a, 32, 33, 34) e perfis com level-asymmetry-allowed=1 com packetization-mode=1
   // 2. packetization-mode=0 jogado para o final da fila (força software no Chromium)
   // 3. Perfis em rejectedSet descartados para o fim absoluto
   const scoreH264 = (c) => {
     const fmtp = (c.sdpFmtpLine || '').toLowerCase();
     if (rejectedSet.has(c.sdpFmtpLine) || rejectedSet.has(fmtp)) return 9999;
-
-    const isMode0 = fmtp.includes('packetization-mode=0');
-    const isMode1 = fmtp.includes('packetization-mode=1');
-    const basePenalty = isMode0 ? 1000 : 0;
-
-    if (fmtp.includes('profile-level-id=42e01f')) return basePenalty + 10;
-    if (fmtp.includes('profile-level-id=42e0')) return basePenalty + 20;
-    if (fmtp.includes('profile-level-id=4d001f')) return basePenalty + 30;
-    if (fmtp.includes('profile-level-id=4d00')) return basePenalty + 40;
-    if (fmtp.includes('profile-level-id=64001f')) return basePenalty + 50;
-    if (fmtp.includes('profile-level-id=6400')) return basePenalty + 60;
-    if (fmtp.includes('profile-level-id=42001f')) return basePenalty + 70;
-    return basePenalty + (isMode1 ? 80 : 900);
+    return scoreH264Candidate(c);
   };
 
   h264Codecs.sort((a, b) => scoreH264(a) - scoreH264(b));
@@ -436,7 +512,7 @@ export function determineOptimalCodecOrder({
       isHardwareExpected = true;
       reason = 'AV1 selecionado com aceleração nativa por hardware GPU comprovada.';
     }
-    // Caso padrão (GPU ou Auto): prioriza H.264 por hardware (42e01f / 4d001f packetization-mode=1)
+    // Caso padrão (GPU ou Auto): prioriza H.264 por hardware (Level >= 4.2 / packetization-mode=1)
     else if (h264Codecs.length > 0 && !rejectedSet.has('H264_ALL')) {
       preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
       selectedCodec = 'H264';
@@ -447,7 +523,9 @@ export function determineOptimalCodecOrder({
         reason = 'Automático: codec padrão WebRTC do sistema (aceleração por GPU não detectada).';
       } else {
         const topFmtp = h264Codecs[0]?.sdpFmtpLine || '';
-        reason = `H.264 selecionado por dispor de aceleração nativa por GPU (${topFmtp.includes('42e01f') ? 'Constrained Baseline 42e01f' : (topFmtp.includes('4d001f') ? 'Main 4d001f' : 'GPU Hardware')}) com baixíssima latência e 60 FPS.`;
+        const parsed = parseH264ProfileLevel(topFmtp);
+        const lvlDesc = parsed ? `Level 0x${parsed.levelHex} (${parsed.isLevel42Plus ? '>=4.2 1080p60/4K' : (parsed.hasAsymmetry ? 'com assimetria SDP' : 'MFT')})` : 'GPU Hardware';
+        reason = `H.264 selecionado com aceleração nativa por GPU (${lvlDesc}) com baixíssima latência e 60 FPS.`;
       }
     }
     // Fallback se H.264 foi completamente rejeitado ou não existe

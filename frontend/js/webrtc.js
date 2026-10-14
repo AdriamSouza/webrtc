@@ -305,6 +305,7 @@ export class WebRTCManager {
         let hasTIAS = false;
         const codecPayloadMap = new Map(); // pt -> codecName
         const rtxAptMap = new Map(); // rtxPt -> aptPt
+        const h264Payloads = new Set();
 
         // 1. Mapeia codecs e rtx desta seção de vídeo
         for (const line of lines) {
@@ -314,6 +315,9 @@ export class WebRTCManager {
               let cName = match[2].toUpperCase();
               if (cName === 'AV01') cName = 'AV1';
               codecPayloadMap.set(match[1], cName);
+              if (cName === 'H264') {
+                h264Payloads.add(match[1]);
+              }
             }
           }
           if (line.startsWith('a=fmtp:')) {
@@ -324,6 +328,50 @@ export class WebRTCManager {
           }
           if (line.startsWith('b=AS:')) hasAS = true;
           if (line.startsWith('b=TIAS:')) hasTIAS = true;
+        }
+
+        // CAUSA 1: Upgrade de Level no SDP (Level 4.2 '2a' para 1080p60, ou Level 5.1 '33' para 4K60/1440p)
+        // Na especificação H.264, profile-level-id terminando em 1f (3.1) suporta no máximo 720p30.
+        // O MediaFoundation MFT da GPU rejeita 1080p60 em Level 3.1 com MF_E_INVALIDMEDIATYPE e cai para OpenH264.
+        const targetRes = (this.targetResolution || (this.mediaManager && this.mediaManager.targetResolution) || (() => {
+          try { return localStorage.getItem('hyperstream_target_res') || ''; } catch (_) { return ''; }
+        })()).toLowerCase();
+        const targetLevelHex = (targetRes === '4k' || targetRes === '1440p' || targetRes === '2k') ? '33' : '2a';
+
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i];
+          if (l.startsWith('a=fmtp:')) {
+            const fmtpMatch = l.match(/^a=fmtp:(\d+)\s+(.*)$/);
+            if (fmtpMatch) {
+              const pt = fmtpMatch[1];
+              let params = fmtpMatch[2];
+              const isH264 = h264Payloads.has(pt) || params.toLowerCase().includes('profile-level-id');
+
+              if (isH264 && params.includes('packetization-mode=1')) {
+                const pidMatch = params.match(/profile-level-id=([0-9a-fA-F]{4})([0-9a-fA-F]{2})/i);
+                if (pidMatch) {
+                  const prefix = pidMatch[1];
+                  const currentLevel = pidMatch[2].toLowerCase();
+                  const currentLevelNum = parseInt(currentLevel, 16);
+                  if (currentLevel === '1f' || currentLevel === '20' || currentLevelNum < 0x2a) {
+                    const oldPid = pidMatch[0];
+                    const newPid = `profile-level-id=${prefix}${targetLevelHex}`;
+                    params = params.replace(oldPid, newPid);
+                    console.log(`[WebRTC SDP Upgrade] H.264 Payload ${pt}: Level atualizado de 0x${currentLevel} para 0x${targetLevelHex} (${newPid}, Level ${targetLevelHex === '33' ? '5.1 4K60' : '4.2 1080p60'})`);
+                  }
+                }
+
+                if (!params.includes('level-asymmetry-allowed=1')) {
+                  params += ';level-asymmetry-allowed=1';
+                }
+                if (!params.includes('packetization-mode=1')) {
+                  params += ';packetization-mode=1';
+                }
+
+                lines[i] = `a=fmtp:${pt} ${params}`;
+              }
+            }
+          }
         }
 
         // 2. Preserva a ordem exata de codecs gerada pelo transceiver.setCodecPreferences()
@@ -633,6 +681,9 @@ export class WebRTCManager {
         : (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function' ? RTCRtpReceiver.getCapabilities('video') : null);
 
       if (!capabilities || !capabilities.codecs) return;
+
+      const allH264 = (capabilities.codecs || []).filter(c => (c.mimeType || '').toLowerCase() === 'video/h264');
+      console.log('[WebRTC Transceiver] Codecs H.264 disponíveis no getCapabilities:', allH264.map(c => `[${c.mimeType}] "${c.sdpFmtpLine || ''}"`));
 
       const caps = this.hardwareCapabilities || evaluateCodecCapabilities();
       const optimal = determineOptimalCodecOrder({
@@ -1109,6 +1160,11 @@ export class WebRTCManager {
         await pc.setLocalDescription({ type: 'rollback' });
       }
 
+      // Garante upgrade de Level H.264 no SDP da oferta remota antes de aplicar no PeerConnection
+      if (sdpInit && sdpInit.sdp) {
+        sdpInit.sdp = this.mungeSdpBandwidth(sdpInit.sdp, this.targetMaxBitrate);
+      }
+
       await pc.setRemoteDescription(new RTCSessionDescription(sdpInit));
       console.log(`[WebRTC] SDP Offer de ${fromUserId} aplicada com sucesso.`);
 
@@ -1153,6 +1209,11 @@ export class WebRTCManager {
         sdpInit = typeof answerData.sdp === 'object' ? answerData.sdp : { type: 'answer', sdp: answerData.sdp };
       }
       if (!sdpInit.type) sdpInit.type = 'answer';
+
+      // Garante upgrade de Level H.264 no SDP da resposta remota antes de aplicar no PeerConnection
+      if (sdpInit && sdpInit.sdp) {
+        sdpInit.sdp = this.mungeSdpBandwidth(sdpInit.sdp, this.targetMaxBitrate);
+      }
 
       await pc.setRemoteDescription(new RTCSessionDescription(sdpInit));
       console.log(`[WebRTC] SDP Answer de ${fromUserId} aplicada com sucesso.`);

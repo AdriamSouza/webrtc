@@ -1271,6 +1271,32 @@
             </table>
           </div>
         </div>
+
+        <!-- SEÇÃO 4: DIAGNÓSTICO DO PROCESSO GPU CHROMIUM & PERFIS MFT -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Processo GPU & Codecs WebRTC (MediaFoundation / AMD AMF)</h4>
+            <span class="diag-sublabel">app.getGPUInfo('complete') & RTCRtpSender.getCapabilities</span>
+          </div>
+          <div class="diag-grid">
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Perfis de Hardware Video Encode Registrados no Boot (Chromium):</span>
+              <div class="diag-val" id="diagGpuEncProfiles" style="font-size: 0.75rem; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #38bdf8;">Consultando...</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Workarounds de Driver Chromium (driverBugWorkarounds):</span>
+              <div class="diag-val" id="diagGpuWorkarounds" style="font-size: 0.75rem; white-space: pre-wrap;">Consultando...</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Logs do Processo GPU (MediaFoundation / D3D11 / AMF / VCN):</span>
+              <div class="diag-val" id="diagGpuLogs" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #cbd5e1;">Nenhuma mensagem registrada.</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Codecs WebRTC RTCRtpSender (H.264 SDP FMTP & Níveis):</span>
+              <div class="diag-val" id="diagRtcSenderProfiles" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 140px; overflow-y: auto; color: #a5f3fc;">Consultando...</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer diag-footer">

@@ -190,27 +190,57 @@ export class MediaManager {
     const videoTracks = this.screenStream.getVideoTracks();
     if (videoTracks.length > 0) {
       const videoTrack = videoTracks[0];
-      videoTrack.contentHint = this.contentHint || 'motion';
+
+      // CAUSA 3.1: No Chromium, 'detail' ou 'text' força modo de tela de alta precisão incompatível
+      // com o rate-control do MFT de hardware. Mantém 'motion' por padrão ao usar modo GPU.
+      const isGpuMode = (() => {
+        try { return (localStorage.getItem('hyperstream_encoder_preference') || 'gpu') !== 'cpu'; } catch (_) { return true; }
+      })();
+      if (isGpuMode || !this.contentHint || this.contentHint === 'detail' || this.contentHint === 'text') {
+        this.contentHint = isGpuMode ? 'motion' : (this.contentHint || 'motion');
+      }
+      videoTrack.contentHint = this.contentHint;
+      console.log(`[MediaManager] track.contentHint configurado para: "${videoTrack.contentHint}" (GPU Safe: ${isGpuMode})`);
+
+      // CAUSA 3.2: Garante largura e altura pares (múltiplos de 2 / 16). Se o usuário capturar
+      // uma janela com dimensões ímpares (ex: 1365x767), o hardware encoder MFT falha imediatamente
+      // na alocação da textura D3D11 NV12 (MF_E_INVALIDMEDIATYPE) e cai para OpenH264 na CPU.
+      const settings = (typeof videoTrack.getSettings === 'function') ? videoTrack.getSettings() : {};
+      const curWidth = settings.width || 0;
+      const curHeight = settings.height || 0;
+
+      const alignEven = (n) => (n && n > 0 ? (n % 2 !== 0 ? n - 1 : n) : n);
 
       const trackConstraints = {
         frameRate: { ideal: fps, max: fps }
       };
 
       if (this.targetResolution === '4k') {
-        trackConstraints.width = { ideal: 3840 };
-        trackConstraints.height = { ideal: 2160 };
+        trackConstraints.width = { ideal: 3840, max: 3840 };
+        trackConstraints.height = { ideal: 2160, max: 2160 };
       } else if (this.targetResolution === '1440p' || this.targetResolution === '2k') {
-        trackConstraints.width = { ideal: 2560 };
-        trackConstraints.height = { ideal: 1440 };
+        trackConstraints.width = { ideal: 2560, max: 2560 };
+        trackConstraints.height = { ideal: 1440, max: 1440 };
       } else if (this.targetResolution === '1080p') {
-        trackConstraints.width = { ideal: 1920 };
-        trackConstraints.height = { ideal: 1080 };
+        trackConstraints.width = { ideal: 1920, max: 1920 };
+        trackConstraints.height = { ideal: 1080, max: 1080 };
       } else if (this.targetResolution === '720p') {
-        trackConstraints.width = { ideal: 1280 };
-        trackConstraints.height = { ideal: 720 };
+        trackConstraints.width = { ideal: 1280, max: 1280 };
+        trackConstraints.height = { ideal: 720, max: 720 };
       } else if (this.targetResolution === '480p') {
-        trackConstraints.width = { ideal: 854 };
-        trackConstraints.height = { ideal: 480 };
+        trackConstraints.width = { ideal: 854, max: 854 };
+        trackConstraints.height = { ideal: 480, max: 480 };
+      } else {
+        // Resolução 'native' ou janela personalizada: se dimensões forem ímpares, alinha para pares
+        if (curWidth > 0 && curHeight > 0) {
+          const evenW = alignEven(curWidth);
+          const evenH = alignEven(curHeight);
+          if (evenW !== curWidth || evenH !== curHeight) {
+            console.warn(`[MediaManager] Resolução de captura ímpar detectada (${curWidth}x${curHeight}). Ajustando para par (${evenW}x${evenH}) para evitar falha no MediaFoundation NV12.`);
+            trackConstraints.width = { ideal: evenW, max: evenW };
+            trackConstraints.height = { ideal: evenH, max: evenH };
+          }
+        }
       }
 
       videoTrack.applyConstraints(trackConstraints).catch(err => {
@@ -791,7 +821,10 @@ export class MediaManager {
       try { localStorage.setItem('hyperstream_target_res', this.targetResolution); } catch (_) {}
     }
     if (contentHint) {
-      this.contentHint = contentHint;
+      const isGpuMode = (() => {
+        try { return (localStorage.getItem('hyperstream_encoder_preference') || 'gpu') !== 'cpu'; } catch (_) { return true; }
+      })();
+      this.contentHint = (isGpuMode && (contentHint === 'detail' || contentHint === 'text')) ? 'motion' : (contentHint || 'motion');
       try { localStorage.setItem('hyperstream_content_hint', this.contentHint); } catch (_) {}
       const track = this.getScreenVideoTrack();
       if (track) track.contentHint = this.contentHint;
@@ -813,11 +846,15 @@ export class MediaManager {
   }
 
   setContentHint(hint) {
-    this.contentHint = hint || 'motion';
+    const isGpuMode = (() => {
+      try { return (localStorage.getItem('hyperstream_encoder_preference') || 'gpu') !== 'cpu'; } catch (_) { return true; }
+    })();
+    this.contentHint = (isGpuMode && (hint === 'detail' || hint === 'text')) ? 'motion' : (hint || 'motion');
     try { localStorage.setItem('hyperstream_content_hint', this.contentHint); } catch (_) {}
     const track = this.getScreenVideoTrack();
     if (track) {
       track.contentHint = this.contentHint;
+      console.log(`[MediaManager] track.contentHint atualizado para: "${this.contentHint}" (GPU Safe: ${isGpuMode})`);
     }
   }
 

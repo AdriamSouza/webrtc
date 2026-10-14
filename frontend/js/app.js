@@ -4,7 +4,7 @@ import { WebRTCManager } from './webrtc.js';
 import { QualityController } from './qualityController.js';
 import { RoomState, getParticipantColor, getUserInitials } from './room.js';
 import { Icons } from './icons.js';
-import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS, probeRealHardwareEncoders } from './hardwareDetector.js';
+import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS, probeRealHardwareEncoders, parseH264ProfileLevel } from './hardwareDetector.js';
 
 // Instanciação dos Módulos Centrais
 const signaling = new SignalingClient();
@@ -1755,10 +1755,16 @@ async function renderDiagnosticsData() {
   const diagCpuUsage = document.getElementById('diagCpuUsage');
   const diagMemoryUsage = document.getElementById('diagMemoryUsage');
   const diagGpuStatusBadge = document.getElementById('diagGpuStatusBadge');
+  const diagGpuEncProfiles = document.getElementById('diagGpuEncProfiles');
+  const diagGpuWorkarounds = document.getElementById('diagGpuWorkarounds');
+  const diagGpuLogs = document.getElementById('diagGpuLogs');
+  const diagRtcSenderProfiles = document.getElementById('diagRtcSenderProfiles');
+
+  let gpuDiag = null;
 
   if (window.desktopAPI && typeof window.desktopAPI.getGpuDiagnostics === 'function') {
     try {
-      const gpuDiag = await window.desktopAPI.getGpuDiagnostics();
+      gpuDiag = await window.desktopAPI.getGpuDiagnostics();
       if (gpuDiag) {
         const gpuName = gpuDiag.systemGpu?.name || gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || gpuDiag.gpuInfo?.gpuDevice?.[0]?.deviceString || 'GPU Dedicada (Desktop)';
         const gpuDriver = gpuDiag.systemGpu?.driverVersion || gpuDiag.gpuInfo?.gpuDevice?.[0]?.driverVersion || 'Nativo Windows (DirectX/MediaFoundation)';
@@ -1825,6 +1831,37 @@ async function renderDiagnosticsData() {
           diagGpuStatusBadge.textContent = isEncodeHw ? `${evaluated.vendorInfo.vendor} Acelerado ⚡` : 'GPU Detectada';
           diagGpuStatusBadge.className = isEncodeHw ? 'badge badge-success' : 'badge';
         }
+
+        // CAUSA 4: Perfis de Hardware Encode, Workarounds de Driver e Logs do Processo GPU
+        if (diagGpuEncProfiles) {
+          if (Array.isArray(gpuDiag.videoAccelerators) && gpuDiag.videoAccelerators.length > 0) {
+            diagGpuEncProfiles.textContent = gpuDiag.videoAccelerators.map(a => {
+              if (typeof a === 'string') return `• ${a}`;
+              const prof = a.profile || a.profileName || a.codec || JSON.stringify(a);
+              const maxRes = (a.maxResolution || a.max_resolution) ? ` (máx: ${a.maxResolution?.width || a.max_resolution?.width}x${a.maxResolution?.height || a.max_resolution?.height})` : '';
+              const maxFps = (a.maxFramerateNumerator || a.max_framerate_numerator) ? ` @ ${a.maxFramerateNumerator || a.max_framerate_numerator}fps` : '';
+              return `• ${prof}${maxRes}${maxFps}`;
+            }).join('\n');
+          } else {
+            diagGpuEncProfiles.textContent = 'Nenhum perfil de aceleração de vídeo retornado em videoAccelerators.';
+          }
+        }
+
+        if (diagGpuWorkarounds) {
+          if (Array.isArray(gpuDiag.driverBugWorkarounds) && gpuDiag.driverBugWorkarounds.length > 0) {
+            diagGpuWorkarounds.innerHTML = `<span style="color: #fbbf24; font-weight: 600;">Workarounds ativos:</span> ${escapeHtml(gpuDiag.driverBugWorkarounds.join(', '))}`;
+          } else {
+            diagGpuWorkarounds.innerHTML = '<span style="color: #34d399; font-weight: 600;">Nenhum workaround ativo (disable-gpu-driver-bug-workarounds ativo ✅)</span>';
+          }
+        }
+
+        if (diagGpuLogs) {
+          if (Array.isArray(gpuDiag.relevantGpuLogs) && gpuDiag.relevantGpuLogs.length > 0) {
+            diagGpuLogs.textContent = gpuDiag.relevantGpuLogs.join('\n');
+          } else {
+            diagGpuLogs.textContent = 'Nenhuma mensagem de erro ou bloqueio registrada no processo GPU.';
+          }
+        }
       }
     } catch (e) {
       console.warn('[Diagnostics] Erro ao obter diagnóstico de GPU desktop:', e);
@@ -1856,7 +1893,43 @@ async function renderDiagnosticsData() {
         diagGpuStatusBadge.textContent = 'Web Runtime';
         diagGpuStatusBadge.className = 'badge';
       }
+      if (diagGpuEncProfiles) diagGpuEncProfiles.textContent = 'Não aplicável no Navegador (requer Electron Desktop).';
+      if (diagGpuWorkarounds) diagGpuWorkarounds.textContent = 'Gerenciado pelo Navegador.';
+      if (diagGpuLogs) diagGpuLogs.textContent = 'Acessível via chrome://gpu no navegador.';
     } catch (_) {}
+  }
+
+  // CAUSA 4: Exibe e imprime os codecs H.264 exatos com sdpFmtpLine de RTCRtpSender.getCapabilities
+  let rtcCodecs = [];
+  try {
+    if (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function') {
+      rtcCodecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
+    }
+  } catch (_) {}
+
+  const h264List = rtcCodecs.filter(c => (c.mimeType || '').toLowerCase() === 'video/h264');
+  if (diagRtcSenderProfiles) {
+    if (h264List.length > 0) {
+      diagRtcSenderProfiles.textContent = h264List.map((c, i) => {
+        const parsed = parseH264ProfileLevel(c.sdpFmtpLine || '');
+        const lvl = parsed ? `-> Level ${parsed.levelIdc / 10} (0x${parsed.levelHex})${parsed.isLevel42Plus ? ' [>=4.2 1080p60 OK]' : ' [<4.2 720p - upgrade SDP]'}` : '';
+        return `[${i + 1}] ${c.mimeType} | "${c.sdpFmtpLine || ''}" ${lvl}`;
+      }).join('\n');
+    } else {
+      diagRtcSenderProfiles.textContent = 'Nenhum codec H.264 retornado por RTCRtpSender.getCapabilities("video").';
+    }
+  }
+
+  // Emite relatório detalhado no console do DevTools a cada 15 segundos ou na primeira abertura
+  if (window.__lastGpuDiagLogTime === undefined || Date.now() - window.__lastGpuDiagLogTime > 15000) {
+    window.__lastGpuDiagLogTime = Date.now();
+    console.groupCollapsed('%c[GPU Diagnostics Real] Telemetria da GPU e Codecs WebRTC:', 'color: #38bdf8; font-weight: bold;');
+    console.log('1. GPU Feature Status:', gpuDiag?.featureStatus);
+    console.log('2. Hardware Video Accelerators (Boot):', gpuDiag?.videoAccelerators);
+    console.log('3. Driver Bug Workarounds Ativos:', gpuDiag?.driverBugWorkarounds);
+    console.log('4. GPU Logs Relevantes:', gpuDiag?.relevantGpuLogs);
+    console.log('5. RTCRtpSender H.264 Codecs:', h264List);
+    console.groupEnd();
   }
 
   try {

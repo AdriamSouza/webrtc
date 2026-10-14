@@ -22,25 +22,31 @@ const __dirname = path.dirname(__filename);
 // ========================================================
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
-// Habilita aceleração por hardware completa para codificação/decodificação WebRTC e WGC
-app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationD3D11VideoCapture,MediaFoundationVideoEncode,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding');
-app.commandLine.appendSwitch('enable-accelerated-video-decode');
+// 1. Unificação estrita de enable-features em uma ÚNICA chamada antes de app.whenReady()
+// (Chamadas sucessivas de enable-features no Electron sobrescrevem as anteriores)
+app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoEncode,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoCapture,MediaFoundationD3D11VideoCapture,MediaFoundationVideoDecoder,WindowsGraphicsCapture,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding,WebRTCPipeWireCapturer,VaapiVideoEncoder,VaapiVideoDecoder,CanvasOopRasterization');
+
+// 2. Flags críticas para desbloquear codificação por hardware (MediaFoundation / AMD AMF / D3D11) no Windows
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+// CRÍTICO: Chromium desativa H.264 HW encode em drivers AMD no Windows via workarounds internos. Esta flag destrava o pipeline!
+app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
 app.commandLine.appendSwitch('force-high-performance-gpu');
 app.commandLine.appendSwitch('force_high_performance_gpu');
-app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
-// Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
-app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-hardware-overlays', 'single-fullscreen,underlays');
-// Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
+
+// 3. Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-// Ignora certificados autoassinados em conexões locais (HTTPS e WebSockets WSS)
+
+// 4. Ignora certificados autoassinados em conexões locais (HTTPS e WebSockets WSS)
 app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('allow-insecure-localhost');
 
@@ -452,10 +458,37 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
     featureStatus = { error: e.message };
   }
   try {
-    gpuInfo = await app.getGPUInfo('basic');
+    // CAUSA 4: Consulta GPUInfo completa para expor videoAccelerators, driverBugWorkarounds e auxAttributes
+    gpuInfo = await app.getGPUInfo('complete');
   } catch (e) {
-    gpuInfo = { error: e.message };
+    console.warn('[Desktop Main] Erro ao obter app.getGPUInfo("complete"), tentando fallback "basic":', e.message);
+    try {
+      gpuInfo = await app.getGPUInfo('basic');
+    } catch (e2) {
+      gpuInfo = { error: e2.message };
+    }
   }
+
+  // Extrai listas reais de aceleração e workarounds do processo GPU do Chromium
+  const aux = (gpuInfo && typeof gpuInfo === 'object') ? (gpuInfo.auxAttributes || {}) : {};
+  const driverBugWorkarounds = (Array.isArray(gpuInfo?.driverBugWorkarounds) && gpuInfo.driverBugWorkarounds.length > 0)
+    ? gpuInfo.driverBugWorkarounds
+    : (Array.isArray(aux.driverBugWorkarounds) ? aux.driverBugWorkarounds : []);
+
+  const videoAccelerators = aux.videoAccelerators ||
+    aux.videoEncodeAcceleratorSupportedProfiles ||
+    gpuInfo?.videoAccelerators ||
+    gpuInfo?.videoEncodeAcceleratorSupportedProfiles ||
+    [];
+
+  const rawLogs = gpuInfo?.LogMessages || gpuInfo?.logMessages || aux.LogMessages || aux.logMessages || [];
+  const relevantGpuLogs = Array.isArray(rawLogs) ? rawLogs.filter(log => {
+    const text = (typeof log === 'string' ? log : (log?.message || log?.header || JSON.stringify(log))).toLowerCase();
+    return text.includes('video') || text.includes('encode') || text.includes('mediafoundation') ||
+           text.includes('d3d11') || text.includes('amf') || text.includes('vcn') ||
+           text.includes('h264') || text.includes('mft') || text.includes('accelerat') ||
+           text.includes('workaround') || text.includes('fallback');
+  }).map(l => (typeof l === 'string' ? l : `[${l.header || 'GPU'}] ${l.message || JSON.stringify(l)}`)) : [];
 
   let totalCpuPercent = 0;
   let totalMemoryKB = 0;
@@ -544,6 +577,9 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
     featureStatus,
     gpuInfo,
     systemGpu,
+    videoAccelerators,
+    driverBugWorkarounds,
+    relevantGpuLogs,
     platform: process.platform,
     arch: process.arch,
     cpuUsagePercent,

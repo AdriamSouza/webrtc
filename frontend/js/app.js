@@ -4129,7 +4129,7 @@ function setupSettingsModal() {
     const matrixCompatSub = document.getElementById('matrixCompatSub');
     const matrixCompatCard = document.getElementById('matrixCompatCard');
 
-    let clientVer = '1.3.3';
+    let clientVer = '1.3.4';
     let clientCommit = 'a186ed0';
     let clientProto = 2;
 
@@ -4181,7 +4181,7 @@ function setupSettingsModal() {
       const resp = await fetch(`${serverBaseUrl.replace(/\/$/, '')}/api/version`, { cache: 'no-store' });
       if (resp.ok) {
         const serverMeta = await resp.json();
-        const sVer = serverMeta.version || '1.3.3';
+        const sVer = serverMeta.version || '1.3.4';
         const sCommit = serverMeta.gitCommit || 'online';
         const sProto = serverMeta.protocolVersion || 2;
         const minClientProto = serverMeta.minClientProtocolVersion || 1;

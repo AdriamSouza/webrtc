@@ -246,6 +246,37 @@ export function handleMediaState(user, message, roomManager) {
   );
 }
 
+export function handleViewerState(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  const data = message.data || {};
+  const viewerState = {
+    state: data.state || 'active', // 'active' | 'background' | 'inactive'
+    isVisible: data.isVisible !== false,
+    isFocused: Boolean(data.isFocused),
+    timestamp: Date.now(),
+    userId: user.id,
+    userName: user.name
+  };
+
+  user.viewerState = viewerState;
+
+  // Notifica o host (ou a sala) para adaptação dinâmica de taxa e resolução no transmissor
+  if (message.to) {
+    room.sendTo(
+      message.to,
+      createMessage(MessageTypes.VIEWER_STATE, roomId, user.id, message.to, viewerState)
+    );
+  } else {
+    room.broadcast(
+      createMessage(MessageTypes.VIEWER_STATE, roomId, user.id, null, viewerState),
+      user.id
+    );
+  }
+}
+
 export function handleStreamList(user, message, roomManager) {
   const roomId = message.roomId || user.roomId;
   const room = roomManager.getRoom(roomId);

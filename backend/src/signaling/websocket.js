@@ -13,6 +13,7 @@ import {
   handleStopStream,
   handleMute,
   handleMediaState,
+  handleViewerState,
   handleChatMessage,
   handleDisconnect,
   handleStreamList,
@@ -121,6 +122,10 @@ export function setupWebSocketServer(httpServer) {
 
           case MessageTypes.MEDIA_STATE:
             handleMediaState(user, message, roomManager);
+            break;
+
+          case MessageTypes.VIEWER_STATE:
+            handleViewerState(user, message, roomManager);
             break;
 
           case MessageTypes.CHAT_MESSAGE:

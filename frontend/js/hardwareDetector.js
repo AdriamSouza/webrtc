@@ -93,9 +93,9 @@ export function evaluateCodecCapabilities(gpuInfo = {}, featureStatus = {}) {
     hardwareApi: vendorInfo.hwApi,
     softwareFallback: 'OpenH264 (Cisco)',
     recommendedFor60Fps: true,
-    statusLabel: isVideoEncodeAccelerated ? 'GPU Hardware Confirmado ⚡' : 'Software (OpenH264) ⚠️',
+    statusLabel: isVideoEncodeAccelerated ? 'GPU Hardware (Suportado) ⚡' : 'Software (OpenH264) ⚠️',
     description: isVideoEncodeAccelerated
-      ? `Aceleração nativa por GPU (${vendorInfo.vendor}) via DirectX 11 / MediaFoundation. Latência ultrabaixa para jogos a 60 FPS.`
+      ? `Aceleração nativa por GPU (${vendorInfo.vendor}) via DirectX 11 / MediaFoundation. Suportada para jogos a 60 FPS.`
       : 'Codificação via processador (OpenH264). Custo moderado de CPU.'
   };
 

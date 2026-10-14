@@ -519,4 +519,272 @@ test('9. Múltiplos Participantes: Segregação correta de transmissões por pee
   assert.equal(diag.outboundStreams[2].targetPeerName, 'Carlos');
 });
 
+// ========================================================
+// 9. TESTE DE encoderImplementation AUSENTE (ESTADO UNKNOWN)
+// ========================================================
+
+test('10. encoderImplementation ausente: Deve classificar como unknown sem alarme falso de CPU', async () => {
+  const qc = new QualityController();
+  const mockWebRtc = new MockWebRTCManager();
+  const pc = new MockPeerConnection();
+
+  // Simula Chromium 130 no Windows/AMD onde encoderImplementation é undefined
+  pc.setReports([
+    { id: 'codec-h264', type: 'codec', mimeType: 'video/H264', clockRate: 90000 },
+    {
+      id: 'out-h264-no-impl',
+      type: 'outbound-rtp',
+      kind: 'video',
+      mid: '0',
+      codecId: 'codec-h264',
+      // encoderImplementation propositalmente omitido / undefined
+      frameWidth: 1920,
+      frameHeight: 1080,
+      framesPerSecond: 60,
+      framesSent: 120,
+      framesEncoded: 120,
+      bytesSent: 2000000,
+      timestamp: 1000
+    }
+  ]);
+
+  mockWebRtc.peers.set('peer-1', pc);
+  qc.setWebRTC(mockWebRtc);
+
+  let reportedMetrics = null;
+  qc.onStatsUpdate = (m) => { reportedMetrics = m; };
+
+  await qc.collectMetrics();
+  const diag = qc.getDetailedDiagnostics();
+
+  assert.equal(diag.outboundStreams.length, 1);
+  const stream = diag.outboundStreams[0];
+  assert.equal(stream.codec, 'H264');
+  assert.equal(stream.hwState, 'unknown', 'Deve estar no estado estrito unknown');
+  assert.equal(stream.isHardware, false, 'Não deve declarar hardware sem prova');
+  assert.equal(stream.isSoftware, false, 'NÃO deve declarar software/CPU por falta de informação!');
+  assert.equal(stream.isUnknown, true, 'Deve sinalizar isUnknown como true');
+  assert.equal(stream.hwCategory, 'inconclusive');
+  assert.equal(stream.hwBadgeClass, 'diag-badge-neutral', 'Badge deve ser neutro e não de aviso de CPU');
+  assert.equal(stream.hwLabel, 'Não determinado');
+
+  // Verifica que formattedCodec NÃO inclui 'Software ⚠️'
+  assert.equal(reportedMetrics.codec, 'H264', 'Codec formatado não deve acusar Software CPU falsamente');
+  assert.doesNotMatch(reportedMetrics.codec, /Software/, 'NÃO deve conter Software');
+});
+
+// ========================================================
+// 10. TESTE DE ISOLAMENTO DE DIFERENTES CODECS POR CONEXÃO
+// ========================================================
+
+test('11. Isolamento Multi-Peer: Conexões independentes com codecs distintos não se contaminam', async () => {
+  const qc = new QualityController();
+  const mockWebRtc = new MockWebRTCManager();
+
+  // Peer 1 (Alice): AV1 via software libaom
+  const pcAlice = new MockPeerConnection();
+  pcAlice.setReports([
+    { id: 'codec-alice', type: 'codec', mimeType: 'video/AV1' },
+    {
+      id: 'out-alice',
+      type: 'outbound-rtp',
+      kind: 'video',
+      mid: '0',
+      codecId: 'codec-alice',
+      encoderImplementation: 'libaom',
+      framesSent: 60,
+      framesEncoded: 60,
+      bytesSent: 300000,
+      timestamp: 1000
+    }
+  ]);
+
+  // Peer 2 (Bob): H264 via hardware MediaFoundation
+  const pcBob = new MockPeerConnection();
+  pcBob.setReports([
+    { id: 'codec-bob', type: 'codec', mimeType: 'video/H264' },
+    {
+      id: 'out-bob',
+      type: 'outbound-rtp',
+      kind: 'video',
+      mid: '0',
+      codecId: 'codec-bob',
+      encoderImplementation: 'ExternalEncoder (MediaFoundation)',
+      framesSent: 120,
+      framesEncoded: 120,
+      bytesSent: 800000,
+      timestamp: 1000
+    }
+  ]);
+
+  // Peer 3 (Carlos): H264 com encoderImplementation ausente (unknown)
+  const pcCarlos = new MockPeerConnection();
+  pcCarlos.setReports([
+    { id: 'codec-carlos', type: 'codec', mimeType: 'video/H264' },
+    {
+      id: 'out-carlos',
+      type: 'outbound-rtp',
+      kind: 'video',
+      mid: '0',
+      codecId: 'codec-carlos',
+      framesSent: 120,
+      framesEncoded: 120,
+      bytesSent: 800000,
+      timestamp: 1000
+    }
+  ]);
+
+  mockWebRtc.peers.set('peer-1', pcAlice);
+  mockWebRtc.peers.set('peer-2', pcBob);
+  mockWebRtc.peers.set('peer-3', pcCarlos);
+  qc.setWebRTC(mockWebRtc);
+
+  let reportedMetrics = null;
+  qc.onStatsUpdate = (m) => { reportedMetrics = m; };
+
+  await qc.collectMetrics();
+  const diag = qc.getDetailedDiagnostics();
+
+  assert.equal(diag.outboundStreams.length, 3);
+
+  const streamAlice = diag.outboundStreams.find(s => s.targetPeerId === 'peer-1');
+  const streamBob = diag.outboundStreams.find(s => s.targetPeerId === 'peer-2');
+  const streamCarlos = diag.outboundStreams.find(s => s.targetPeerId === 'peer-3');
+
+  // Alice: Software confirmado
+  assert.equal(streamAlice.codec, 'AV1');
+  assert.equal(streamAlice.hwState, 'software_confirmed');
+  assert.equal(streamAlice.isSoftware, true);
+  assert.equal(streamAlice.isHardware, false);
+
+  // Bob: Hardware confirmado
+  assert.equal(streamBob.codec, 'H264');
+  assert.equal(streamBob.hwState, 'hardware_confirmed');
+  assert.equal(streamBob.isHardware, true);
+  assert.equal(streamBob.isSoftware, false);
+
+  // Carlos: Unknown
+  assert.equal(streamCarlos.codec, 'H264');
+  assert.equal(streamCarlos.hwState, 'unknown');
+  assert.equal(streamCarlos.isHardware, false);
+  assert.equal(streamCarlos.isSoftware, false);
+
+  // Conexão mista não corrompe a telemetria agregada
+  assert.match(reportedMetrics.codec, /Misto GPU\/CPU/);
+});
+
+// ========================================================
+// 11. TESTE DE CICLO DE ENTRADA E SAÍDA DE ESPECTADORES
+// ========================================================
+
+test('12. Entrada e saída de espectadores: Não altera diagnóstico dos peers existentes e limpa histórico', async () => {
+  const qc = new QualityController();
+  const mockWebRtc = new MockWebRTCManager();
+
+  // 1. Apenas Alice conectada com H264 Hardware
+  const pcAlice = new MockPeerConnection();
+  pcAlice.setReports([
+    { id: 'codec-h264', type: 'codec', mimeType: 'video/H264' },
+    {
+      id: 'out-alice',
+      type: 'outbound-rtp',
+      kind: 'video',
+      mid: '0',
+      codecId: 'codec-h264',
+      encoderImplementation: 'ExternalEncoder (MediaFoundation)',
+      framesSent: 60,
+      framesEncoded: 60,
+      bytesSent: 500000,
+      timestamp: 1000
+    }
+  ]);
+  mockWebRtc.peers.set('peer-1', pcAlice);
+  qc.setWebRTC(mockWebRtc);
+
+  await qc.collectMetrics();
+  let diag = qc.getDetailedDiagnostics();
+  assert.equal(diag.outboundStreams.length, 1);
+  assert.equal(diag.outboundStreams[0].hwState, 'hardware_confirmed');
+
+  // 2. Bob (celular) entra na sala com encoderImplementation desconhecido (unknown)
+  const pcBob = new MockPeerConnection();
+  pcBob.setReports([
+    { id: 'codec-bob', type: 'codec', mimeType: 'video/H264' },
+    {
+      id: 'out-bob',
+      type: 'outbound-rtp',
+      kind: 'video',
+      mid: '0',
+      codecId: 'codec-bob',
+      // Sem encoderImplementation
+      framesSent: 30,
+      framesEncoded: 30,
+      bytesSent: 200000,
+      timestamp: 1000
+    }
+  ]);
+  mockWebRtc.peers.set('peer-2', pcBob);
+
+  await qc.collectMetrics();
+  diag = qc.getDetailedDiagnostics();
+  assert.equal(diag.outboundStreams.length, 2);
+
+  // O diagnóstico de Alice DEVE PERMANECER INTACTO (hardware_confirmed)!
+  const aliceAfterBob = diag.outboundStreams.find(s => s.targetPeerId === 'peer-1');
+  assert.equal(aliceAfterBob.hwState, 'hardware_confirmed', 'Entrada de Bob não deve alterar o diagnóstico de Alice!');
+  assert.equal(aliceAfterBob.isHardware, true);
+
+  // Bob deve estar como unknown
+  const bobStream = diag.outboundStreams.find(s => s.targetPeerId === 'peer-2');
+  assert.equal(bobStream.hwState, 'unknown');
+  assert.equal(bobStream.isSoftware, false);
+
+  // 3. Bob sai da sala
+  mockWebRtc.peers.delete('peer-2');
+  await qc.collectMetrics();
+  diag = qc.getDetailedDiagnostics();
+
+  assert.equal(diag.outboundStreams.length, 1, 'Deve restar apenas o fluxo de Alice');
+  assert.equal(diag.outboundStreams[0].targetPeerId, 'peer-1');
+  assert.equal(diag.outboundStreams[0].hwState, 'hardware_confirmed');
+
+  // Histórico de deltas de Bob deve ter sido expurgado
+  assert.equal(qc.streamStatsHistory.has('out-bob'), false, 'ID de Bob deve ser expurgado do histórico');
+});
+
+// ========================================================
+// 12. TESTE DE ESTATÍSTICAS INCOMPLETAS OU VAZIAS
+// ========================================================
+
+test('13. Estatísticas Incompletas: Tolera relatórios RTP com campos omitidos com segurança', async () => {
+  const qc = new QualityController();
+  const mockWebRtc = new MockWebRTCManager();
+  const pc = new MockPeerConnection();
+
+  // Relatório com dados esparsos/ausentes
+  pc.setReports([
+    {
+      id: 'sparse-report',
+      type: 'outbound-rtp',
+      kind: 'video'
+      // Sem codecId, sem frameWidth, sem bytesSent, sem framesEncoded
+    }
+  ]);
+  mockWebRtc.peers.set('peer-1', pc);
+  qc.setWebRTC(mockWebRtc);
+
+  await assert.doesNotReject(async () => {
+    await qc.collectMetrics();
+  });
+
+  const diag = qc.getDetailedDiagnostics();
+  assert.equal(diag.outboundStreams.length, 1);
+  const stream = diag.outboundStreams[0];
+  assert.equal(stream.hwState, 'inactive', 'Sem dados transmitidos, deve categorizar como inativo');
+  assert.equal(stream.isHardware, false);
+  assert.equal(stream.isSoftware, false);
+  assert.equal(stream.bitrateMbps, '0.00');
+  assert.ok(stream.fps === '--' || stream.fps === 0, 'FPS deve ser seguro (-- ou 0)');
+});
+
 console.log('Todos os testes automatizados da telemetria definidos.');

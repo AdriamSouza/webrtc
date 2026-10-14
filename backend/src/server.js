@@ -25,10 +25,10 @@ app.use(express.static(frontendPath));
 // Metadados de versão e protocolo para compatibilidade entre Desktop, Web e Render
 const versionFilePath = path.resolve(__dirname, 'version.json');
 let versionMetadata = {
-  version: '1.3.5',
+  version: '1.4.0',
   protocolVersion: 2,
   minClientProtocolVersion: 2,
-  gitCommit: 'a186ed0',
+  gitCommit: 'release',
   buildDate: new Date().toISOString()
 };
 

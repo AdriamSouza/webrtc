@@ -72,10 +72,10 @@ export function isHardwareCodecImplementation(implName) {
 
 /**
  * Análise técnica detalhada da implementação do codificador de vídeo
- * Taxonomia rigorosa:
- * - 'hardware': Hardware confirmado por evidência disponível
- * - 'software': Software confirmado por evidência disponível (fallback CPU)
- * - 'inconclusive': Implementação desconhecida ou sem evidência conclusiva
+ * Taxonomia rigorosa de 3 estados operacionais + inativo:
+ * - 'hardware_confirmed': Hardware confirmado por evidência direta (MFT, NVENC, AMF, D3D11, etc.)
+ * - 'software_confirmed': Software confirmado por evidência direta (libaom, openh264, libvpx, dav1d, etc.)
+ * - 'unknown': Implementação não informada pelo WebRTC ou não catalogada (sem suposição de CPU)
  * - 'inactive': Fluxo sem atividade de codificação
  */
 export function analyzeEncoderImplementation(implName, codecName = '', activityInfo = {}) {
@@ -84,11 +84,13 @@ export function analyzeEncoderImplementation(implName, codecName = '', activityI
 
   if (isInactive) {
     return {
+      state: 'inactive',
       category: 'inactive',
       label: 'Sem Atividade / Ocioso',
       badgeClass: 'diag-badge-neutral',
       isHardware: false,
       isSoftware: false,
+      isUnknown: false,
       rawImplementation: implName || 'Nenhuma',
       evidence: 'Nenhum quadro codificado ou enviado nesta conexão (streaming sob demanda ou pausado)'
     };
@@ -96,67 +98,92 @@ export function analyzeEncoderImplementation(implName, codecName = '', activityI
 
   if (!implName) {
     return {
+      state: 'unknown',
       category: 'inconclusive',
-      label: 'Aguardando Detalhes (?)',
+      label: 'Não determinado',
       badgeClass: 'diag-badge-neutral',
       isHardware: false,
       isSoftware: false,
-      rawImplementation: 'Aguardando WebRTC',
-      evidence: 'Aguardando primeiros quadros para identificação da biblioteca de codificação'
+      isUnknown: true,
+      rawImplementation: 'Não informado pelo WebRTC',
+      evidence: 'A API getStats() do Chromium nesta plataforma não expôs encoderImplementation no relatório outbound-rtp. Não é possível determinar se a codificação é executada via GPU (MFT/D3D11) ou CPU.'
     };
   }
 
   const s = String(implName).toLowerCase();
   if (s.startsWith('externalencoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('nvenc') || s.includes('amf') || s.includes('qsv') || s.includes('hardware')) {
     return {
+      state: 'hardware_confirmed',
       category: 'hardware',
       label: 'GPU Hardware ⚡',
       badgeClass: 'diag-badge-hw',
       isHardware: true,
       isSoftware: false,
+      isUnknown: false,
       rawImplementation: implName,
       evidence: `GPU Hardware Confirmado (${implName}) via DirectX 11 / MediaFoundationVideoEncodeAccelerator`
     };
   }
   if (s.includes('libaom')) {
     return {
+      state: 'software_confirmed',
       category: 'software',
       label: 'Software (CPU: libaom) ⚠️',
       badgeClass: 'diag-badge-sw',
       isHardware: false,
       isSoftware: true,
+      isUnknown: false,
       rawImplementation: implName,
       evidence: `Software / CPU (${implName}) — Hardware/driver não expôs codificador AV1 ao WebRTC; fallback ativo para biblioteca libaom multi-threaded`
     };
   }
   if (s.includes('openh264')) {
     return {
+      state: 'software_confirmed',
       category: 'software',
       label: 'Software (CPU: OpenH264) ⚠️',
       badgeClass: 'diag-badge-sw',
       isHardware: false,
       isSoftware: true,
+      isUnknown: false,
       rawImplementation: implName,
       evidence: `Software / CPU (${implName}) — Fallback ativo para OpenH264 (Cisco)`
     };
   }
   if (s.includes('libvpx')) {
     return {
+      state: 'software_confirmed',
       category: 'software',
       label: 'Software (CPU: libvpx) ⚠️',
       badgeClass: 'diag-badge-sw',
       isHardware: false,
       isSoftware: true,
+      isUnknown: false,
       rawImplementation: implName,
       evidence: `Software / CPU (${implName}) — Codificador VP8/VP9 por CPU`
     };
   }
+  if (s.includes('dav1d') || s.includes('ffmpeg')) {
+    return {
+      state: 'software_confirmed',
+      category: 'software',
+      label: `Software (CPU: ${implName}) ⚠️`,
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      isUnknown: false,
+      rawImplementation: implName,
+      evidence: `Software / CPU (${implName}) — Codificador por software`
+    };
+  }
   return {
+    state: 'unknown',
     category: 'inconclusive',
-    label: `Inconclusivo (${implName})`,
-    badgeClass: 'diag-badge-warn',
+    label: `Não determinado (${implName})`,
+    badgeClass: 'diag-badge-neutral',
     isHardware: false,
     isSoftware: false,
+    isUnknown: true,
     rawImplementation: implName,
     evidence: `Implementação não catalogada: ${implName}`
   };
@@ -171,11 +198,13 @@ export function analyzeDecoderImplementation(implName, powerEfficient = false, a
 
   if (isInactive) {
     return {
+      state: 'inactive',
       category: 'inactive',
       label: 'Sem Atividade / Ocioso',
       badgeClass: 'diag-badge-neutral',
       isHardware: false,
       isSoftware: false,
+      isUnknown: false,
       rawImplementation: implName || 'Nenhuma',
       evidence: 'Nenhum quadro recebido para decodificação no momento'
     };
@@ -183,13 +212,15 @@ export function analyzeDecoderImplementation(implName, powerEfficient = false, a
 
   if (!implName && !powerEfficient) {
     return {
+      state: 'unknown',
       category: 'inconclusive',
-      label: 'Aguardando Detalhes (?)',
+      label: 'Não determinado',
       badgeClass: 'diag-badge-neutral',
       isHardware: false,
       isSoftware: false,
-      rawImplementation: 'Aguardando WebRTC',
-      evidence: 'Aguardando primeiros quadros para identificação do decoder'
+      isUnknown: true,
+      rawImplementation: 'Não informado pelo WebRTC',
+      evidence: 'A API getStats() do Chromium nesta plataforma não expôs decoderImplementation. Não é possível determinar se a decodificação é executada via GPU (D3D11/DXVA) ou CPU.'
     };
   }
 
@@ -197,43 +228,51 @@ export function analyzeDecoderImplementation(implName, powerEfficient = false, a
   if (s.startsWith('externaldecoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('hardware') || powerEfficient) {
     const raw = implName || (powerEfficient ? 'D3D11 [powerEfficient]' : 'MediaFoundation');
     return {
+      state: 'hardware_confirmed',
       category: 'hardware',
       label: 'GPU Hardware ⚡',
       badgeClass: 'diag-badge-hw',
       isHardware: true,
       isSoftware: false,
+      isUnknown: false,
       rawImplementation: raw,
       evidence: `GPU Hardware Confirmado (${raw}) via D3D11/MediaFoundationVideoDecoder`
     };
   }
   if (s.includes('dav1d')) {
     return {
+      state: 'software_confirmed',
       category: 'software',
       label: 'Software (CPU: dav1d) ⚠️',
       badgeClass: 'diag-badge-sw',
       isHardware: false,
       isSoftware: true,
+      isUnknown: false,
       rawImplementation: implName,
       evidence: `Software / CPU (${implName}) — Decodificador AV1 multi-threaded via CPU`
     };
   }
   if (s.includes('ffmpeg') || s.includes('openh264') || s.includes('libvpx')) {
     return {
+      state: 'software_confirmed',
       category: 'software',
       label: `Software (CPU: ${implName}) ⚠️`,
       badgeClass: 'diag-badge-sw',
       isHardware: false,
       isSoftware: true,
+      isUnknown: false,
       rawImplementation: implName,
       evidence: `Software / CPU (${implName})`
     };
   }
   return {
+    state: 'unknown',
     category: 'inconclusive',
-    label: `Inconclusivo (${implName || 'Padrão'})`,
-    badgeClass: 'diag-badge-warn',
+    label: `Não determinado (${implName || 'Padrão'})`,
+    badgeClass: 'diag-badge-neutral',
     isHardware: false,
     isSoftware: false,
+    isUnknown: true,
     rawImplementation: implName || 'Padrão',
     evidence: `Implementação de decodificação: ${implName || 'Padrão do Sistema'}`
   };
@@ -249,6 +288,9 @@ export class QualityController {
     // Histórico individual por ID de relatório RTP para cálculo exato de deltas sem colisões
     this.streamStatsHistory = new Map();
     this.latestDiagnostics = null; // Diagnóstico completo acessível pelo painel de estatísticas
+
+    // Gerenciador Adaptativo de Transmissão por Peer (Ativo, Segundo Plano e Inativo)
+    this.peerAdaptiveStates = new Map(); // Map<userId, { userId, viewerState, currentMaxFps, currentMaxBitrate, currentScaleDown, estimatedCpuSavingsPercent, lastStateChange }>
 
     // Perfil ativo persistente (Ultra por padrão)
     const saved = (() => {
@@ -302,6 +344,163 @@ export class QualityController {
       this.intervalId = null;
     }
     this.streamStatsHistory.clear();
+    this.peerAdaptiveStates.clear();
+  }
+
+  /**
+   * Retorna os parâmetros de codificação ótimos para o estado de visibilidade do espectador
+   * @param {string} state - 'active' | 'background' | 'inactive'
+   */
+  getEncodingParametersForState(state = 'active') {
+    const profile = QUALITY_PROFILES[this.activeProfile] || QUALITY_PROFILES.ultra;
+    const baseMaxBitrate = this.currentMaxBitrate || profile.maxBitrate;
+    const baseMaxFps = this.currentMaxFps || profile.maxFps;
+
+    switch (state) {
+      case 'background': {
+        // Redução substancial de CPU e GPU: 15 FPS e resolução dividida por 2 (540p)
+        // Reduz o número de quadros processados pelo encoder em 75% e a contagem de pixels em 75%
+        const maxFramerate = Math.min(15, Math.max(10, Math.round(baseMaxFps * 0.25)));
+        const scaleResolutionDownBy = 2.0; // 1/4 dos pixels (ex: 1920x1080 -> 960x540)
+        const maxBitrate = Math.min(1200000, Math.max(400000, Math.round(baseMaxBitrate * 0.20)));
+        return {
+          state: 'background',
+          maxFramerate,
+          scaleResolutionDownBy,
+          maxBitrate,
+          priority: 'low',
+          networkPriority: 'low',
+          estimatedSavingsPercent: 85,
+          label: 'Segundo Plano (15 FPS @ 540p)',
+          badgeClass: 'diag-badge-warn'
+        };
+      }
+      case 'inactive': {
+        // Modo ocioso / standby: 5 FPS e resolução dividida por 4 (270p)
+        // Economia superior a 95% de processamento para essa conexão
+        const maxFramerate = Math.min(5, Math.max(1, Math.round(baseMaxFps * 0.10)));
+        const scaleResolutionDownBy = 4.0; // 1/16 dos pixels (ex: 1920x1080 -> 480x270)
+        const maxBitrate = Math.min(300000, Math.max(150000, Math.round(baseMaxBitrate * 0.05)));
+        return {
+          state: 'inactive',
+          maxFramerate,
+          scaleResolutionDownBy,
+          maxBitrate,
+          priority: 'very-low',
+          networkPriority: 'low',
+          estimatedSavingsPercent: 95,
+          label: 'Inativo (5 FPS @ 270p)',
+          badgeClass: 'diag-badge-neutral'
+        };
+      }
+      case 'active':
+      default: {
+        // Espectador ativo assistindo ativamente à transmissão: qualidade e fluidez total
+        return {
+          state: 'active',
+          maxFramerate: baseMaxFps,
+          scaleResolutionDownBy: 1.0,
+          maxBitrate: baseMaxBitrate,
+          priority: 'high',
+          networkPriority: 'high',
+          estimatedSavingsPercent: 0,
+          label: 'Ativo (Focado)',
+          badgeClass: 'diag-badge-hw'
+        };
+      }
+    }
+  }
+
+  /**
+   * Aplica parâmetros de codificação individualmente para o RTCRtpSender de um peer
+   */
+  async applyEncodingParametersToSender(targetId, overrideConfig = null) {
+    if (!this.webrtc || !this.webrtc.peers) return;
+    const pc = this.webrtc.peers.get(targetId);
+    if (!pc || pc.connectionState === 'closed') return;
+
+    let peerEntry = this.peerAdaptiveStates.get(targetId);
+    if (!peerEntry) {
+      peerEntry = {
+        userId: targetId,
+        viewerState: 'active',
+        lastStateChange: Date.now(),
+        currentMaxFps: this.currentMaxFps,
+        currentMaxBitrate: this.currentMaxBitrate,
+        currentScaleDown: 1.0,
+        estimatedCpuSavingsPercent: 0
+      };
+      this.peerAdaptiveStates.set(targetId, peerEntry);
+    }
+
+    const config = overrideConfig || this.getEncodingParametersForState(peerEntry.viewerState);
+    peerEntry.currentMaxFps = config.maxFramerate;
+    peerEntry.currentMaxBitrate = config.maxBitrate;
+    peerEntry.currentScaleDown = config.scaleResolutionDownBy;
+    peerEntry.estimatedCpuSavingsPercent = config.estimatedSavingsPercent;
+
+    const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+    for (const sender of senders) {
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = config.maxBitrate;
+        params.encodings[0].maxFramerate = config.maxFramerate;
+        params.encodings[0].scaleResolutionDownBy = config.scaleResolutionDownBy;
+        params.encodings[0].priority = config.priority;
+        params.encodings[0].networkPriority = config.networkPriority;
+        params.degradationPreference = 'maintain-framerate';
+
+        await sender.setParameters(params);
+      } catch (err) {
+        console.warn(`[QualityController] Falha ao ajustar encoding para peer ${targetId}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Atualiza o estado de um espectador e reconfigura seu encoder na GPU/CPU
+   */
+  async updateViewerState(userId, stateData = {}) {
+    if (!userId) return null;
+    const requestedState = typeof stateData === 'string' ? stateData : (stateData.state || 'active');
+    const validState = (requestedState === 'background' || requestedState === 'inactive') ? requestedState : 'active';
+
+    let peerEntry = this.peerAdaptiveStates.get(userId);
+    if (!peerEntry) {
+      peerEntry = {
+        userId,
+        viewerState: 'active',
+        lastStateChange: Date.now(),
+        currentMaxFps: this.currentMaxFps,
+        currentMaxBitrate: this.currentMaxBitrate,
+        currentScaleDown: 1.0,
+        estimatedCpuSavingsPercent: 0
+      };
+      this.peerAdaptiveStates.set(userId, peerEntry);
+    }
+
+    const previousState = peerEntry.viewerState;
+    peerEntry.viewerState = validState;
+    if (previousState !== validState) {
+      peerEntry.lastStateChange = Date.now();
+      console.log(`[QualityController] Espectador ${userId} alterou estado: ${previousState} ➔ ${validState}`);
+    }
+
+    const config = this.getEncodingParametersForState(validState);
+    await this.applyEncodingParametersToSender(userId, config);
+    return peerEntry;
+  }
+
+  /**
+   * Remove o rastreamento adaptativo de um espectador desconectado
+   */
+  removePeer(userId) {
+    if (userId) {
+      this.peerAdaptiveStates.delete(userId);
+    }
   }
 
   /**
@@ -328,31 +527,14 @@ export class QualityController {
   }
 
   /**
-   * Aplica parâmetros do perfil ativo a todos os senders de vídeo de todos os peers
+   * Aplica parâmetros do perfil ativo a todos os senders de vídeo de todos os peers,
+   * respeitando os estados individuais de cada espectador (ativo, segundo plano ou inativo)
    */
   async applyProfileToPeers() {
     if (!this.webrtc || !this.webrtc.peers) return;
 
-    for (const [targetId, pc] of this.webrtc.peers.entries()) {
-      const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
-      for (const sender of senders) {
-        try {
-          const params = sender.getParameters();
-          if (!params.encodings || params.encodings.length === 0) {
-            params.encodings = [{}];
-          }
-          params.encodings[0].maxBitrate = this.currentMaxBitrate;
-          params.encodings[0].maxFramerate = this.currentMaxFps;
-          params.encodings[0].scaleResolutionDownBy = 1.0;
-          params.encodings[0].priority = 'high';
-          params.encodings[0].networkPriority = 'high';
-          params.degradationPreference = 'maintain-framerate';
-
-          await sender.setParameters(params);
-        } catch (err) {
-          console.warn(`[QualityController] Erro ao aplicar perfil no peer ${targetId}:`, err.message);
-        }
-      }
+    for (const targetId of this.webrtc.peers.keys()) {
+      await this.applyEncodingParametersToSender(targetId);
     }
   }
 
@@ -656,6 +838,13 @@ export class QualityController {
             const streamBitrateMbps = (streamBitrateBps / 1000000).toFixed(2);
             const streamBitrateKbps = Math.round(streamBitrateBps / 1000);
 
+            const peerEntry = this.peerAdaptiveStates.get(userId) || {
+              viewerState: 'active',
+              currentScaleDown: 1.0,
+              estimatedCpuSavingsPercent: 0
+            };
+            const viewerConfig = this.getEncodingParametersForState(peerEntry.viewerState);
+
             outboundStreamsList.push({
               id: report.id,
               targetPeerId: userId,
@@ -664,9 +853,11 @@ export class QualityController {
               streamType,
               codec: cName || (this.webrtc?.getPreferredCodec ? this.webrtc.getPreferredCodec().toUpperCase() : 'AV1'),
               sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
-              encoderImplementation: encoderImpl || 'Padrão do Sistema',
+              encoderImplementation: encoderImpl || 'Não informado',
+              hwState: analysis.state,
               isHardware: analysis.isHardware,
               isSoftware: analysis.isSoftware,
+              isUnknown: analysis.isUnknown,
               hwCategory: analysis.category,
               hwLabel: analysis.label,
               hwBadgeClass: analysis.badgeClass,
@@ -682,7 +873,12 @@ export class QualityController {
               framesDropped: report.framesDropped || 0,
               avgEncodeTimeMs: avgEncodeTimeMs !== null ? `${avgEncodeTimeMs} ms` : '--',
               packetsSent: report.packetsSent || 0,
-              bytesSent: report.bytesSent || 0
+              bytesSent: report.bytesSent || 0,
+              viewerState: peerEntry.viewerState,
+              viewerStateLabel: viewerConfig.label,
+              viewerBadgeClass: viewerConfig.badgeClass,
+              scaleResolutionDownBy: peerEntry.currentScaleDown || 1.0,
+              estimatedSavingsPercent: peerEntry.estimatedCpuSavingsPercent || 0
             });
 
             this.streamStatsHistory.set(report.id, {
@@ -817,10 +1013,12 @@ export class QualityController {
               streamType,
               codec: cName || 'DESCONHECIDO',
               sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
-              decoderImplementation: decoderImpl || (isPowerEfficient ? 'Hardware D3D11' : 'Padrão do Sistema'),
+              decoderImplementation: decoderImpl || (isPowerEfficient ? 'Hardware D3D11' : 'Não informado'),
               powerEfficientDecoder: isPowerEfficient,
+              hwState: analysis.state,
               isHardware: analysis.isHardware,
               isSoftware: analysis.isSoftware,
+              isUnknown: analysis.isUnknown,
               hwCategory: analysis.category,
               hwLabel: analysis.label,
               hwBadgeClass: analysis.badgeClass,
@@ -922,13 +1120,71 @@ export class QualityController {
       // Identifica o codec efetivo e se a codificação/decodificação é por hardware ou software
       let formattedCodec = '--';
       if (outboundStreamsList.length > 0) {
-        const s = outboundStreamsList[0];
-        formattedCodec = `${s.codec} (${s.isHardware ? 'GPU ⚡' : 'Software ⚠️'})`;
+        const uniqueCodecs = [...new Set(outboundStreamsList.map(s => s.codec).filter(Boolean))];
+        const allHw = outboundStreamsList.every(s => s.hwState === 'hardware_confirmed' || s.isHardware);
+        const allSw = outboundStreamsList.every(s => s.hwState === 'software_confirmed' || s.isSoftware);
+        const anyHw = outboundStreamsList.some(s => s.hwState === 'hardware_confirmed' || s.isHardware);
+        const anySw = outboundStreamsList.some(s => s.hwState === 'software_confirmed' || s.isSoftware);
+
+        const codecBase = uniqueCodecs.join(' / ') || outboundStreamsList[0].codec || '--';
+        if (allHw) {
+          formattedCodec = `${codecBase} (GPU ⚡)`;
+        } else if (allSw) {
+          formattedCodec = `${codecBase} (Software CPU ⚠️)`;
+        } else if (anyHw && anySw) {
+          formattedCodec = `${codecBase} (Misto GPU/CPU)`;
+        } else if (anyHw) {
+          formattedCodec = `${codecBase} (GPU ⚡)`;
+        } else {
+          // Estado 'unknown': NUNCA emitir alarme falso de software!
+          formattedCodec = codecBase;
+        }
       } else if (inboundStreamsList.length > 0) {
-        const s = inboundStreamsList[0];
-        formattedCodec = `${s.codec} (${s.isHardware ? 'GPU ⚡' : 'Software ⚠️'})`;
+        const uniqueCodecs = [...new Set(inboundStreamsList.map(s => s.codec).filter(Boolean))];
+        const allHw = inboundStreamsList.every(s => s.hwState === 'hardware_confirmed' || s.isHardware);
+        const allSw = inboundStreamsList.every(s => s.hwState === 'software_confirmed' || s.isSoftware);
+        const anyHw = inboundStreamsList.some(s => s.hwState === 'hardware_confirmed' || s.isHardware);
+        const anySw = inboundStreamsList.some(s => s.hwState === 'software_confirmed' || s.isSoftware);
+
+        const codecBase = uniqueCodecs.join(' / ') || inboundStreamsList[0].codec || '--';
+        if (allHw) {
+          formattedCodec = `${codecBase} (GPU ⚡)`;
+        } else if (allSw) {
+          formattedCodec = `${codecBase} (Software CPU ⚠️)`;
+        } else if (anyHw && anySw) {
+          formattedCodec = `${codecBase} (Misto GPU/CPU)`;
+        } else if (anyHw) {
+          formattedCodec = `${codecBase} (GPU ⚡)`;
+        } else {
+          formattedCodec = codecBase;
+        }
       } else if (activeCodec) {
         formattedCodec = activeCodec;
+      }
+
+      let activeCount = 0;
+      let bgCount = 0;
+      let inactiveCount = 0;
+      let totalSavingsSum = 0;
+
+      outboundStreamsList.forEach(s => {
+        if (s.viewerState === 'background') bgCount++;
+        else if (s.viewerState === 'inactive') inactiveCount++;
+        else activeCount++;
+        totalSavingsSum += (s.estimatedSavingsPercent || 0);
+      });
+
+      const avgSavingsPercent = outboundStreamsList.length > 0
+        ? Math.round(totalSavingsSum / outboundStreamsList.length)
+        : 0;
+
+      // Limpa espectadores que se desconectaram do mapa adaptativo
+      if (this.webrtc?.peers) {
+        for (const uid of this.peerAdaptiveStates.keys()) {
+          if (!this.webrtc.peers.has(uid)) {
+            this.peerAdaptiveStates.delete(uid);
+          }
+        }
       }
 
       // Atualiza snapshot de diagnóstico detalhado
@@ -948,6 +1204,10 @@ export class QualityController {
         resolution: width && height ? `${width}x${height}` : '--',
         preferredCodec: this.webrtc?.getPreferredCodec ? this.webrtc.getPreferredCodec().toUpperCase() : 'AUTO',
         activeCodec: formattedCodec,
+        activeViewersCount: activeCount,
+        backgroundViewersCount: bgCount,
+        inactiveViewersCount: inactiveCount,
+        averageHostSavingsPercent: avgSavingsPercent,
         timestamp: Date.now()
       };
 
@@ -960,6 +1220,10 @@ export class QualityController {
         codec: formattedCodec,
         connectionType: dominantConnectionType,
         activeProfile: this.activeProfile,
+        activeViewersCount: activeCount,
+        backgroundViewersCount: bgCount,
+        inactiveViewersCount: inactiveCount,
+        averageHostSavingsPercent: avgSavingsPercent,
         diagnostics: this.latestDiagnostics
       };
 
@@ -1027,21 +1291,7 @@ export class QualityController {
     if (needsUpdate) {
       this.lastAdaptationTimestamp = now;
       this.lastAdaptationDirection = direction;
-      for (const pc of pcs) {
-        const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
-        for (const sender of senders) {
-          try {
-            const params = sender.getParameters();
-            if (params.encodings && params.encodings.length > 0) {
-              params.encodings[0].maxBitrate = this.currentMaxBitrate;
-              params.encodings[0].maxFramerate = this.currentMaxFps;
-              await sender.setParameters(params);
-            }
-          } catch (err) {
-            // Silencia erros transitórios no WebRTC
-          }
-        }
-      }
+      await this.applyProfileToPeers();
       console.log(`[QualityController] Parâmetros adaptados em ${pcs.length} conexões: Bitrate=${(this.currentMaxBitrate / 1000000).toFixed(1)}Mbps, MaxFPS=${this.currentMaxFps}`);
     }
   }

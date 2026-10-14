@@ -1899,9 +1899,9 @@ async function renderDiagnosticsData() {
     } else {
       outboundTbody.innerHTML = outboundStreams.map(s => {
         const targetName = roomState.participants.get(s.targetUserId || s.targetPeerId)?.name || s.targetPeerName || s.targetUserId || 'Todos';
-        const badgeClass = s.hwBadgeClass || (s.isHardware ? 'diag-badge-hw' : 'diag-badge-sw');
-        const badgeLabel = s.hwLabel || (s.isHardware ? 'GPU Hardware ⚡' : 'Software ⚠️');
-        const rawImpl = s.rawImplementation || s.encoderImplementation || 'Padrão';
+        const badgeClass = s.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
+        const badgeLabel = s.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software ⚠️' : 'Não determinado'));
+        const rawImpl = s.rawImplementation || s.encoderImplementation || 'Não informado';
         const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>`;
 
         const limitDisplay = s.qualityLimitationReason === 'none'
@@ -1913,9 +1913,13 @@ async function renderDiagnosticsData() {
               : `<span style="color: #a1a1aa;">${escapeHtml(s.qualityLimitationReason || 'none')}</span>`));
         const bitrateStr = s.bitrateMbps ? `${s.bitrateMbps} Mbps` : `${s.bitrateKbps || 0} kbps`;
         const fpsStr = (s.fps !== undefined && s.fps !== null && s.fps !== '') ? `${s.fps} fps` : '--';
+        const viewerBadge = `<div style="margin-top: 3px;"><span class="${escapeHtml(s.viewerBadgeClass || 'diag-badge-hw')}" style="font-size: 0.68rem; padding: 1px 5px;" title="Economia de codificação: ${s.estimatedSavingsPercent || 0}%">${escapeHtml(s.viewerStateLabel || 'Ativo')}</span></div>`;
         return `
           <tr>
-            <td><strong>${escapeHtml(targetName)}</strong></td>
+            <td>
+              <strong>${escapeHtml(targetName)}</strong>
+              ${viewerBadge}
+            </td>
             <td>${escapeHtml(s.streamType || 'Tela / Desktop')}</td>
             <td><strong>${escapeHtml(s.codec || '---')}</strong></td>
             <td>${implBadge}</td>
@@ -1934,9 +1938,9 @@ async function renderDiagnosticsData() {
     } else {
       inboundTbody.innerHTML = inboundStreams.map(s => {
         const senderName = roomState.participants.get(s.peerId)?.name || s.senderName || s.peerId;
-        const badgeClass = s.hwBadgeClass || (s.isHardware ? 'diag-badge-hw' : 'diag-badge-sw');
-        const badgeLabel = s.hwLabel || (s.isHardware ? 'GPU Hardware ⚡' : 'Software ⚠️');
-        const rawImpl = s.rawImplementation || s.decoderImplementation || 'Padrão';
+        const badgeClass = s.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
+        const badgeLabel = s.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software ⚠️' : 'Não determinado'));
+        const rawImpl = s.rawImplementation || s.decoderImplementation || 'Não informado';
         const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>`;
 
         const bitrateStr = s.bitrateMbps ? `${s.bitrateMbps} Mbps` : `${s.bitrateKbps || 0} kbps`;
@@ -3066,6 +3070,104 @@ function setupSignalingEvents() {
     if (media && media.micStream && typeof media.isAudioMuted === 'function' && !media.isAudioMuted()) {
       vad.monitorStream(userId, media.micStream);
     }
+
+    setupViewerActivityReporter();
+  });
+
+  /**
+   * Monitora a visibilidade e o foco do espectador e sinaliza o Host
+   * para redução automática de FPS e resolução (alívio de CPU/GPU do transmissor)
+   */
+  let viewerActivityCleanup = null;
+  const setupViewerActivityReporter = () => {
+    if (viewerActivityCleanup) {
+      viewerActivityCleanup();
+      viewerActivityCleanup = null;
+    }
+
+    let currentState = 'active';
+    let backgroundTimer = null;
+    const INACTIVE_TIMEOUT_MS = 45000; // 45s em segundo plano -> inativo
+
+    const evaluateAndBroadcast = () => {
+      const isDocHidden = typeof document !== 'undefined' ? (document.visibilityState === 'hidden') : false;
+      const isDocFocused = typeof document !== 'undefined' && typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+
+      let targetState = 'active';
+      if (isDocHidden) {
+        targetState = 'background';
+      } else if (!isDocFocused) {
+        targetState = 'background';
+      } else {
+        targetState = 'active';
+      }
+
+      if (targetState === 'background') {
+        if (!backgroundTimer) {
+          backgroundTimer = setTimeout(() => {
+            const stillHidden = typeof document !== 'undefined' ? (document.visibilityState === 'hidden') : false;
+            const stillUnfocused = typeof document !== 'undefined' && typeof document.hasFocus === 'function' ? !document.hasFocus() : false;
+            if (stillHidden || stillUnfocused) {
+              currentState = 'inactive';
+              sendViewerState('inactive');
+            }
+          }, INACTIVE_TIMEOUT_MS);
+        }
+      } else {
+        if (backgroundTimer) {
+          clearTimeout(backgroundTimer);
+          backgroundTimer = null;
+        }
+      }
+
+      if (currentState !== targetState) {
+        currentState = targetState;
+        sendViewerState(currentState);
+      }
+    };
+
+    const sendViewerState = (state) => {
+      if (!signaling || !signaling.isConnected || !roomState.roomId) return;
+      const isDocHidden = typeof document !== 'undefined' ? (document.visibilityState === 'hidden') : false;
+      const isDocFocused = typeof document !== 'undefined' && typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+
+      signaling.send('VIEWER_STATE', {
+        state,
+        isVisible: !isDocHidden,
+        isFocused: isDocFocused,
+        userId: roomState.myUserId,
+        timestamp: Date.now()
+      });
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', evaluateAndBroadcast);
+      window.addEventListener('focus', evaluateAndBroadcast);
+      window.addEventListener('blur', evaluateAndBroadcast);
+    }
+
+    viewerActivityCleanup = () => {
+      if (backgroundTimer) {
+        clearTimeout(backgroundTimer);
+        backgroundTimer = null;
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', evaluateAndBroadcast);
+        window.removeEventListener('focus', evaluateAndBroadcast);
+        window.removeEventListener('blur', evaluateAndBroadcast);
+      }
+    };
+
+    // Dispara relatório inicial
+    setTimeout(evaluateAndBroadcast, 1200);
+  };
+
+  signaling.on('VIEWER_STATE', async (msg) => {
+    const { from, data } = msg;
+    const viewerId = from || data?.userId;
+    if (viewerId && qualityController) {
+      await qualityController.updateViewerState(viewerId, data);
+    }
   });
 
   signaling.on('USER_JOINED', async (msg) => {
@@ -3083,6 +3185,9 @@ function setupSignalingEvents() {
 
   signaling.on('USER_LEFT', (msg) => {
     const { userId, username } = msg.data;
+    if (qualityController) {
+      qualityController.removePeer(userId);
+    }
     clearPeerSyncTimer(userId);
     peerRetryCounts.delete(userId);
     roomState.removeParticipant(userId);
@@ -4168,8 +4273,8 @@ function setupSettingsModal() {
     const matrixCompatSub = document.getElementById('matrixCompatSub');
     const matrixCompatCard = document.getElementById('matrixCompatCard');
 
-    let clientVer = '1.3.5';
-    let clientCommit = 'a186ed0';
+    let clientVer = '1.4.0';
+    let clientCommit = 'release';
     let clientProto = 2;
 
     // 1. Identificação do Desktop
@@ -4220,7 +4325,7 @@ function setupSettingsModal() {
       const resp = await fetch(`${serverBaseUrl.replace(/\/$/, '')}/api/version`, { cache: 'no-store' });
       if (resp.ok) {
         const serverMeta = await resp.json();
-        const sVer = serverMeta.version || '1.3.5';
+        const sVer = serverMeta.version || '1.4.0';
         const sCommit = serverMeta.gitCommit || 'online';
         const sProto = serverMeta.protocolVersion || 2;
         const minClientProto = serverMeta.minClientProtocolVersion || 1;

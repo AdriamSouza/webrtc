@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag de versão para release (ex: v1.3.3)'
+        required: false
+        default: 'v1.3.3'
 
 permissions:
   contents: write
@@ -27,8 +32,8 @@ jobs:
 
       - name: Install Workspace Dependencies
         run: |
-          npm --prefix backend ci
-          npm --prefix desktop ci
+          npm --prefix backend install
+          npm --prefix desktop install
 
       - name: Run Automated Test Suite
         run: npm test
@@ -38,9 +43,10 @@ jobs:
 
       - name: Create GitHub Release and Upload Artifacts
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          name: HyperStream ${{ github.ref_name }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.3.3' }}
+          name: HyperStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.3.3' }}
           draft: false
           prerelease: false
           generate_release_notes: true

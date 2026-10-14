@@ -21,5 +21,8 @@
   "dependencies": {
     "electron": "^33.2.1",
     "loopback-capture": "^3.0.2"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6"
   }
 }

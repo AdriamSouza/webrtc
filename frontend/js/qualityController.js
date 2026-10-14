@@ -7,6 +7,22 @@
  */
 
 export const QUALITY_PROFILES = {
+  '4k_ultra': {
+    id: '4k_ultra',
+    label: '4K Ultra HD (60 FPS)',
+    maxBitrate: 25000000,
+    minBitrate: 10000000,
+    maxFps: 60,
+    description: '4K a 60 FPS com até 25 Mbps (Requer GPU dedicada e conexão gigabit)'
+  },
+  '1440p_ultra': {
+    id: '1440p_ultra',
+    label: '1440p / 2K Quad HD (60 FPS)',
+    maxBitrate: 16000000,
+    minBitrate: 6000000,
+    maxFps: 60,
+    description: '1440p a 60 FPS com até 16 Mbps (Qualidade extrema para monitores 2K)'
+  },
   ultra: {
     id: 'ultra',
     label: 'Ultra (60 FPS)',
@@ -243,6 +259,12 @@ export class QualityController {
     this.activeProfile = profile.id;
     this.currentMaxBitrate = profile.maxBitrate;
     this.currentMaxFps = profile.maxFps;
+
+    // Histerese para evitar oscilações rápidas de bitrate e resolução
+    this.lastAdaptationTimestamp = 0;
+    this.lastAdaptationDirection = 'none';
+    this.hysteresisDownCooldownMs = 4000;
+    this.hysteresisUpCooldownMs = 8000;
   }
 
   setWebRTC(webrtcManager) {
@@ -941,8 +963,22 @@ export class QualityController {
         diagnostics: this.latestDiagnostics
       };
 
-      // Dispara lógica adaptativa de bitrate em todas as conexões ativas
-      this.evaluateAdaptation(activePcs.map(item => item.pc), typeof finalRtt === 'number' ? finalRtt : null, parseFloat(finalPacketLoss));
+      let dominantAvgEncodeTime = null;
+      let dominantQualityLimitation = 'none';
+      if (outboundStreamsList.length > 0) {
+        dominantQualityLimitation = outboundStreamsList[0].qualityLimitationReason || 'none';
+        const rawTime = parseFloat(outboundStreamsList[0].avgEncodeTimeMs);
+        if (!isNaN(rawTime)) dominantAvgEncodeTime = rawTime;
+      }
+
+      // Dispara lógica adaptativa de bitrate em todas as conexões ativas com histerese
+      this.evaluateAdaptation(
+        activePcs.map(item => item.pc),
+        typeof finalRtt === 'number' ? finalRtt : null,
+        parseFloat(finalPacketLoss),
+        dominantAvgEncodeTime,
+        dominantQualityLimitation
+      );
 
       if (this.onStatsUpdate) {
         this.onStatsUpdate(metrics);
@@ -953,30 +989,44 @@ export class QualityController {
   }
 
   /**
-   * Avalia a saúde da conexão e ajusta dinamicamente a taxa de envio dentro dos limites do perfil
-   * Aplicado em todos os peers simultaneamente
+   * Avalia a saúde da conexão e do encoder, aplicando histerese para evitar oscilações rápidas
    */
-  async evaluateAdaptation(pcs, rtt, packetLoss) {
+  async evaluateAdaptation(pcs, rtt, packetLoss, avgEncodeTime = null, qualityLimitation = 'none') {
     if (!pcs || pcs.length === 0) return;
 
+    const now = Date.now();
     const profile = QUALITY_PROFILES[this.activeProfile] || QUALITY_PROFILES.ultra;
     let needsUpdate = false;
+    let direction = 'none';
 
-    // Regra 1: Perda de pacotes elevada (> 3.5%) ou RTT crítico (> 220ms)
-    if ((packetLoss > 3.5 || (rtt && rtt > 220)) && this.currentMaxBitrate > profile.minBitrate) {
-      console.warn('[QualityController] Degradação de rede detectada. Reduzindo bitrate adaptativo...');
-      this.currentMaxBitrate = Math.max(profile.minBitrate, Math.round(this.currentMaxBitrate * 0.8));
-      this.currentMaxFps = Math.min(this.currentMaxFps, 45);
-      needsUpdate = true;
+    // Condição A: Degradação de rede ou saturação de CPU do encoder
+    const isNetworkDegraded = (packetLoss > 3.0 || (rtt && rtt > 200));
+    const isCpuThrottled = (qualityLimitation === 'cpu' || (avgEncodeTime !== null && avgEncodeTime > 25));
+
+    if ((isNetworkDegraded || isCpuThrottled) && this.currentMaxBitrate > profile.minBitrate) {
+      if (now - this.lastAdaptationTimestamp >= this.hysteresisDownCooldownMs) {
+        const factor = isCpuThrottled ? 0.75 : 0.85;
+        this.currentMaxBitrate = Math.max(profile.minBitrate, Math.round(this.currentMaxBitrate * factor));
+        this.currentMaxFps = Math.min(this.currentMaxFps, isCpuThrottled ? 30 : 45);
+        needsUpdate = true;
+        direction = 'down';
+        console.warn(`[QualityController] Degradação detectada (${isCpuThrottled ? 'Sobrecarga de CPU/Encoder' : 'Rede'}). Reduzindo bitrate para ${(this.currentMaxBitrate / 1000000).toFixed(1)} Mbps.`);
+      }
     }
-    // Regra 2: Rede excelente e estável (< 0.5% loss e RTT < 65ms)
-    else if (packetLoss < 0.5 && rtt && rtt < 65 && this.currentMaxBitrate < profile.maxBitrate) {
-      this.currentMaxBitrate = Math.min(profile.maxBitrate, Math.round(this.currentMaxBitrate * 1.15));
-      this.currentMaxFps = profile.maxFps;
-      needsUpdate = true;
+    // Condição B: Estabilidade sustentada (baixo loss, RTT estável e tempo de encode saudável)
+    else if (packetLoss < 0.5 && (!rtt || rtt < 70) && (!avgEncodeTime || avgEncodeTime < 14) && this.currentMaxBitrate < profile.maxBitrate) {
+      if (now - this.lastAdaptationTimestamp >= this.hysteresisUpCooldownMs) {
+        this.currentMaxBitrate = Math.min(profile.maxBitrate, Math.round(this.currentMaxBitrate * 1.15));
+        this.currentMaxFps = profile.maxFps;
+        needsUpdate = true;
+        direction = 'up';
+        console.log(`[QualityController] Rede e CPU estabilizados. Recuperando bitrate para ${(this.currentMaxBitrate / 1000000).toFixed(1)} Mbps.`);
+      }
     }
 
     if (needsUpdate) {
+      this.lastAdaptationTimestamp = now;
+      this.lastAdaptationDirection = direction;
       for (const pc of pcs) {
         const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
         for (const sender of senders) {

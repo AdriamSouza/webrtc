@@ -112,6 +112,14 @@ export class MediaManager {
       }
     };
 
+    if (this.targetResolution === '4k') {
+      displayConstraints.video.width = { ideal: 3840, max: 3840 };
+      displayConstraints.video.height = { ideal: 2160, max: 2160 };
+    } else if (this.targetResolution === '1440p' || this.targetResolution === '2k') {
+      displayConstraints.video.width = { ideal: 2560, max: 2560 };
+      displayConstraints.video.height = { ideal: 1440, max: 1440 };
+    }
+
     // Recarrega filtros salvos do localStorage para garantir sincronismo com o painel de configurações
     try {
       const raw = localStorage.getItem('hyperstream_audio_apps_filter') || localStorage.getItem('hyperstream_audio_apps_config');
@@ -188,7 +196,13 @@ export class MediaManager {
         frameRate: { ideal: fps, max: fps }
       };
 
-      if (this.targetResolution === '1080p') {
+      if (this.targetResolution === '4k') {
+        trackConstraints.width = { ideal: 3840 };
+        trackConstraints.height = { ideal: 2160 };
+      } else if (this.targetResolution === '1440p' || this.targetResolution === '2k') {
+        trackConstraints.width = { ideal: 2560 };
+        trackConstraints.height = { ideal: 1440 };
+      } else if (this.targetResolution === '1080p') {
         trackConstraints.width = { ideal: 1920 };
         trackConstraints.height = { ideal: 1080 };
       } else if (this.targetResolution === '720p') {

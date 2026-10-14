@@ -4,6 +4,7 @@ import { WebRTCManager } from './webrtc.js';
 import { QualityController } from './qualityController.js';
 import { RoomState, getParticipantColor, getUserInitials } from './room.js';
 import { Icons } from './icons.js';
+import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS } from './hardwareDetector.js';
 
 // Instanciação dos Módulos Centrais
 const signaling = new SignalingClient();
@@ -1759,8 +1760,38 @@ async function renderDiagnosticsData() {
     try {
       const gpuDiag = await window.desktopAPI.getGpuDiagnostics();
       if (gpuDiag) {
-        if (diagGpuRenderer) diagGpuRenderer.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || gpuDiag.gpuInfo?.gpuDevice?.[0]?.deviceString || 'GPU Dedicada (Desktop)';
-        if (diagGpuDriver) diagGpuDriver.textContent = gpuDiag.gpuInfo?.gpuDevice?.[0]?.driverVersion || 'Nativo Windows (DirectX/MediaFoundation)';
+        const gpuName = gpuDiag.systemGpu?.name || gpuDiag.gpuInfo?.gpuDevice?.[0]?.description || gpuDiag.gpuInfo?.gpuDevice?.[0]?.deviceString || 'GPU Dedicada (Desktop)';
+        const gpuDriver = gpuDiag.systemGpu?.driverVersion || gpuDiag.gpuInfo?.gpuDevice?.[0]?.driverVersion || 'Nativo Windows (DirectX/MediaFoundation)';
+
+        if (diagGpuRenderer) diagGpuRenderer.textContent = gpuName;
+        if (diagGpuDriver) diagGpuDriver.textContent = gpuDriver;
+
+        const evaluated = evaluateCodecCapabilities(
+          { description: gpuName, vendor: gpuName },
+          gpuDiag.featureStatus || {}
+        );
+        webrtc.setHardwareCapabilities(evaluated);
+
+        // Atualiza badges dinâmicos de codecs nas configurações se existirem
+        const badgeH264 = document.getElementById('badgeH264Status');
+        const badgeAv1 = document.getElementById('badgeAv1Status');
+        const descH264 = document.getElementById('descH264Status');
+        const descAv1 = document.getElementById('descAv1Status');
+
+        if (badgeH264 && evaluated.codecs?.H264) {
+          badgeH264.textContent = evaluated.codecs.H264.hardwareSupported ? 'GPU ⚡' : 'Software ⚠️';
+          badgeH264.className = evaluated.codecs.H264.hardwareSupported ? 'badge badge-success' : 'badge badge-secondary';
+        }
+        if (descH264 && evaluated.codecs?.H264) {
+          descH264.textContent = evaluated.codecs.H264.description;
+        }
+        if (badgeAv1 && evaluated.codecs?.AV1) {
+          badgeAv1.textContent = evaluated.codecs.AV1.hardwareSupported ? 'GPU ⚡' : 'Software CPU ⚠️';
+          badgeAv1.className = evaluated.codecs.AV1.hardwareSupported ? 'badge badge-success' : 'badge badge-secondary';
+        }
+        if (descAv1 && evaluated.codecs?.AV1) {
+          descAv1.textContent = evaluated.codecs.AV1.description;
+        }
 
         const videoDecodeStatus = gpuDiag.featureStatus?.video_decode || 'unknown';
         const videoEncodeStatus = gpuDiag.featureStatus?.video_encode || gpuDiag.featureStatus?.accelerated_video_encode || 'unknown';
@@ -1770,12 +1801,12 @@ async function renderDiagnosticsData() {
 
         if (diagGpuDecode) {
           diagGpuDecode.innerHTML = isDecodeHw
-            ? '<span class="diag-badge-hw">Ativa (MediaFoundation/D3D11 ⚡)</span>'
+            ? `<span class="diag-badge-hw">Ativa (D3D11 / ${evaluated.vendorInfo.vendor} ⚡)</span>`
             : `<span class="diag-badge-sw">${videoDecodeStatus}</span>`;
         }
         if (diagGpuEncode) {
           diagGpuEncode.innerHTML = isEncodeHw
-            ? '<span class="diag-badge-hw">Ativa (MediaFoundation/D3D11 ⚡)</span>'
+            ? `<span class="diag-badge-hw">Ativa (${evaluated.vendorInfo.vendor} MediaFoundation ⚡)</span>`
             : `<span class="diag-badge-sw">${videoEncodeStatus}</span>`;
         }
 
@@ -1791,7 +1822,7 @@ async function renderDiagnosticsData() {
           diagMemoryUsage.textContent = `${gpuDiag.memoryUsageMB} MB`;
         }
         if (diagGpuStatusBadge) {
-          diagGpuStatusBadge.textContent = isEncodeHw ? 'Hardware Suportado ⚡' : 'GPU Detectada';
+          diagGpuStatusBadge.textContent = isEncodeHw ? `${evaluated.vendorInfo.vendor} Acelerado ⚡` : 'GPU Detectada';
           diagGpuStatusBadge.className = isEncodeHw ? 'badge badge-success' : 'badge';
         }
       }
@@ -1847,6 +1878,7 @@ async function renderDiagnosticsData() {
       if (localCaptures.length > 0) {
         const cap = localCaptures[0];
         const prefCodec = detailed?.preferredCodec || 'AV1';
+        const prefEnc = (webrtc.getEncoderPreference ? webrtc.getEncoderPreference() : 'auto').toUpperCase();
         outboundTbody.innerHTML = `
           <tr>
             <td colspan="7" class="diag-empty" style="text-align: left; padding: 14px 16px !important;">
@@ -1855,7 +1887,7 @@ async function renderDiagnosticsData() {
                 <strong style="color: #f0f2f5;">${escapeHtml(cap.label)} (${cap.width}x${cap.height} @ ${cap.fps} fps)</strong>
               </div>
               <div style="color: #94a3b8; font-size: 0.75rem; line-height: 1.4;">
-                Transmissão local em execução com preferência de codec <strong>${escapeHtml(prefCodec)}</strong>.<br>
+                Modo de aceleração: <strong>${escapeHtml(prefEnc)}</strong> • Codec preferencial: <strong>${escapeHtml(prefCodec)}</strong>.<br>
                 Codificadores RTP por hardware/software são acionados sob demanda assim que outros participantes ingressarem e assistirem à transmissão.
               </div>
             </td>
@@ -4276,7 +4308,12 @@ function setupSettingsModal() {
 
   if (settingResSelect) {
     settingResSelect.addEventListener('change', () => {
-      media.setResolutionPreference(settingResSelect.value);
+      const resVal = settingResSelect.value;
+      media.setResolutionPreference(resVal);
+      const encPref = document.getElementById('settingEncoderPreference')?.value || 'auto';
+      if ((resVal === '4k' || resVal === '1440p') && encPref === 'cpu') {
+        appendSystemChat(`Aviso: A resolução ${resVal.toUpperCase()} no modo CPU consome alto processamento. Recomenda-se modo GPU.`);
+      }
       saveSettingsState();
     });
   }
@@ -4314,7 +4351,25 @@ function setupSettingsModal() {
     });
   }
 
-  // --- CONTROLES DE CODECS ---
+  // --- CONTROLES DE ACELERAÇÃO (GPU / CPU) E CODECS ---
+  const settingEncoderPreference = document.getElementById('settingEncoderPreference');
+  if (settingEncoderPreference) {
+    settingEncoderPreference.addEventListener('change', async () => {
+      const pref = settingEncoderPreference.value;
+      console.log(`[Settings] Modo de codificador (CPU/GPU) selecionado: ${pref}`);
+      await webrtc.setEncoderPreference(pref);
+      saveSettingsState();
+      const label = pref === 'gpu'
+        ? 'GPU (Aceleração por Hardware ⚡)'
+        : (pref === 'cpu' ? 'CPU (Modo Software ⚠️)' : 'Automático (Equilíbrio Inteligente)');
+      appendSystemChat(`Modo de codificação alterado para: ${label}`);
+      const diagModal = document.getElementById('diagnosticsModal');
+      if (diagModal && !diagModal.classList.contains('hidden')) {
+        renderDiagnosticsData().catch(() => {});
+      }
+    });
+  }
+
   const settingPreferredCodec = document.getElementById('settingPreferredCodec');
   if (settingPreferredCodec) {
     settingPreferredCodec.addEventListener('change', async () => {
@@ -4629,6 +4684,7 @@ function setupSettingsModal() {
         maxBitrate: settingMaxBitrate ? settingMaxBitrate.value : '8000000',
         minBitrate: settingMinBitrate ? settingMinBitrate.value : '4000000',
         codec: settingPreferredCodec ? settingPreferredCodec.value : 'auto',
+        encoderPreference: settingEncoderPreference ? settingEncoderPreference.value : 'auto',
         captureSystemAudio: settingCaptureSystemAudio ? settingCaptureSystemAudio.checked : true,
         captureCameraAudio: settingCaptureCameraAudio ? settingCaptureCameraAudio.checked : false,
         micDeviceId: settingMicDeviceSelect ? settingMicDeviceSelect.value : '',
@@ -4677,6 +4733,10 @@ function setupSettingsModal() {
       }
       if (s.minBitrate && settingMinBitrate) {
         settingMinBitrate.value = s.minBitrate;
+      }
+      if (s.encoderPreference && settingEncoderPreference) {
+        settingEncoderPreference.value = s.encoderPreference;
+        webrtc.setEncoderPreference(s.encoderPreference);
       }
       if (s.codec && settingPreferredCodec) {
         settingPreferredCodec.value = s.codec;

@@ -9,6 +9,8 @@
  * - Compatibilidade robusta com Chrome, Edge e Firefox
  */
 
+import { determineOptimalCodecOrder, evaluateCodecCapabilities } from './hardwareDetector.js';
+
 export class WebRTCManager {
   constructor(signalingClient, iceServers = []) {
     this.signaling = signalingClient;
@@ -36,6 +38,10 @@ export class WebRTCManager {
     this.preferredCodec = (() => {
       try { return localStorage.getItem('hyperstream_preferred_codec') || 'auto'; } catch (_) { return 'auto'; }
     })();
+    this.encoderPreference = (() => {
+      try { return localStorage.getItem('hyperstream_encoder_preference') || 'auto'; } catch (_) { return 'auto'; }
+    })();
+    this.hardwareCapabilities = null;
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
     this.targetMaxFps = 60; // 60 FPS padrão
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
@@ -596,8 +602,24 @@ export class WebRTCManager {
     await this.renegotiateAllPeers();
   }
 
+  setHardwareCapabilities(caps) {
+    this.hardwareCapabilities = caps;
+  }
+
+  getEncoderPreference() {
+    return this.encoderPreference || 'auto';
+  }
+
+  async setEncoderPreference(pref) {
+    this.encoderPreference = pref;
+    try { localStorage.setItem('hyperstream_encoder_preference', pref); } catch (_) {}
+    console.log(`[WebRTC] Preferência de codificador (CPU/GPU) alterada para: ${pref}`);
+    await this.applyCodecPreferencesToAllPeers();
+  }
+
   /**
    * Configura preferência de codecs no Transceiver WebRTC conforme seleção do usuário
+   * e capacidades reais de hardware (GPU vs CPU).
    */
   configureCodecPreferences(transceiver) {
     if (!transceiver || typeof transceiver.setCodecPreferences !== 'function') {
@@ -612,46 +634,17 @@ export class WebRTCManager {
       const capabilities = RTCRtpReceiver.getCapabilities('video');
       if (!capabilities || !capabilities.codecs) return;
 
-      const av1Codecs = [];
-      const h264Codecs = [];
-      const vp9Codecs = [];
-      const vp8Codecs = [];
-      const otherCodecs = [];
+      const caps = this.hardwareCapabilities || evaluateCodecCapabilities();
+      const optimal = determineOptimalCodecOrder({
+        preference: this.encoderPreference || 'auto',
+        preferredCodec: this.preferredCodec || 'auto',
+        availableCodecs: capabilities.codecs,
+        capabilities: caps
+      });
 
-      for (const codec of capabilities.codecs) {
-        const mime = codec.mimeType.toLowerCase();
-        if (mime === 'video/av1' || mime === 'video/av01') {
-          av1Codecs.push(codec);
-        } else if (mime === 'video/h264') {
-          h264Codecs.push(codec);
-        } else if (mime === 'video/vp9') {
-          vp9Codecs.push(codec);
-        } else if (mime === 'video/vp8') {
-          vp8Codecs.push(codec);
-        } else {
-          otherCodecs.push(codec);
-        }
-      }
-
-      const pref = (this.preferredCodec || 'auto').toUpperCase();
-      let preferredOrder = [];
-
-      if (pref === 'AV1') {
-        preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      } else if (pref === 'H264') {
-        preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      } else if (pref === 'VP9') {
-        preferredOrder = [...vp9Codecs, ...av1Codecs, ...h264Codecs, ...vp8Codecs, ...otherCodecs];
-      } else if (pref === 'VP8') {
-        preferredOrder = [...vp8Codecs, ...h264Codecs, ...av1Codecs, ...otherCodecs];
-      } else {
-        // Modo Automático: AV1 prioritário se disponível, senão H.264
-        preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      }
-
-      if (preferredOrder.length > 0) {
-        transceiver.setCodecPreferences(preferredOrder);
-        console.log(`[WebRTC] Ordem de codecs aplicada (${pref}): 1º ${preferredOrder[0]?.mimeType}`);
+      if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
+        transceiver.setCodecPreferences(optimal.preferredOrder);
+        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${optimal.preferredOrder[0]?.mimeType} (${optimal.reason})`);
       }
     } catch (err) {
       console.warn('[WebRTC] Não foi possível definir preferência de codecs (usando padrão):', err.message);

@@ -773,6 +773,8 @@
             <div class="form-group">
               <label for="settingResSelect">Resolução da Transmissão</label>
               <select id="settingResSelect" class="form-select">
+                <option value="4k">4K Ultra HD (3840x2160) ⚡</option>
+                <option value="1440p">1440p / 2K Quad HD (2560x1440) ⚡</option>
                 <option value="native" selected>Nativa (Original da Tela)</option>
                 <option value="1080p">1080p (Full HD)</option>
                 <option value="720p">720p (HD)</option>
@@ -794,13 +796,13 @@
               <label for="settingMaxBitrate">Bitrate Máximo de Vídeo</label>
               <span id="maxBitrateValueBadge" class="value-badge">8.0 Mbps</span>
             </div>
-            <input type="range" id="settingMaxBitrate" class="form-range" min="500000" max="20000000" step="250000" value="8000000">
+            <input type="range" id="settingMaxBitrate" class="form-range" min="500000" max="25000000" step="250000" value="8000000">
             <div class="range-marks">
               <span>500 Kbps</span>
               <span>4 Mbps</span>
               <span>8 Mbps</span>
-              <span>15 Mbps</span>
-              <span>20 Mbps</span>
+              <span>16 Mbps</span>
+              <span>25 Mbps</span>
             </div>
           </div>
 
@@ -826,15 +828,27 @@
             <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
             </svg>
-            <p>Selecione o codec preferencial para a codificação de vídeo. O codec selecionado é priorizado imediatamente via aceleração de hardware GPU e reordenação SDP em todas as conexões WebRTC ativas.</p>
+            <p>Selecione a preferência de codificador e codec. Codecs com aceleração por hardware (GPU) transmitem a 60 FPS com latência ultrabaixa e quase 0% de uso de CPU.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="settingEncoderPreference">Modo de Aceleração (Hardware / Software)</label>
+            <select id="settingEncoderPreference" class="form-select">
+              <option value="auto" selected>Automático (Recomendado — Melhor equilíbrio GPU/CPU)</option>
+              <option value="gpu">GPU (Aceleração por Hardware — Prioriza NVENC / AMF / QuickSync) ⚡</option>
+              <option value="cpu">CPU (Modo Software — Processador / libaom / libvpx) ⚠️</option>
+            </select>
+            <span class="form-hint" id="encoderPrefHint" style="display:block; margin-top:6px; font-size:0.75rem; color:#94a3b8;">
+              No modo Automático ou GPU, codecs com aceleração nativa por hardware (DirectX 11 / MediaFoundation) são priorizados para garantir 60 FPS com estabilidade total.
+            </span>
           </div>
 
           <div class="form-group">
             <label for="settingPreferredCodec">Codec Preferencial</label>
             <select id="settingPreferredCodec" class="form-select">
-              <option value="auto">Automático (GPU / Mais Rápido)</option>
-              <option value="H264">H.264 (NVIDIA NVENC / AMD / Intel) ⚡</option>
-              <option value="AV1">AV1 (Ultra Eficiente / Next-Gen) 🚀</option>
+              <option value="auto">Automático (Otimizado para o Hardware Atual) ⚡</option>
+              <option value="H264">H.264 (NVIDIA / AMD / Intel — GPU Hardware) ⚡</option>
+              <option value="AV1">AV1 (Ultra Eficiente — Software libaom / CPU) 🚀</option>
               <option value="VP9">VP9 (Google HD)</option>
               <option value="VP8">VP8 (Básico)</option>
             </select>
@@ -853,9 +867,9 @@
               <div class="codec-item" id="codecCardAV1">
                 <div class="codec-header">
                   <span class="codec-name">AV1 (Next-Gen Ultra Compacto)</span>
-                  <span class="badge" id="badgeAv1Status">Verificando...</span>
+                  <span class="badge" id="badgeAv1Status">Software CPU ⚠️</span>
                 </div>
-                <div class="codec-desc" id="descAv1Status">Compressão de última geração: máxima nitidez visual a 60 FPS com até 40% de economia de banda de internet.</div>
+                <div class="codec-desc" id="descAv1Status">Compressão de última geração via libaom multi-threaded. No WebRTC Chromium atual, opera via software por CPU.</div>
               </div>
               <div class="codec-item" id="codecCardVP9">
                 <div class="codec-header">

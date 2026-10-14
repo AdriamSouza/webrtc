@@ -23,7 +23,7 @@ const __dirname = path.dirname(__filename);
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
 // Habilita aceleração por hardware completa para codificação/decodificação WebRTC e WGC
-app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder');
+app.commandLine.appendSwitch('enable-features', 'WindowsGraphicsCapture,MediaFoundationVideoCapture,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 // Pipeline acelerado por GPU: rasterização e overlays diretos na GPU
@@ -508,9 +508,38 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
   const memoryUsageMB = Math.round(totalMemoryKB / 1024);
   const cpuUsagePercent = Number(totalCpuPercent.toFixed(1));
 
+  let systemGpu = null;
+  if (process.platform === 'win32') {
+    try {
+      const dev = gpuInfo?.gpuDevice?.[0];
+      if (dev?.deviceString) {
+        systemGpu = {
+          name: dev.deviceString,
+          driverVersion: dev.driverVersion || 'Nativo',
+          vendorId: dev.vendorId,
+          deviceId: dev.deviceId
+        };
+      }
+    } catch (_) {}
+    if (!systemGpu) {
+      try {
+        const out = execSync('powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_VideoController | Select-Object -First 1 Name, DriverVersion, VideoProcessor | ConvertTo-Json"', { timeout: 3500, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+        if (out && out.trim()) {
+          const parsed = JSON.parse(out);
+          systemGpu = {
+            name: parsed.Name || 'GPU Dedicada',
+            driverVersion: parsed.DriverVersion || 'Nativo Windows',
+            videoProcessor: parsed.VideoProcessor || ''
+          };
+        }
+      } catch (_) {}
+    }
+  }
+
   return {
     featureStatus,
     gpuInfo,
+    systemGpu,
     platform: process.platform,
     arch: process.arch,
     cpuUsagePercent,

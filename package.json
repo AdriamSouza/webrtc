@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node backend/src/server.js",
-    "test": "node --test test/telemetry.test.mjs && node --test test/updater_and_versioning.test.mjs && node backend/test_rate_limiter.mjs && node backend/test_multipeer.mjs",
+    "test": "node --test test/telemetry.test.mjs && node --test test/updater_and_versioning.test.mjs && node --test test/hardware_encoder_and_streaming.test.mjs && node backend/test_rate_limiter.mjs && node backend/test_multipeer.mjs",
     "build": "npm --prefix backend install",
     "backend": "node backend/src/server.js",
     "desktop": "npm --prefix desktop start",

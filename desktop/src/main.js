@@ -23,7 +23,7 @@ const __dirname = path.dirname(__filename);
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
 // 1. Unificação estrita de enable-features em uma ÚNICA chamada antes de app.whenReady()
-app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoEncode,MediaFoundationD3D11VideoCapture,WindowsGraphicsCapture');
+app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoEncode,MediaFoundationD3D11VideoCapture,WindowsGraphicsCapture,ZeroCopyTabCapture');
 
 // 2. Flags críticas para desbloquear codificação por hardware (MediaFoundation / AMD AMF / D3D11) no Windows
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -41,7 +41,7 @@ app.commandLine.appendSwitch('force-high-performance-gpu');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,WidgetLayering,MediaFoundationD3D11VideoCaptureBlocklist');
 
 // 4. Ignora certificados autoassinados em conexões locais (HTTPS e WebSockets WSS)
 app.commandLine.appendSwitch('ignore-certificate-errors');

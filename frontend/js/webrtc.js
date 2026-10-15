@@ -50,6 +50,7 @@ export class WebRTCManager {
     this.targetMaxFps = 60; // 60 FPS padrão
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
     this.roomState = null;
+    this.qualityController = null;
 
     // Dispara sondagem assíncrona de hardware imediatamente na inicialização
     this.probeHardware().catch(err => {
@@ -69,6 +70,10 @@ export class WebRTCManager {
 
   setRoomState(roomState) {
     this.roomState = roomState;
+  }
+
+  setQualityController(qualityController) {
+    this.qualityController = qualityController;
   }
 
   /**
@@ -304,10 +309,11 @@ export class WebRTCManager {
         let hasAS = false;
         let hasTIAS = false;
         const codecPayloadMap = new Map(); // pt -> codecName
+        const payloadFmtpMap = new Map(); // pt -> fmtp string
         const rtxAptMap = new Map(); // rtxPt -> aptPt
         const h264Payloads = new Set();
 
-        // 1. Mapeia codecs e rtx desta seção de vídeo
+        // 1. Mapeia codecs, fmtp e rtx desta seção de vídeo
         for (const line of lines) {
           if (line.startsWith('a=rtpmap:')) {
             const match = line.match(/^a=rtpmap:(\d+)\s+([^\/]+)/i);
@@ -321,9 +327,13 @@ export class WebRTCManager {
             }
           }
           if (line.startsWith('a=fmtp:')) {
-            const match = line.match(/^a=fmtp:(\d+)\s+apt=(\d+)/i);
+            const match = line.match(/^a=fmtp:(\d+)\s+(.*)/i);
             if (match) {
-              rtxAptMap.set(match[1], match[2]);
+              payloadFmtpMap.set(match[1], match[2]);
+              const rtxMatch = match[2].match(/apt=(\d+)/i);
+              if (rtxMatch) {
+                rtxAptMap.set(match[1], rtxMatch[1]);
+              }
             }
           }
           if (line.startsWith('b=AS:')) hasAS = true;
@@ -331,32 +341,46 @@ export class WebRTCManager {
         }
 
 
-        // 2. Preserva a ordem exata de codecs gerada pelo transceiver.setCodecPreferences()
-        // NÃO reagrupa payloads por nome genérico de codec ('H264') para não destruir o profile-level-id e packetization-mode=1
+        // 2. Preserva ou reordena cirurgicamente a ordem de codecs da linha m=video:
+        // Prioriza: 42e01f (1º) > 4d001f (2º) > 640032 (3º) > 42001f (4º) com packetization-mode=1
         const mParts = mLine.split(' ');
         if (mParts.length > 3 && codecPayloadMap.size > 0) {
           const header = mParts.slice(0, 3);
           const payloads = mParts.slice(3);
 
-          // Se transceiver.setCodecPreferences não foi suportado, aplica ordenação defensiva priorizando packetization-mode=1
-          if (!this.lastPreferredCodecs || this.lastPreferredCodecs.length === 0) {
-            const isCpuPref = this.encoderPreference === 'cpu';
-            const scorePayload = (pt) => {
-              const cName = codecPayloadMap.get(pt) || '';
-              if (isCpuPref && pref !== 'AUTO' && cName === pref) return 5;
-              if (cName === 'H264') return 10;
-              if (cName === 'AV1') return 20;
-              if (cName === 'VP9') return 30;
-              if (cName === 'VP8') return 40;
-              return 90;
-            };
+          const isCpuPref = this.encoderPreference === 'cpu';
+
+          const scoreH264Payload = (pt) => {
+            const fmtp = (payloadFmtpMap.get(pt) || '').toLowerCase();
+            const isMode0 = fmtp.includes('packetization-mode=0');
+            const penalty = isMode0 ? 5000 : 0;
+            if (fmtp.includes('profile-level-id=42e0')) return penalty + 10;
+            if (fmtp.includes('profile-level-id=4d00')) return penalty + 20;
+            if (fmtp.includes('profile-level-id=6400')) return penalty + 100;
+            if (fmtp.includes('profile-level-id=4200')) return penalty + 200;
+            return penalty + 300;
+          };
+
+          const scorePayload = (pt) => {
+            const cName = codecPayloadMap.get(pt) || '';
+            if (cName === 'H264') {
+              return scoreH264Payload(pt);
+            }
+            if (isCpuPref && pref !== 'AUTO' && cName === pref) return 5;
+            if (cName === 'AV1') return 500;
+            if (cName === 'VP9') return 600;
+            if (cName === 'VP8') return 700;
+            return 900;
+          };
+
+          // Reordena se setCodecPreferences não foi suportado ou para garantir perfis H.264
+          if (!this.lastPreferredCodecs || this.lastPreferredCodecs.length === 0 || pref === 'H264' || pref === 'AUTO') {
             const sortedPayloads = [...payloads].sort((a, b) => scorePayload(a) - scorePayload(b));
             lines[0] = [...header, ...sortedPayloads].join(' ');
           } else {
-            // Mantém a ordem cirúrgica do setCodecPreferences já refletida no SDP
             lines[0] = [...header, ...payloads].join(' ');
           }
-          console.log('[WebRTC SDP] m=video mantido na ordem de perfil do hardware:', payloads.slice(0, 4).map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`));
+          console.log('[WebRTC SDP] m=video ordenado para GPU Hardware:', lines[0].split(' ').slice(3, 7).map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`));
         }
 
         // 3. Aplica limites de banda b=AS e b=TIAS na seção
@@ -653,9 +677,30 @@ export class WebRTCManager {
       });
 
       if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
-        transceiver.setCodecPreferences(optimal.preferredOrder);
-        this.lastPreferredCodecs = optimal.preferredOrder;
-        const top = optimal.preferredOrder[0];
+        // Remove codecs H.264 com packetization-mode=0 para nunca serem selecionados antes dos perfis por hardware,
+        // garantindo que 42e01f (1º) e 4d001f (2º) fiquem rigorosamente no topo da negociação.
+        const nonMode0Codecs = optimal.preferredOrder.filter(c => {
+          if ((c.mimeType || '').toLowerCase() === 'video/h264') {
+            const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+            return !fmtp.includes('packetization-mode=0');
+          }
+          return true;
+        });
+
+        // Adiciona packetization-mode=0 apenas no fim absoluto como fallback de interoperabilidade
+        const mode0Codecs = optimal.preferredOrder.filter(c => {
+          if ((c.mimeType || '').toLowerCase() === 'video/h264') {
+            const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+            return fmtp.includes('packetization-mode=0');
+          }
+          return false;
+        });
+
+        const finalOrder = nonMode0Codecs.length > 0 ? [...nonMode0Codecs, ...mode0Codecs] : optimal.preferredOrder;
+
+        transceiver.setCodecPreferences(finalOrder);
+        this.lastPreferredCodecs = finalOrder;
+        const top = finalOrder[0];
         console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
       }
     } catch (err) {
@@ -1103,6 +1148,15 @@ export class WebRTCManager {
         sdp: pc.localDescription.sdp
       }, fromUserId);
 
+      // Re-aplica parâmetros e limites nos senders de vídeo após a resposta ser definida
+      const answerVideoSenders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+      for (const vs of answerVideoSenders) {
+        await this.applyVideoSenderLimits(vs);
+      }
+      if (this.qualityController) {
+        await this.qualityController.applyEncodingParametersToSender(fromUserId);
+      }
+
       // Notifica conclusão de negociação para sincronização imediata dos tiles
       if (this.onNegotiationComplete) {
         this.onNegotiationComplete(fromUserId);
@@ -1131,6 +1185,15 @@ export class WebRTCManager {
 
       // Drena candidatos ICE que chegaram antes da resposta
       await this.drainCandidateQueue(fromUserId, pc);
+
+      // Re-aplica parâmetros e limites nos senders de vídeo após negociação SDP concluída
+      const answerSenders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+      for (const vs of answerSenders) {
+        await this.applyVideoSenderLimits(vs);
+      }
+      if (this.qualityController) {
+        await this.qualityController.applyEncodingParametersToSender(fromUserId);
+      }
 
       if (this.onNegotiationComplete) {
         this.onNegotiationComplete(fromUserId);

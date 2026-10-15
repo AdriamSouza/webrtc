@@ -186,7 +186,7 @@ describe('3. Matriz de Decisão: Seleção Inteligente de Codecs (Automático, G
     assert.ok(result.preferredOrder.length > 0);
   });
 
-  test('scoreH264Candidate deve priorizar Constrained Baseline (42e01f) e Main (4d001f) e penalizar packetization-mode=0 e High (640032)', () => {
+  test('scoreH264Candidate deve priorizar Constrained Baseline (42e01f) e Main (4d001f) e penalizar packetization-mode=0 e Baseline unconstrained (42001f)', () => {
     const p1 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f' };
     const p2 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f' };
     const p3 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' };
@@ -199,15 +199,15 @@ describe('3. Matriz de Decisão: Seleção Inteligente de Codecs (Automático, G
     assert.equal(scoreH264Candidate(p3), 10);
     // 2º lugar: 4d001f -> score 20
     assert.equal(scoreH264Candidate(p5), 20);
-    // 3º lugar: 42001f -> score 30
-    assert.equal(scoreH264Candidate(p1), 30);
-    // 4º lugar: 640032 -> score 100
+    // 3º lugar: 640032 -> score 100
     assert.equal(scoreH264Candidate(p7), 100);
+    // 4º lugar: 42001f -> score 200 (penalizado: sem constraint flags iop=e0)
+    assert.equal(scoreH264Candidate(p1), 200);
 
     // Penalidade de +5000 para packetization-mode=0
     assert.equal(scoreH264Candidate(p4), 5010);
     assert.equal(scoreH264Candidate(p6), 5020);
-    assert.equal(scoreH264Candidate(p2), 5030);
+    assert.equal(scoreH264Candidate(p2), 5200);
 
     // Bônus de prioridade (-5) para powerEfficient: true
     assert.equal(scoreH264Candidate({ ...p3, powerEfficient: true }), 5);
@@ -419,6 +419,84 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     assert.ok(!linkFromDesktop.includes('127.0.0.1'), 'Link de convite do Desktop não deve conter 127.0.0.1');
     assert.ok(!linkFromDesktop.includes('localhost'), 'Link de convite do Desktop não deve conter localhost');
     assert.equal(linkFromDesktop, 'https://hyperstream-g9gz.onrender.com/?room=SALA-TESTE-123&pin=4321');
+  });
+
+  test('Deve ordenar estritamente os 7 perfis H.264 reais do Chromium priorizando 42e01f e 4d001f e rebaixando 42001f e 640032', () => {
+    const chromium7Profiles = [
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032' }
+    ];
+
+    const caps = evaluateCodecCapabilities(
+      { description: 'AMD Radeon RX 7600', vendor: 'AMD' },
+      { video_encode: 'enabled' }
+    );
+
+    const result = determineOptimalCodecOrder({
+      preference: 'gpu',
+      preferredCodec: 'H264',
+      availableCodecs: chromium7Profiles,
+      capabilities: caps
+    });
+
+    const h264InOrder = result.preferredOrder.filter(c => c.mimeType === 'video/H264');
+    // 1º lugar: 42e01f com packetization-mode=1
+    assert.ok(h264InOrder[0].sdpFmtpLine.includes('profile-level-id=42e01f'), '1º lugar deve ser 42e01f (Constrained Baseline)');
+    assert.ok(h264InOrder[0].sdpFmtpLine.includes('packetization-mode=1'));
+
+    // 2º lugar: 4d001f com packetization-mode=1
+    assert.ok(h264InOrder[1].sdpFmtpLine.includes('profile-level-id=4d001f'), '2º lugar deve ser 4d001f (Main Profile)');
+    assert.ok(h264InOrder[1].sdpFmtpLine.includes('packetization-mode=1'));
+
+    // 3º lugar: 640032 com packetization-mode=1
+    assert.ok(h264InOrder[2].sdpFmtpLine.includes('profile-level-id=640032'), '3º lugar deve ser 640032 (High Profile)');
+
+    // 4º lugar: 42001f com packetization-mode=1 (penalizado)
+    assert.ok(h264InOrder[3].sdpFmtpLine.includes('profile-level-id=42001f'), '4º lugar deve ser 42001f (Baseline unconstrained)');
+
+    // Posições 4, 5 e 6 devem ser os codecs com packetization-mode=0
+    for (let i = 4; i < 7; i++) {
+      assert.ok(h264InOrder[i].sdpFmtpLine.includes('packetization-mode=0'), 'Codecs com packetization-mode=0 devem ser penalizados para o final');
+    }
+  });
+
+  test('mungeSdpBandwidth deve garantir que 42e01f precede 42001f no m=video mesmo se 42001f vier antes no SDP bruto', () => {
+    const wm = new WebRTCManager(null);
+    wm.targetMaxBitrate = 8000000;
+    // Simula SDP onde Chromium colocou 42001f (payload 101) antes de 42e01f (payload 103)
+    const rawSdp = [
+      'v=0',
+      'm=video 9 UDP/TLS/RTP/SAVPF 101 103 105 107',
+      'a=rtpmap:101 H264/90000',
+      'a=fmtp:101 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f',
+      'a=rtpmap:103 H264/90000',
+      'a=fmtp:103 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f',
+      'a=rtpmap:105 H264/90000',
+      'a=fmtp:105 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f',
+      'a=rtpmap:107 H264/90000',
+      'a=fmtp:107 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032'
+    ].join('\r\n');
+
+    const munged = wm.mungeSdpBandwidth(rawSdp, 8000000);
+    const mLineMatch = munged.match(/m=video \d+ [^\r\n]+/);
+    assert.ok(mLineMatch);
+    const payloads = mLineMatch[0].split(' ').slice(3);
+
+    // 103 (42e01f) deve vir ANTES de 101 (42001f)!
+    const idx42e01f = payloads.indexOf('103');
+    const idx4d001f = payloads.indexOf('105');
+    const idx640032 = payloads.indexOf('107');
+    const idx42001f = payloads.indexOf('101');
+
+    assert.equal(idx42e01f, 0, '42e01f (payload 103) deve ser rigorosamente o primeiro na linha m=video');
+    assert.equal(idx4d001f, 1, '4d001f (payload 105) deve ser o segundo na linha m=video');
+    assert.equal(idx640032, 2, '640032 (payload 107) deve ser o terceiro na linha m=video');
+    assert.equal(idx42001f, 3, '42001f (payload 101) deve ser rebaixado para a quarta posição');
   });
 });
 

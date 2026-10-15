@@ -197,8 +197,8 @@ export function parseH264ProfileLevel(fmtp = '') {
  * Pontua codecs H.264 para priorizar perfis com suporte nativo por GPU (MediaFoundation MFT):
  * 1º lugar: profile-level-id=42e01f (Constrained Baseline) -> score 10
  * 2º lugar: profile-level-id=4d001f (Main Profile) -> score 20
- * 3º lugar: profile-level-id=42001f (Baseline) -> score 30
- * 4º lugar: profile-level-id=640032 (High Profile) -> score 100 (baixa prioridade pois cai no OpenH264 neste driver)
+ * 3º lugar: profile-level-id=640032 (High Profile) -> score 100
+ * 4º lugar: profile-level-id=42001f (Baseline) -> score 200 (penalizado: sem constraint flags iop=e0, rejeitado pelo MediaFoundation MFT)
  * Exige packetization-mode=1 (penaliza packetization-mode=0 com +5000).
  * Aplica bônus de prioridade (-5) se encodingInfo() retornar powerEfficient: true.
  */
@@ -211,15 +211,16 @@ export function scoreH264Candidate(c, hardwareProbe = null) {
   const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/i);
   const pid = match ? match[1].toLowerCase() : '';
 
-  let profileScore = 200;
+  let profileScore = 300;
   if (pid === '42e01f' || pid.startsWith('42e0')) {
     profileScore = 10;
   } else if (pid === '4d001f' || pid.startsWith('4d00')) {
     profileScore = 20;
-  } else if (pid === '42001f' || pid.startsWith('4200')) {
-    profileScore = 30;
   } else if (pid === '640032' || pid.startsWith('6400')) {
     profileScore = 100;
+  } else if (pid === '42001f' || pid.startsWith('4200')) {
+    // 42001f possui iop=00 (unconstrained Baseline), que o MediaFoundation MFT da GPU rejeita e força OpenH264!
+    profileScore = 200;
   }
 
   // Bônus de prioridade (-5) se encodingInfo() do navigator.mediaCapabilities retornou powerEfficient: true
@@ -360,7 +361,7 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     } else if (isH264 && !isPacketizationMode0 && isPacketizationMode1) {
       const match = fmtpLower.match(/profile-level-id=([0-9a-f]{6})/);
       const pid = match ? match[1] : '';
-      if (pid.startsWith('42e0') || pid.startsWith('4d00') || pid.startsWith('4200')) {
+      if (pid.startsWith('42e0') || pid.startsWith('4d00')) {
         isHwConfirmed = true;
       }
     }

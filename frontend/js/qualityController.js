@@ -905,17 +905,69 @@ export class QualityController {
             const streamBitrateMbps = (streamBitrateBps / 1000000).toFixed(2);
             const streamBitrateKbps = Math.round(streamBitrateBps / 1000);
 
-            const peerEntry = this.peerAdaptiveStates.get(userId) || {
-              userId,
-              viewerState: 'active',
-              currentScaleDown: 1.0,
-              estimatedCpuSavingsPercent: 0,
-              requested: null,
-              applied: null,
-              observed: null,
-              lastError: null
-            };
+            let peerEntry = this.peerAdaptiveStates.get(userId);
+            if (!peerEntry) {
+              peerEntry = {
+                userId,
+                viewerState: 'active',
+                lastStateChange: Date.now(),
+                currentMaxFps: this.currentMaxFps,
+                currentMaxBitrate: this.currentMaxBitrate,
+                currentScaleDown: 1.0,
+                estimatedCpuSavingsPercent: 0,
+                requested: null,
+                applied: null,
+                observed: null,
+                lastError: null
+              };
+              this.peerAdaptiveStates.set(userId, peerEntry);
+            }
             const viewerConfig = this.getEncodingParametersForState(peerEntry.viewerState);
+
+            if (!peerEntry.requested) {
+              peerEntry.requested = {
+                state: peerEntry.viewerState,
+                maxFramerate: viewerConfig.maxFramerate,
+                scaleResolutionDownBy: viewerConfig.scaleResolutionDownBy,
+                maxBitrate: viewerConfig.maxBitrate,
+                label: viewerConfig.label,
+                timestamp: Date.now()
+              };
+            }
+
+            // Inspeciona o RTCRtpSender ativo para ler de volta os parâmetros e evitar estado 'Padrão'
+            const videoSenders = (typeof pc.getSenders === 'function')
+              ? pc.getSenders().filter(s => s.track && s.track.kind === 'video')
+              : [];
+            let senderNeedsReapply = false;
+            for (const vs of videoSenders) {
+              try {
+                const curParams = vs.getParameters();
+                const enc = curParams?.encodings?.[0];
+                if (enc) {
+                  peerEntry.applied = {
+                    maxBitrate: enc.maxBitrate ?? null,
+                    maxFramerate: enc.maxFramerate ?? null,
+                    scaleResolutionDownBy: enc.scaleResolutionDownBy ?? 1.0,
+                    degradationPreference: curParams.degradationPreference || 'maintain-framerate',
+                    timestamp: Date.now()
+                  };
+                  if (!enc.maxBitrate || (peerEntry.viewerState === 'active' && enc.maxBitrate < viewerConfig.maxBitrate)) {
+                    senderNeedsReapply = true;
+                  }
+                } else {
+                  senderNeedsReapply = true;
+                }
+              } catch (_) {
+                senderNeedsReapply = true;
+              }
+            }
+
+            if (senderNeedsReapply && videoSenders.length > 0 && !this._peerLocks.has(userId)) {
+              this.applyEncodingParametersToSender(userId, viewerConfig).catch(err => {
+                console.warn(`[QualityController] Auto-reaplicação de parâmetros falhou para ${userId}:`, err.message);
+              });
+            }
 
             // Registra o estado real observado via getStats()
             peerEntry.observed = {

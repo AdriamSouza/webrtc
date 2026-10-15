@@ -13,6 +13,7 @@ const webrtc = new WebRTCManager(signaling);
 webrtc.setMediaManager(media);
 const qualityController = new QualityController();
 qualityController.setWebRTC(webrtc);
+webrtc.setQualityController(qualityController);
 const roomState = new RoomState();
 webrtc.setRoomState(roomState);
 
@@ -2008,11 +2009,49 @@ async function renderDiagnosticsData() {
     if (h264List.length > 0) {
       diagRtcSenderProfiles.textContent = h264List.map((c, i) => {
         const parsed = parseH264ProfileLevel(c.sdpFmtpLine || '');
-        const lvl = parsed ? `-> Level ${parsed.levelIdc / 10} (0x${parsed.levelHex})${parsed.isLevel42Plus ? ' [>=4.2 1080p60 OK]' : ' [<4.2 720p - upgrade SDP]'}` : '';
-        return `[${i + 1}] ${c.mimeType} | "${c.sdpFmtpLine || ''}" ${lvl}`;
+        let profileTag = '';
+        if (parsed) {
+          if (parsed.fullPid.startsWith('42e0')) {
+            profileTag = ' [Constrained Baseline - GPU MFT ⚡ 1080p60 OK]';
+          } else if (parsed.fullPid.startsWith('4d00')) {
+            profileTag = ' [Main Profile - GPU MFT ⚡ 1080p60 OK]';
+          } else if (parsed.fullPid.startsWith('6400')) {
+            profileTag = ' [High Profile - fallback OpenH264]';
+          } else if (parsed.fullPid.startsWith('4200')) {
+            profileTag = ' [Baseline unconstrained - OpenH264 CPU ⚠️]';
+          }
+        }
+        return `[${i + 1}] ${c.mimeType} | "${c.sdpFmtpLine || ''}"${profileTag}`;
       }).join('\n');
     } else {
       diagRtcSenderProfiles.textContent = 'Nenhum codec H.264 retornado por RTCRtpSender.getCapabilities("video").';
+    }
+  }
+
+  const diagMediaCapabilitiesProbe = document.getElementById('diagMediaCapabilitiesProbe');
+  if (diagMediaCapabilitiesProbe) {
+    const probe = webrtc.hardwareProbe || (await webrtc.probeHardware().catch(() => null));
+    if (probe && Array.isArray(probe.probedCodecs)) {
+      const h264Probed = probe.probedCodecs.filter(p => (p.mimeType || '').toLowerCase().includes('h264'));
+      if (h264Probed.length > 0) {
+        diagMediaCapabilitiesProbe.innerHTML = h264Probed.map((p, idx) => {
+          const isHw = p.powerEfficient === true || p.isHwConfirmed;
+          const badge = isHw
+            ? '<span class="diag-badge-hw" style="font-size: 0.7rem; padding: 2px 6px;">⚡ GPU (powerEfficient: true)</span>'
+            : '<span class="diag-badge-sw" style="font-size: 0.7rem; padding: 2px 6px;">⚠️ CPU (powerEfficient: false)</span>';
+          const fmtp = p.sdpFmtpLine || 'default';
+          return `<div style="margin-bottom: 5px; padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace;">` +
+                 `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">` +
+                 `<strong style="color: #f1f5f9;">[${idx + 1}] ${escapeHtml(p.mimeType)}</strong> ${badge}` +
+                 `</div>` +
+                 `<div style="font-size: 0.68rem; color: #94a3b8; word-break: break-all;">${escapeHtml(fmtp)}</div>` +
+                 `</div>`;
+        }).join('');
+      } else {
+        diagMediaCapabilitiesProbe.textContent = 'Nenhum perfil H.264 encontrado na sondagem de hardware.';
+      }
+    } else {
+      diagMediaCapabilitiesProbe.textContent = 'Sondagem de hardware em andamento no motor Chromium...';
     }
   }
 
@@ -3229,8 +3268,13 @@ function setupWebRTCEvents() {
 
   // Notificação imediata quando a negociação SDP (Offer/Answer) conclui
   webrtc.onNegotiationComplete = (fromUserId) => {
-    console.log(`[App] Negociação SDP concluída para ${fromUserId}. Sincronizando tiles...`);
+    console.log(`[App] Negociação SDP concluída para ${fromUserId}. Sincronizando tiles e aplicando encoding...`);
     syncRemotePeerTiles(fromUserId);
+    if (qualityController) {
+      qualityController.applyEncodingParametersToSender(fromUserId).catch(err => {
+        console.warn(`[App] Erro ao aplicar parâmetros após negociação com ${fromUserId}:`, err.message);
+      });
+    }
   };
 
   webrtc.onConnectionStateChange = (targetUserId, state) => {

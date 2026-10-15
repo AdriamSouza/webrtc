@@ -120,7 +120,7 @@ describe('BENCHMARK EXPERIMENTAL: MULTI-PEER ENCODING NO WEBRTC MESH', () => {
 
     const simSingle3 = runSingleEncoderTransformSimulation(3);
 
-    assert.equal(simSingle3.totalEncoderInstances, 1, 'Economia comprovada: Apenas 1 instância de encoder');
+    assert.equal(simSingle3.totalEncoderInstances, 1, 'Redução arquitetural simulada: Apenas 1 instância de encoder (Modelo Teórico)');
     assert.equal(simSingle3.totalFramesEncoded, 300, 'Frames codificados mantêm-se constantes em 300');
     assert.equal(simSingle3.perSenderStats[0].framesEncoded, 300);
     assert.equal(simSingle3.perSenderStats[1].framesEncoded, 0, 'Sender secundário não codifica');

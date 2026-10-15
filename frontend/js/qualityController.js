@@ -302,6 +302,10 @@ export class QualityController {
     this.lastAdaptationDirection = 'none';
     this.hysteresisDownCooldownMs = 4000;
     this.hysteresisUpCooldownMs = 8000;
+
+    // Guarda de concorrência e fila de setParameters por peer
+    this._isCollecting = false;
+    this._peerLocks = new Map(); // Map<targetId, Promise>
   }
 
   setWebRTC(webrtcManager) {
@@ -338,8 +342,10 @@ export class QualityController {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    this._isCollecting = false;
     this.streamStatsHistory.clear();
     this.peerAdaptiveStates.clear();
+    this._peerLocks.clear();
   }
 
   /**
@@ -408,49 +414,101 @@ export class QualityController {
 
   /**
    * Aplica parâmetros de codificação individualmente para o RTCRtpSender de um peer
+   * Utiliza fila/lock por peer para evitar InvalidStateError em chamadas concorrentes a setParameters
    */
   async applyEncodingParametersToSender(targetId, overrideConfig = null) {
-    if (!this.webrtc || !this.webrtc.peers) return;
-    const pc = this.webrtc.peers.get(targetId);
-    if (!pc || pc.connectionState === 'closed') return;
+    if (!targetId) return;
 
-    let peerEntry = this.peerAdaptiveStates.get(targetId);
-    if (!peerEntry) {
-      peerEntry = {
-        userId: targetId,
-        viewerState: 'active',
-        lastStateChange: Date.now(),
-        currentMaxFps: this.currentMaxFps,
-        currentMaxBitrate: this.currentMaxBitrate,
-        currentScaleDown: 1.0,
-        estimatedCpuSavingsPercent: 0
+    const run = async () => {
+      if (!this.webrtc || !this.webrtc.peers) return;
+      const pc = this.webrtc.peers.get(targetId);
+      if (!pc || pc.connectionState === 'closed') return;
+
+      let peerEntry = this.peerAdaptiveStates.get(targetId);
+      if (!peerEntry) {
+        peerEntry = {
+          userId: targetId,
+          viewerState: 'active',
+          lastStateChange: Date.now(),
+          currentMaxFps: this.currentMaxFps,
+          currentMaxBitrate: this.currentMaxBitrate,
+          currentScaleDown: 1.0,
+          estimatedCpuSavingsPercent: 0,
+          requested: null,
+          applied: null,
+          observed: null,
+          lastError: null
+        };
+        this.peerAdaptiveStates.set(targetId, peerEntry);
+      }
+
+      const config = overrideConfig || this.getEncodingParametersForState(peerEntry.viewerState);
+      peerEntry.currentMaxFps = config.maxFramerate;
+      peerEntry.currentMaxBitrate = config.maxBitrate;
+      peerEntry.currentScaleDown = config.scaleResolutionDownBy;
+      peerEntry.estimatedCpuSavingsPercent = config.estimatedSavingsPercent;
+
+      peerEntry.requested = {
+        state: peerEntry.viewerState,
+        maxFramerate: config.maxFramerate,
+        scaleResolutionDownBy: config.scaleResolutionDownBy,
+        maxBitrate: config.maxBitrate,
+        label: config.label,
+        timestamp: Date.now()
       };
-      this.peerAdaptiveStates.set(targetId, peerEntry);
-    }
 
-    const config = overrideConfig || this.getEncodingParametersForState(peerEntry.viewerState);
-    peerEntry.currentMaxFps = config.maxFramerate;
-    peerEntry.currentMaxBitrate = config.maxBitrate;
-    peerEntry.currentScaleDown = config.scaleResolutionDownBy;
-    peerEntry.estimatedCpuSavingsPercent = config.estimatedSavingsPercent;
+      const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+      for (const sender of senders) {
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = config.maxBitrate;
+          params.encodings[0].maxFramerate = config.maxFramerate;
+          params.encodings[0].scaleResolutionDownBy = config.scaleResolutionDownBy;
+          params.encodings[0].priority = config.priority;
+          params.encodings[0].networkPriority = config.networkPriority;
+          params.degradationPreference = 'maintain-framerate';
 
-    const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
-    for (const sender of senders) {
-      try {
-        const params = sender.getParameters();
-        if (!params.encodings || params.encodings.length === 0) {
-          params.encodings = [{}];
+          await sender.setParameters(params);
+
+          // Lê de volta os parâmetros aplicados no RTCRtpSender pelo Chromium para verificação real
+          try {
+            const verified = sender.getParameters();
+            const enc = verified?.encodings?.[0] || {};
+            peerEntry.applied = {
+              maxBitrate: enc.maxBitrate ?? config.maxBitrate,
+              maxFramerate: enc.maxFramerate ?? config.maxFramerate,
+              scaleResolutionDownBy: enc.scaleResolutionDownBy ?? config.scaleResolutionDownBy,
+              degradationPreference: verified?.degradationPreference || 'maintain-framerate',
+              timestamp: Date.now()
+            };
+            peerEntry.lastError = null;
+          } catch (_) {
+            peerEntry.applied = {
+              maxBitrate: config.maxBitrate,
+              maxFramerate: config.maxFramerate,
+              scaleResolutionDownBy: config.scaleResolutionDownBy,
+              timestamp: Date.now()
+            };
+          }
+        } catch (err) {
+          peerEntry.lastError = err.message;
+          console.warn(`[QualityController] Falha ao ajustar encoding para peer ${targetId}:`, err.message);
         }
-        params.encodings[0].maxBitrate = config.maxBitrate;
-        params.encodings[0].maxFramerate = config.maxFramerate;
-        params.encodings[0].scaleResolutionDownBy = config.scaleResolutionDownBy;
-        params.encodings[0].priority = config.priority;
-        params.encodings[0].networkPriority = config.networkPriority;
-        params.degradationPreference = 'maintain-framerate';
+      }
+    };
 
-        await sender.setParameters(params);
-      } catch (err) {
-        console.warn(`[QualityController] Falha ao ajustar encoding para peer ${targetId}:`, err.message);
+    // Enfileiramento com promessa por peer para garantir exclusão mútua em setParameters
+    const prevPromise = this._peerLocks.get(targetId) || Promise.resolve();
+    const nextPromise = prevPromise.then(run, run);
+    this._peerLocks.set(targetId, nextPromise);
+    try {
+      await nextPromise;
+    } finally {
+      if (this._peerLocks.get(targetId) === nextPromise) {
+        this._peerLocks.delete(targetId);
       }
     }
   }
@@ -472,7 +530,11 @@ export class QualityController {
         currentMaxFps: this.currentMaxFps,
         currentMaxBitrate: this.currentMaxBitrate,
         currentScaleDown: 1.0,
-        estimatedCpuSavingsPercent: 0
+        estimatedCpuSavingsPercent: 0,
+        requested: null,
+        applied: null,
+        observed: null,
+        lastError: null
       };
       this.peerAdaptiveStates.set(userId, peerEntry);
     }
@@ -495,6 +557,7 @@ export class QualityController {
   removePeer(userId) {
     if (userId) {
       this.peerAdaptiveStates.delete(userId);
+      this._peerLocks.delete(userId);
     }
   }
 
@@ -550,18 +613,24 @@ export class QualityController {
   }
 
   async collectMetrics() {
-    if (!this.webrtc) {
-      return;
+    if (this._isCollecting) {
+      return this.latestDiagnostics;
     }
+    this._isCollecting = true;
 
-    const activePcs = [];
-    if (this.webrtc.peers) {
-      for (const [userId, pc] of this.webrtc.peers.entries()) {
-        if (pc && pc.connectionState !== 'closed' && pc.signalingState !== 'closed') {
-          activePcs.push({ userId, pc });
+    try {
+      if (!this.webrtc) {
+        return;
+      }
+
+      const activePcs = [];
+      if (this.webrtc.peers) {
+        for (const [userId, pc] of this.webrtc.peers.entries()) {
+          if (pc && pc.connectionState !== 'closed' && pc.signalingState !== 'closed') {
+            activePcs.push({ userId, pc });
+          }
         }
       }
-    }
 
     // Se não há peers conectados, extrai métricas da captura local (se houver)
     if (activePcs.length === 0) {
@@ -647,8 +716,7 @@ export class QualityController {
       return;
     }
 
-    try {
-      const rttValues = [];
+    const rttValues = [];
       let totalPacketsLost = 0;
       let totalPacketsReceived = 0;
       const reportedFractionLostList = [];
@@ -838,11 +906,28 @@ export class QualityController {
             const streamBitrateKbps = Math.round(streamBitrateBps / 1000);
 
             const peerEntry = this.peerAdaptiveStates.get(userId) || {
+              userId,
               viewerState: 'active',
               currentScaleDown: 1.0,
-              estimatedCpuSavingsPercent: 0
+              estimatedCpuSavingsPercent: 0,
+              requested: null,
+              applied: null,
+              observed: null,
+              lastError: null
             };
             const viewerConfig = this.getEncodingParametersForState(peerEntry.viewerState);
+
+            // Registra o estado real observado via getStats()
+            peerEntry.observed = {
+              width: streamWidth,
+              height: streamHeight,
+              fps: finalStreamFps,
+              bitrateMbps: streamBitrateMbps,
+              bitrateKbps: streamBitrateKbps,
+              avgEncodeTimeMs: avgEncodeTimeMs !== null ? `${avgEncodeTimeMs} ms` : '--',
+              qualityLimitationReason: report.qualityLimitationReason || 'none',
+              timestamp: Date.now()
+            };
 
             outboundStreamsList.push({
               id: report.id,
@@ -878,7 +963,17 @@ export class QualityController {
               viewerStateLabel: viewerConfig.label,
               viewerBadgeClass: viewerConfig.badgeClass,
               scaleResolutionDownBy: peerEntry.currentScaleDown || 1.0,
-              estimatedSavingsPercent: peerEntry.estimatedCpuSavingsPercent || 0
+              estimatedSavingsPercent: peerEntry.estimatedCpuSavingsPercent || 0,
+              requested: peerEntry.requested || {
+                state: peerEntry.viewerState,
+                maxFramerate: viewerConfig.maxFramerate,
+                scaleResolutionDownBy: viewerConfig.scaleResolutionDownBy,
+                maxBitrate: viewerConfig.maxBitrate,
+                label: viewerConfig.label
+              },
+              applied: peerEntry.applied || null,
+              observed: peerEntry.observed,
+              adaptationError: peerEntry.lastError || null
             });
 
             this.streamStatsHistory.set(report.id, {
@@ -1056,16 +1151,9 @@ export class QualityController {
         }
       }
 
-      // AUTO-RECOVERY OBRIGATÓRIO ANTI-CPU:
-      // Se algum stream de saída estiver ativo (framesEncoded > 20) e classificado como software_confirmed,
-      // e o usuário não selecionou deliberadamente o modo CPU, aciona o WebRTCManager para migrar para GPU
-      if (this.webrtc && this.webrtc.encoderPreference !== 'cpu' && typeof this.webrtc.handleSoftwareFallbackDetected === 'function') {
-        for (const s of outboundStreamsList) {
-          if (s.hwState === 'software_confirmed' && (s.framesEncoded > 20 || s.bytesSent > 50000)) {
-            this.webrtc.handleSoftwareFallbackDetected(s.targetUserId, s.codec, s.sdpFmtpLine, s.rawImplementation);
-          }
-        }
-      }
+      // NOTA (Estabilidade WebRTC): Renegociação SDP dinâmica durante a transmissão ativa está desativada.
+      // Renegociar a cada 1.5s reinicia o encoder em loop, congela o vídeo e zera o bitrate para 0.05 Mbps.
+      // A preferência e ordenação de codecs para GPU é configurada no transceiver antes da negociação inicial.
 
       // Fallback robusto para resolução
       if (!width || !height) {
@@ -1198,6 +1286,7 @@ export class QualityController {
         for (const uid of this.peerAdaptiveStates.keys()) {
           if (!this.webrtc.peers.has(uid)) {
             this.peerAdaptiveStates.delete(uid);
+            this._peerLocks.delete(uid);
           }
         }
       }
@@ -1264,6 +1353,8 @@ export class QualityController {
       }
     } catch (err) {
       console.warn('[QualityController] Erro ao coletar stats multi-peer:', err);
+    } finally {
+      this._isCollecting = false;
     }
   }
 

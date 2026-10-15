@@ -330,49 +330,6 @@ export class WebRTCManager {
           if (line.startsWith('b=TIAS:')) hasTIAS = true;
         }
 
-        // CAUSA 1: Upgrade de Level no SDP (Level 4.2 '2a' para 1080p60, ou Level 5.1 '33' para 4K60/1440p)
-        // Na especificação H.264, profile-level-id terminando em 1f (3.1) suporta no máximo 720p30.
-        // O MediaFoundation MFT da GPU rejeita 1080p60 em Level 3.1 com MF_E_INVALIDMEDIATYPE e cai para OpenH264.
-        const targetRes = (this.targetResolution || (this.mediaManager && this.mediaManager.targetResolution) || (() => {
-          try { return localStorage.getItem('hyperstream_target_res') || ''; } catch (_) { return ''; }
-        })()).toLowerCase();
-        const targetLevelHex = (targetRes === '4k' || targetRes === '1440p' || targetRes === '2k') ? '33' : '2a';
-
-        for (let i = 0; i < lines.length; i++) {
-          const l = lines[i];
-          if (l.startsWith('a=fmtp:')) {
-            const fmtpMatch = l.match(/^a=fmtp:(\d+)\s+(.*)$/);
-            if (fmtpMatch) {
-              const pt = fmtpMatch[1];
-              let params = fmtpMatch[2];
-              const isH264 = h264Payloads.has(pt) || params.toLowerCase().includes('profile-level-id');
-
-              if (isH264 && params.includes('packetization-mode=1')) {
-                const pidMatch = params.match(/profile-level-id=([0-9a-fA-F]{4})([0-9a-fA-F]{2})/i);
-                if (pidMatch) {
-                  const prefix = pidMatch[1];
-                  const currentLevel = pidMatch[2].toLowerCase();
-                  const currentLevelNum = parseInt(currentLevel, 16);
-                  if (currentLevel === '1f' || currentLevel === '20' || currentLevelNum < 0x2a) {
-                    const oldPid = pidMatch[0];
-                    const newPid = `profile-level-id=${prefix}${targetLevelHex}`;
-                    params = params.replace(oldPid, newPid);
-                    console.log(`[WebRTC SDP Upgrade] H.264 Payload ${pt}: Level atualizado de 0x${currentLevel} para 0x${targetLevelHex} (${newPid}, Level ${targetLevelHex === '33' ? '5.1 4K60' : '4.2 1080p60'})`);
-                  }
-                }
-
-                if (!params.includes('level-asymmetry-allowed=1')) {
-                  params += ';level-asymmetry-allowed=1';
-                }
-                if (!params.includes('packetization-mode=1')) {
-                  params += ';packetization-mode=1';
-                }
-
-                lines[i] = `a=fmtp:${pt} ${params}`;
-              }
-            }
-          }
-        }
 
         // 2. Preserva a ordem exata de codecs gerada pelo transceiver.setCodecPreferences()
         // NÃO reagrupa payloads por nome genérico de codec ('H264') para não destruir o profile-level-id e packetization-mode=1
@@ -707,50 +664,13 @@ export class WebRTCManager {
   }
 
   /**
-   * Auto-recovery obrigatório anti-CPU: disparado quando o QualityController detecta que
-   * um stream ativo (framesEncoded > 20) caiu em software_confirmed (OpenH264 / libaom).
+   * Auto-recovery anti-CPU desativado durante a transmissão ativa:
+   * Renegociações SDP dinâmicas no meio do stream reiniciam encoders em loop e travam a taxa de bits (0.05 Mbps).
+   * A preferência de codec é definida estritamente uma única vez antes de createOffer/createAnswer via transceiver.setCodecPreferences().
    */
   async handleSoftwareFallbackDetected(targetUserId, failedCodec, failedFmtp = '', implName = '') {
-    if (this.encoderPreference === 'cpu') return;
-
-    const lockKey = `${targetUserId}:${failedCodec}:${failedFmtp || 'default'}`;
-    const attempts = this.attemptedFallbacks.get(lockKey) || 0;
-    if (attempts >= 2) {
-      console.warn(`[WebRTC Anti-Fallback] Limite de tentativas atingido para ${lockKey}. Mantendo stream.`);
-      return;
-    }
-    this.attemptedFallbacks.set(lockKey, attempts + 1);
-
-    console.warn(`[WebRTC Anti-Fallback] Detectado fallback para CPU (${implName || failedCodec}) com peer ${targetUserId}. Disparando recuperação para GPU...`);
-
-    // Registra perfil rejeitado
-    if (failedFmtp) {
-      this.rejectedHardwareProfiles.add(failedFmtp);
-    }
-    if (failedCodec === 'AV1' || failedCodec === 'VP8' || failedCodec === 'VP9') {
-      this.preferredCodec = 'H264';
-    }
-
-    const pc = this.peers.get(targetUserId);
-    if (!pc || pc.signalingState === 'closed') return;
-
-    // Reaplica configureCodecPreferences nos transceivers de vídeo do peer
-    const transceivers = pc.getTransceivers().filter(t => {
-      return (t.sender && t.sender.track && t.sender.track.kind === 'video') ||
-             (t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
-    });
-
-    for (const t of transceivers) {
-      this.configureCodecPreferences(t);
-    }
-
-    // Dispara nova oferta SDP para migrar a codificação para a GPU
-    try {
-      console.log(`[WebRTC Anti-Fallback] Renegociando com ${targetUserId} para perfil acelerado por GPU...`);
-      await this.createOfferForPeer(targetUserId);
-    } catch (err) {
-      console.error(`[WebRTC Anti-Fallback] Falha ao renegociar com ${targetUserId}:`, err.message);
-    }
+    // Desativado por design: evita renegociações em loop e congelamento de vídeo
+    console.warn(`[WebRTC Anti-Fallback] Fallback para CPU detectado (${implName || failedCodec}) com peer ${targetUserId}. Renegociação SDP dinâmica desativada para manter estabilidade.`);
   }
 
   /**
@@ -1160,17 +1080,13 @@ export class WebRTCManager {
         await pc.setLocalDescription({ type: 'rollback' });
       }
 
-      // Garante upgrade de Level H.264 no SDP da oferta remota antes de aplicar no PeerConnection
-      if (sdpInit && sdpInit.sdp) {
-        sdpInit.sdp = this.mungeSdpBandwidth(sdpInit.sdp, this.targetMaxBitrate);
-      }
-
       await pc.setRemoteDescription(new RTCSessionDescription(sdpInit));
       console.log(`[WebRTC] SDP Offer de ${fromUserId} aplicada com sucesso.`);
 
-      // Configura preferências de codecs nos transceivers de vídeo recebidos antes de gerar Answer
-      const videoTransceivers = pc.getTransceivers().filter(t => t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
-      for (const vt of videoTransceivers) {
+      // Aplica preferências de codecs apenas nos transceivers onde o peer local é o transmissor.
+      // No receptor (createAnswer), respeita o codec da oferta do Host (ex: 42e01f) sem sobrescrever com as preferências do receptor.
+      const senderVideoTransceivers = pc.getTransceivers().filter(t => t.sender && t.sender.track && t.sender.track.kind === 'video');
+      for (const vt of senderVideoTransceivers) {
         this.configureCodecPreferences(vt);
       }
 
@@ -1209,11 +1125,6 @@ export class WebRTCManager {
         sdpInit = typeof answerData.sdp === 'object' ? answerData.sdp : { type: 'answer', sdp: answerData.sdp };
       }
       if (!sdpInit.type) sdpInit.type = 'answer';
-
-      // Garante upgrade de Level H.264 no SDP da resposta remota antes de aplicar no PeerConnection
-      if (sdpInit && sdpInit.sdp) {
-        sdpInit.sdp = this.mungeSdpBandwidth(sdpInit.sdp, this.targetMaxBitrate);
-      }
 
       await pc.setRemoteDescription(new RTCSessionDescription(sdpInit));
       console.log(`[WebRTC] SDP Answer de ${fromUserId} aplicada com sucesso.`);

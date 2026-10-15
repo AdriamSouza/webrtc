@@ -23,8 +23,7 @@ const __dirname = path.dirname(__filename);
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
 // 1. Unificação estrita de enable-features em uma ÚNICA chamada antes de app.whenReady()
-// (Chamadas sucessivas de enable-features no Electron sobrescrevem as anteriores)
-app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoEncode,MediaFoundationVideoEncodeAccelerator,MediaFoundationVideoCapture,MediaFoundationD3D11VideoCapture,MediaFoundationVideoDecoder,WindowsGraphicsCapture,AcceleratedVideoEncoder,AcceleratedVideoDecoder,MediaFoundationAV1Encoding,WebRtcMediaFoundationAV1Encoding,WebRTCPipeWireCapturer,VaapiVideoEncoder,VaapiVideoDecoder,CanvasOopRasterization');
+app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoEncode,MediaFoundationD3D11VideoCapture,WindowsGraphicsCapture');
 
 // 2. Flags críticas para desbloquear codificação por hardware (MediaFoundation / AMD AMF / D3D11) no Windows
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -37,8 +36,6 @@ app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
 app.commandLine.appendSwitch('force-high-performance-gpu');
-app.commandLine.appendSwitch('force_high_performance_gpu');
-app.commandLine.appendSwitch('enable-hardware-overlays', 'single-fullscreen,underlays');
 
 // 3. Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -448,26 +445,41 @@ ipcMain.handle('desktop:get-version', () => {
   return app.getVersion();
 });
 
+// Cache em memória para diagnóstico estático de GPU (executa apenas 1 vez para não congelar o processo GPU)
+let cachedGpuInfo = null;
+let cachedGpuInfoPromise = null;
+let cachedSystemGpu = null;
+
+async function getCachedGpuInfo() {
+  if (cachedGpuInfo) return cachedGpuInfo;
+  if (cachedGpuInfoPromise) return cachedGpuInfoPromise;
+  cachedGpuInfoPromise = (async () => {
+    try {
+      cachedGpuInfo = await app.getGPUInfo('complete');
+    } catch (e) {
+      console.warn('[Desktop Main] Erro ao obter app.getGPUInfo("complete"), tentando fallback "basic":', e.message);
+      try {
+        cachedGpuInfo = await app.getGPUInfo('basic');
+      } catch (e2) {
+        cachedGpuInfo = { error: e2.message };
+      }
+    }
+    return cachedGpuInfo;
+  })();
+  return cachedGpuInfoPromise;
+}
+
 // IPC: Diagnóstico detalhado de aceleração por hardware GPU e recursos do sistema
 ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
   let featureStatus = {};
-  let gpuInfo = null;
   try {
     featureStatus = app.getGPUFeatureStatus();
   } catch (e) {
     featureStatus = { error: e.message };
   }
-  try {
-    // CAUSA 4: Consulta GPUInfo completa para expor videoAccelerators, driverBugWorkarounds e auxAttributes
-    gpuInfo = await app.getGPUInfo('complete');
-  } catch (e) {
-    console.warn('[Desktop Main] Erro ao obter app.getGPUInfo("complete"), tentando fallback "basic":', e.message);
-    try {
-      gpuInfo = await app.getGPUInfo('basic');
-    } catch (e2) {
-      gpuInfo = { error: e2.message };
-    }
-  }
+
+  // Utiliza GPUInfo em cache para evitar congelamento de 100~300ms a cada 1.5s
+  const gpuInfo = await getCachedGpuInfo();
 
   // Extrai listas reais de aceleração e workarounds do processo GPU do Chromium
   const aux = (gpuInfo && typeof gpuInfo === 'object') ? (gpuInfo.auxAttributes || {}) : {};
@@ -545,8 +557,8 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
   const memoryUsageMB = Math.round(totalMemoryKB / 1024);
   const cpuUsagePercent = Number(totalCpuPercent.toFixed(1));
 
-  let systemGpu = null;
-  if (process.platform === 'win32') {
+  let systemGpu = cachedSystemGpu;
+  if (!systemGpu && process.platform === 'win32') {
     try {
       const dev = gpuInfo?.gpuDevice?.[0];
       if (dev?.deviceString) {
@@ -571,6 +583,7 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
         }
       } catch (_) {}
     }
+    cachedSystemGpu = systemGpu;
   }
 
   return {

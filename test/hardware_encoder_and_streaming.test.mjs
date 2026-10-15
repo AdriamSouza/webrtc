@@ -9,6 +9,7 @@ import {
   identifyGpuVendor,
   evaluateCodecCapabilities,
   determineOptimalCodecOrder,
+  scoreH264Candidate,
   STREAM_RESOLUTIONS,
   getResolutionConstraints
 } from '../frontend/js/hardwareDetector.js';
@@ -184,6 +185,33 @@ describe('3. Matriz de Decisão: Seleção Inteligente de Codecs (Automático, G
     assert.equal(result.isHardwareExpected, false);
     assert.ok(result.preferredOrder.length > 0);
   });
+
+  test('scoreH264Candidate deve priorizar Constrained Baseline (42e01f) e Main (4d001f) e penalizar packetization-mode=0 e High (640032)', () => {
+    const p1 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f' };
+    const p2 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f' };
+    const p3 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' };
+    const p4 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f' };
+    const p5 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f' };
+    const p6 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f' };
+    const p7 = { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032' };
+
+    // 1º lugar: 42e01f -> score 10
+    assert.equal(scoreH264Candidate(p3), 10);
+    // 2º lugar: 4d001f -> score 20
+    assert.equal(scoreH264Candidate(p5), 20);
+    // 3º lugar: 42001f -> score 30
+    assert.equal(scoreH264Candidate(p1), 30);
+    // 4º lugar: 640032 -> score 100
+    assert.equal(scoreH264Candidate(p7), 100);
+
+    // Penalidade de +5000 para packetization-mode=0
+    assert.equal(scoreH264Candidate(p4), 5010);
+    assert.equal(scoreH264Candidate(p6), 5020);
+    assert.equal(scoreH264Candidate(p2), 5030);
+
+    // Bônus de prioridade (-5) para powerEfficient: true
+    assert.equal(scoreH264Candidate({ ...p3, powerEfficient: true }), 5);
+  });
 });
 
 describe('4. Resoluções Avançadas e Perfis de Streaming (4K, 1440p, 1080p, 60 FPS)', () => {
@@ -352,6 +380,22 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     const av1Idx = payloads.indexOf('45');
 
     assert.ok(av1Idx < h264Idx, 'AV1 deve vir antes de H.264 quando usuário solicita explicitamente CPU + AV1');
+  });
+
+  test('mungeSdpBandwidth NÃO deve alterar profile-level-id (mantendo fidelidade estrita com RTCRtpSender capabilities)', () => {
+    const wm = new WebRTCManager(null);
+    wm.targetMaxBitrate = 8000000;
+    const testSdp = [
+      'v=0',
+      'm=video 9 UDP/TLS/RTP/SAVPF 100',
+      'a=rtpmap:100 H264/90000',
+      'a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f'
+    ].join('\r\n');
+
+    const munged = wm.mungeSdpBandwidth(testSdp, 8000000);
+    assert.ok(munged.includes('profile-level-id=42e01f'), 'profile-level-id=42e01f deve ser preservado intacto');
+    assert.ok(!munged.includes('profile-level-id=42e02a'), 'NÃO deve modificar level para 2a');
+    assert.ok(!munged.includes('profile-level-id=42e033'), 'NÃO deve modificar level para 33');
   });
 
   test('Link de convite deve resolver URL pública no Desktop e nunca apontar para localhost', () => {

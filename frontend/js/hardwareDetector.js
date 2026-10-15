@@ -194,41 +194,67 @@ export function parseH264ProfileLevel(fmtp = '') {
 }
 
 /**
- * Pontua codecs H.264 para priorizar Level >= 4.2 (2a, 32, 33, 34) e descartar Level 3.1 (1f)
+ * Pontua codecs H.264 para priorizar perfis com suporte nativo por GPU (MediaFoundation MFT):
+ * 1º lugar: profile-level-id=42e01f (Constrained Baseline) -> score 10
+ * 2º lugar: profile-level-id=4d001f (Main Profile) -> score 20
+ * 3º lugar: profile-level-id=42001f (Baseline) -> score 30
+ * 4º lugar: profile-level-id=640032 (High Profile) -> score 100 (baixa prioridade pois cai no OpenH264 neste driver)
+ * Exige packetization-mode=1 (penaliza packetization-mode=0 com +5000).
+ * Aplica bônus de prioridade (-5) se encodingInfo() retornar powerEfficient: true.
  */
-export function scoreH264Candidate(c) {
-  const fmtp = (c.sdpFmtpLine || '').toLowerCase();
-  const isMode0 = fmtp.includes('packetization-mode=0');
-  const basePenalty = isMode0 ? 3000 : 0;
-  const parsed = parseH264ProfileLevel(fmtp);
-  if (!parsed) return basePenalty + 2000;
+export function scoreH264Candidate(c, hardwareProbe = null) {
+  const fmtp = (c?.sdpFmtpLine || '').toLowerCase();
+  const isMode1 = fmtp.includes('packetization-mode=1');
+  const isMode0 = fmtp.includes('packetization-mode=0') || !isMode1;
+  const basePenalty = isMode0 ? 5000 : 0;
 
-  let levelScore = 500;
-  // Level 5.1 / 5.2 (33, 34) -> Suporta até 4K @ 60 FPS
-  if (parsed.levelIdc >= 0x33) levelScore = 10;
-  // Level 5.0 (32)
-  else if (parsed.levelIdc >= 0x32) levelScore = 20;
-  // Level 4.2 (2a) -> Padrão ideal para 1080p @ 60 FPS
-  else if (parsed.levelIdc >= 0x2a) levelScore = 30;
-  // Perfis com level-asymmetry-allowed=1 permitem upgrade transparente no SDP
-  else if (parsed.hasAsymmetry) levelScore = 40;
-  // Level 4.1 (29) -> 1080p30
-  else if (parsed.levelIdc >= 0x29) levelScore = 60;
-  // Level 3.1 (1f) ou 3.2 (20) sem assimetria -> Baixa prioridade (rejeitado por MFT em 1080p60)
-  else levelScore = 200;
+  const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/i);
+  const pid = match ? match[1].toLowerCase() : '';
 
-  // Preferência de Profile: High (64) > Main (4d) > Constrained Baseline (42e0) > Baseline (4200)
-  let profileScore = 5;
-  if (parsed.profileHex === '64') profileScore = 1;
-  else if (parsed.profileHex === '4d') profileScore = 2;
-  else if (parsed.profileHex === '42') profileScore = 3;
+  let profileScore = 200;
+  if (pid === '42e01f' || pid.startsWith('42e0')) {
+    profileScore = 10;
+  } else if (pid === '4d001f' || pid.startsWith('4d00')) {
+    profileScore = 20;
+  } else if (pid === '42001f' || pid.startsWith('4200')) {
+    profileScore = 30;
+  } else if (pid === '640032' || pid.startsWith('6400')) {
+    profileScore = 100;
+  }
 
-  return basePenalty + levelScore + profileScore;
+  // Bônus de prioridade (-5) se encodingInfo() do navigator.mediaCapabilities retornou powerEfficient: true
+  let powerBonus = 0;
+  if (c?.powerEfficient === true) {
+    powerBonus = -5;
+  } else if (hardwareProbe) {
+    const probedEntry = hardwareProbe.probedCodecs?.find(p => p.codec === c || (p.sdpFmtpLine && p.sdpFmtpLine.toLowerCase() === fmtp));
+    if (probedEntry && (probedEntry.powerEfficient || probedEntry.isHwConfirmed)) {
+      powerBonus = -5;
+    }
+  }
+
+  return basePenalty + profileScore + powerBonus;
 }
 
-export async function probeRealHardwareEncoders(width = 1920, height = 1080, framerate = 60, bitrate = 8000000) {
-  let senderCodecs = [];
-  try {
+let cachedProbePromise = null;
+let cachedProbeResults = null;
+
+export function clearProbeHardwareCache() {
+  cachedProbePromise = null;
+  cachedProbeResults = null;
+}
+
+export async function probeRealHardwareEncoders(width = 1920, height = 1080, framerate = 60, bitrate = 8000000, forceRefresh = false) {
+  if (!forceRefresh && cachedProbeResults) {
+    return cachedProbeResults;
+  }
+  if (!forceRefresh && cachedProbePromise) {
+    return cachedProbePromise;
+  }
+
+  cachedProbePromise = (async () => {
+    let senderCodecs = [];
+    try {
     if (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function') {
       senderCodecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
     } else if (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function') {
@@ -322,7 +348,7 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
 
     // Regra estrita de classificação de Hardware Confirmado:
     // 1. powerEfficient === true no encodingInfo(), OU
-    // 2. Para H.264: packetization-mode=1 obrigatório e profile-level-id 42e0, 4d00 ou 6400
+    // 2. Para H.264: packetization-mode=1 obrigatório e profile-level-id 42e0, 4d00 ou 4200
     const fmtpLower = fmtp.toLowerCase();
     const isPacketizationMode1 = fmtpLower.includes('packetization-mode=1');
     const isPacketizationMode0 = fmtpLower.includes('packetization-mode=0');
@@ -334,7 +360,7 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     } else if (isH264 && !isPacketizationMode0 && isPacketizationMode1) {
       const match = fmtpLower.match(/profile-level-id=([0-9a-f]{6})/);
       const pid = match ? match[1] : '';
-      if (pid.startsWith('42e0') || pid.startsWith('4d00') || pid.startsWith('6400')) {
+      if (pid.startsWith('42e0') || pid.startsWith('4d00') || pid.startsWith('4200')) {
         isHwConfirmed = true;
       }
     }
@@ -372,14 +398,15 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     console.log(`  • ${mime} [${fmtp || 'default'}]: ${statusTag}`);
   }
 
-  // Identifica melhor codec H.264 de hardware priorizando Level >= 4.2 (2a, 32, 33) e packetization-mode=1
+  // Identifica melhor codec H.264 de hardware priorizando 42e01f (Constrained Baseline) e 4d001f (Main) com packetization-mode=1
   let bestH264Codec = null;
+  const probeContext = { probedCodecs };
   const h264HwList = hardwareCodecs.filter(c => c.mimeType.toLowerCase().includes('h264') && c.isPacketizationMode1);
   if (h264HwList.length > 0) {
-    const sortedHw = [...h264HwList].sort((a, b) => scoreH264Candidate(a.codec) - scoreH264Candidate(b.codec));
+    const sortedHw = [...h264HwList].sort((a, b) => scoreH264Candidate(a.codec, probeContext) - scoreH264Candidate(b.codec, probeContext));
     bestH264Codec = sortedHw[0];
   } else if (allH264List.length > 0) {
-    const sortedAll = [...allH264List].sort((a, b) => scoreH264Candidate(a) - scoreH264Candidate(b));
+    const sortedAll = [...allH264List].sort((a, b) => scoreH264Candidate(a, probeContext) - scoreH264Candidate(b, probeContext));
     bestH264Codec = probedCodecs.find(p => p.codec === sortedAll[0]) || null;
   }
 
@@ -403,7 +430,11 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     bestH264: results.bestH264Codec?.sdpFmtpLine || 'Nenhum'
   });
 
+  cachedProbeResults = results;
   return results;
+})();
+
+return cachedProbePromise;
 }
 
 /**
@@ -461,14 +492,15 @@ export function determineOptimalCodecOrder({
     }
   }
 
-  // Ordenação cirúrgica dos codecs H.264:
-  // 1. Prioriza Level >= 4.2 (2a, 32, 33, 34) e perfis com level-asymmetry-allowed=1 com packetization-mode=1
-  // 2. packetization-mode=0 jogado para o final da fila (força software no Chromium)
-  // 3. Perfis em rejectedSet descartados para o fim absoluto
+  // Ordenação cirúrgica dos codecs H.264 para aceleração por GPU (MediaFoundation MFT):
+  // 1. Exige packetization-mode=1 (+5000 para packetization-mode=0)
+  // 2. Prioriza perfis: 42e01f (10) > 4d001f (20) > 42001f (30) > 640032 (100)
+  // 3. Bônus de -5 para perfis com powerEfficient: true
+  // 4. Perfis em rejectedSet descartados para o fim absoluto
   const scoreH264 = (c) => {
     const fmtp = (c.sdpFmtpLine || '').toLowerCase();
     if (rejectedSet.has(c.sdpFmtpLine) || rejectedSet.has(fmtp)) return 9999;
-    return scoreH264Candidate(c);
+    return scoreH264Candidate(c, hardwareProbe);
   };
 
   h264Codecs.sort((a, b) => scoreH264(a) - scoreH264(b));

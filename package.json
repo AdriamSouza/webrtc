@@ -1,6 +1,6 @@
 {
   "name": "hyperstream",
-  "version": "1.4.4",
+  "version": "1.4.6",
   "description": "HyperStream — Plataforma de Transmissão WebRTC P2P em 60 FPS (Web & Desktop WGC)",
   "private": true,
   "type": "module",

@@ -36,6 +36,7 @@ app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
 app.commandLine.appendSwitch('force-high-performance-gpu');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 // 3. Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -443,6 +444,25 @@ ipcMain.handle('desktop:open-external', async (event, url) => {
 // IPC: Obter versão instalada do aplicativo Desktop
 ipcMain.handle('desktop:get-version', () => {
   return app.getVersion();
+});
+
+// IPC: Obter uso real de CPU do processo Electron
+ipcMain.handle('desktop:get-cpu-usage', () => {
+  let totalCpuPercent = 0;
+  try {
+    if (typeof app.getAppMetrics === 'function') {
+      const metrics = app.getAppMetrics();
+      for (const m of metrics) {
+        totalCpuPercent += (m.cpu?.percentCPUUsage || 0);
+      }
+    }
+  } catch (_) {}
+  if (totalCpuPercent === 0 && process.getCPUUsage) {
+    try {
+      totalCpuPercent = process.getCPUUsage()?.percentCPUUsage || 0;
+    } catch (_) {}
+  }
+  return { cpuUsagePercent: Number(totalCpuPercent.toFixed(1)) };
 });
 
 // Cache em memória para diagnóstico estático de GPU (executa apenas 1 vez para não congelar o processo GPU)

@@ -677,31 +677,31 @@ export class WebRTCManager {
       });
 
       if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
-        // Remove codecs H.264 com packetization-mode=0 para nunca serem selecionados antes dos perfis por hardware,
-        // garantindo que 42e01f (1º) e 4d001f (2º) fiquem rigorosamente no topo da negociação.
-        const nonMode0Codecs = optimal.preferredOrder.filter(c => {
-          if ((c.mimeType || '').toLowerCase() === 'video/h264') {
+        // Banimento total e definitivo de OpenH264 e descarte de perfis que forçam software
+        const isCpuMode = (this.encoderPreference || 'gpu') === 'cpu';
+        const finalOrder = optimal.preferredOrder.filter(c => {
+          const desc = `${c.mimeType || ''} ${c.sdpFmtpLine || ''} ${c.implementation || ''}`.toLowerCase();
+          if (desc.includes('openh264')) return false;
+
+          if (!isCpuMode && (c.mimeType || '').toLowerCase() === 'video/h264') {
             const fmtp = (c.sdpFmtpLine || '').toLowerCase();
-            return !fmtp.includes('packetization-mode=0');
+            // REMOVA TOTALMENTE packetization-mode=0, 42001f e 640032
+            if (fmtp.includes('packetization-mode=0')) return false;
+            if (fmtp.includes('profile-level-id=42001f') || fmtp.includes('profile-level-id=640032')) return false;
+            // Somente 42e0 e 4d00 com packetization-mode=1
+            const match = fmtp.match(/profile-level-id=([0-9a-f]{6})/i);
+            const pid = match ? match[1].toLowerCase() : '';
+            if (!pid.startsWith('42e0') && !pid.startsWith('4d00')) return false;
           }
           return true;
         });
 
-        // Adiciona packetization-mode=0 apenas no fim absoluto como fallback de interoperabilidade
-        const mode0Codecs = optimal.preferredOrder.filter(c => {
-          if ((c.mimeType || '').toLowerCase() === 'video/h264') {
-            const fmtp = (c.sdpFmtpLine || '').toLowerCase();
-            return fmtp.includes('packetization-mode=0');
-          }
-          return false;
-        });
-
-        const finalOrder = nonMode0Codecs.length > 0 ? [...nonMode0Codecs, ...mode0Codecs] : optimal.preferredOrder;
-
-        transceiver.setCodecPreferences(finalOrder);
-        this.lastPreferredCodecs = finalOrder;
-        const top = finalOrder[0];
-        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
+        if (finalOrder.length > 0) {
+          transceiver.setCodecPreferences(finalOrder);
+          this.lastPreferredCodecs = finalOrder;
+          const top = finalOrder[0];
+          console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
+        }
       }
     } catch (err) {
       console.warn('[WebRTC] Não foi possível definir preferência de codecs (usando padrão):', err.message);

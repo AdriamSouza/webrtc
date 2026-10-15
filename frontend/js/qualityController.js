@@ -85,7 +85,15 @@ export function analyzeEncoderImplementation(implName, codecName = '', isPowerEf
     isPowerEfficient = null;
   }
 
-  const { framesEncoded = null, bytesSent = null, framesDelta = null, qualityLimitationReason = 'none' } = activityInfo;
+  const {
+    framesEncoded = null,
+    bytesSent = null,
+    framesDelta = null,
+    avgEncodeTimeMs = null,
+    cpuUsagePercent = null,
+    qualityLimitationReason = 'none'
+  } = activityInfo;
+
   const isInactive = (framesEncoded === 0 && bytesSent === 0) || (framesDelta === 0 && bytesSent === 0);
 
   if (isInactive) {
@@ -104,11 +112,64 @@ export function analyzeEncoderImplementation(implName, codecName = '', isPowerEf
     };
   }
 
+  const numericCpuUsage = typeof cpuUsagePercent === 'number'
+    ? cpuUsagePercent
+    : (typeof cpuUsagePercent === 'string' ? parseFloat(cpuUsagePercent) : null);
+  const isHighCpu = numericCpuUsage !== null && !isNaN(numericCpuUsage) && numericCpuUsage > 25.0;
+
+  const numericEncodeTime = typeof avgEncodeTimeMs === 'number'
+    ? avgEncodeTimeMs
+    : (typeof avgEncodeTimeMs === 'string' ? parseFloat(avgEncodeTimeMs) : null);
+  const isFastHwEncode = numericEncodeTime !== null && !isNaN(numericEncodeTime) && numericEncodeTime > 0 && numericEncodeTime <= 12.0;
+
+  // 1. VALIDAÇÃO REAL DE USO DE CPU DO PROCESSO:
+  // Se o uso de CPU do processo do Electron exceder 25% durante a transmissão,
+  // o sistema DEVE declarar obrigatoriamente software_confirmed ("OpenH264 na CPU ⚠️"),
+  // independentemente do tempo de encode reportado pelo WebRTC.
+  if (isHighCpu) {
+    const rawImpl = implName || (codecName ? `${codecName} Software` : 'OpenH264');
+    return {
+      state: 'software_confirmed',
+      category: 'software',
+      label: 'OpenH264 na CPU ⚠️',
+      badgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      isUnknown: false,
+      rawImplementation: `${rawImpl} [CPU: ${numericCpuUsage.toFixed(1)}%]`,
+      powerEfficient: false,
+      qualityLimitationReason,
+      evidence: `Uso elevado de CPU do processo (${numericCpuUsage.toFixed(1)}% > 25.0%) detectado durante a transmissão — codificação executada em software na CPU (OpenH264)`
+    };
+  }
+
+  // 2. REGRA DE OURO FÍSICA: TEMPO REAL DE ENCODE <= 12.0 ms
+  // Se avgEncodeTimeMs <= 12.0 ms (como os 4.91 ms medidos na RX 7600),
+  // o sistema DEVE classificar obrigatoriamente como hardware_confirmed ("GPU Hardware ⚡"),
+  // independentemente da string encoderImplementation retornada pelo Chromium!
+  // (Nenhum encoder de software em CPU atinge 4.9 ms em 1080p60).
+  if (isFastHwEncode) {
+    const rawImpl = implName ? `${implName} [${numericEncodeTime}ms]` : `GPU Hardware [${numericEncodeTime}ms]`;
+    return {
+      state: 'hardware_confirmed',
+      category: 'hardware',
+      label: 'GPU Hardware ⚡',
+      badgeClass: 'diag-badge-hw',
+      isHardware: true,
+      isSoftware: false,
+      isUnknown: false,
+      rawImplementation: rawImpl,
+      powerEfficient: true,
+      qualityLimitationReason,
+      evidence: `GPU Hardware Confirmado (${rawImpl}) — Tempo real de codificação ultrarrápido (${numericEncodeTime} ms <= 12.0 ms), comprovando aceleração física na GPU (AMD AMF / Direct3D 11 / MediaFoundation)`
+    };
+  }
+
   const s = String(implName || '').toLowerCase();
   const isHwImpl = s.startsWith('externalencoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('nvenc') || s.includes('amf') || s.includes('vcn') || s.includes('qsv') || s.includes('vaapi') || s.includes('hardware');
   const isSwImpl = s.includes('openh264') || s.includes('libaom') || s.includes('libvpx') || s.includes('dav1d') || s.includes('ffmpeg') || s.includes('software');
 
-  // 1. Hardware confirmado: powerEfficient === true OU nome comprovadamente de hardware (sem indicador de software)
+  // 3. Hardware confirmado: powerEfficient === true OU nome comprovadamente de hardware (sem indicador de software)
   if (isPowerEfficient === true || (isHwImpl && !isSwImpl && isPowerEfficient !== false)) {
     const rawImpl = implName ? `${implName}${isPowerEfficient === true ? ' [powerEfficient]' : ''}` : 'Hardware GPU [powerEfficient]';
     return {
@@ -126,7 +187,7 @@ export function analyzeEncoderImplementation(implName, codecName = '', isPowerEf
     };
   }
 
-  // 2. Software confirmado: powerEfficient === false (quando framesEncoded > 15) OU nome de software
+  // 4. Software confirmado: powerEfficient === false (quando framesEncoded > 15) OU nome de software
   if (isPowerEfficient === false || isSwImpl) {
     const rawImpl = implName || `${codecName} Software`;
     let evidenceText = `Software / CPU (${rawImpl}) — Fallback ativo para codificador de software`;
@@ -152,7 +213,7 @@ export function analyzeEncoderImplementation(implName, codecName = '', isPowerEf
     };
   }
 
-  // 3. Ausência de implementação e de sinal de powerEfficient
+  // 5. Ausência de implementação e de sinal de powerEfficient
   if (!implName) {
     return {
       state: 'unknown',
@@ -306,6 +367,11 @@ export class QualityController {
     // Guarda de concorrência e fila de setParameters por peer
     this._isCollecting = false;
     this._peerLocks = new Map(); // Map<targetId, Promise>
+
+    // Telemetria de uso real de CPU do processo
+    this.lastProcessCpuUsagePercent = 0;
+    this._prevCpuUsage = null;
+    this._prevCpuTime = 0;
   }
 
   setWebRTC(webrtcManager) {
@@ -623,6 +689,37 @@ export class QualityController {
         return;
       }
 
+      // Atualiza medição de uso real de CPU do processo (desktopAPI ou process)
+      if (typeof window !== 'undefined' && window.desktopAPI && typeof window.desktopAPI.getCpuUsage === 'function') {
+        try {
+          const cpuRes = await window.desktopAPI.getCpuUsage();
+          if (cpuRes && typeof cpuRes.cpuUsagePercent === 'number') {
+            this.lastProcessCpuUsagePercent = cpuRes.cpuUsagePercent;
+          }
+        } catch (_) {}
+      } else if (typeof window !== 'undefined' && window.desktopAPI && typeof window.desktopAPI.getGpuDiagnostics === 'function') {
+        try {
+          const diag = await window.desktopAPI.getGpuDiagnostics();
+          if (diag && typeof diag.cpuUsagePercent === 'number') {
+            this.lastProcessCpuUsagePercent = diag.cpuUsagePercent;
+          }
+        } catch (_) {}
+      } else if (typeof process !== 'undefined' && typeof process.cpuUsage === 'function') {
+        try {
+          const cpuNow = process.cpuUsage();
+          if (this._prevCpuUsage && this._prevCpuTime) {
+            const dtMs = Date.now() - this._prevCpuTime;
+            if (dtMs > 200) {
+              const diffMicros = (cpuNow.user - this._prevCpuUsage.user) + (cpuNow.system - this._prevCpuUsage.system);
+              const pct = (diffMicros / (dtMs * 1000)) * 100;
+              this.lastProcessCpuUsagePercent = Number(pct.toFixed(1));
+            }
+          }
+          this._prevCpuUsage = cpuNow;
+          this._prevCpuTime = Date.now();
+        } catch (_) {}
+      }
+
       const activePcs = [];
       if (this.webrtc.peers) {
         for (const [userId, pc] of this.webrtc.peers.entries()) {
@@ -888,6 +985,8 @@ export class QualityController {
               framesEncoded: report.framesEncoded ?? report.framesSent ?? 0,
               bytesSent: report.bytesSent || 0,
               framesDelta,
+              avgEncodeTimeMs,
+              cpuUsagePercent: this.lastProcessCpuUsagePercent,
               qualityLimitationReason: report.qualityLimitationReason || 'none'
             });
 

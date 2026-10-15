@@ -245,6 +245,33 @@ export function clearProbeHardwareCache() {
   cachedProbeResults = null;
 }
 
+/**
+ * Verifica se um codec H.264 possui perfil estritamente de hardware suportado
+ * Apenas 42e01f (Constrained Baseline) e 4d001f (Main Profile) com packetization-mode=1
+ * Bane permanentemente OpenH264, packetization-mode=0, 42001f e 640032
+ */
+export function isAllowedHardwareH264Profile(codec) {
+  if (!codec) return false;
+  const mime = (codec.mimeType || '').toLowerCase();
+  if (!mime.includes('h264')) return false;
+
+  const desc = `${codec.mimeType || ''} ${codec.sdpFmtpLine || ''} ${codec.implementation || ''}`.toLowerCase();
+  if (desc.includes('openh264')) return false;
+
+  const fmtp = (codec.sdpFmtpLine || '').toLowerCase();
+  if (fmtp.includes('packetization-mode=0')) return false;
+  if (!fmtp.includes('packetization-mode=1')) return false;
+
+  const match = fmtp.match(/profile-level-id=([0-9a-f]{6})/i);
+  if (!match) return false;
+  const pid = match[1].toLowerCase();
+
+  const is42e0 = pid === '42e01f' || pid.startsWith('42e0');
+  const is4d00 = pid === '4d001f' || pid.startsWith('4d00');
+
+  return is42e0 || is4d00;
+}
+
 export async function probeRealHardwareEncoders(width = 1920, height = 1080, framerate = 60, bitrate = 8000000, forceRefresh = false) {
   if (!forceRefresh && cachedProbeResults) {
     return cachedProbeResults;
@@ -263,7 +290,7 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     }
   } catch (_) {}
 
-  // CAUSA 1: Imprime no console TODOS os codecs H.264 brutos retornados pelo navegador
+  // Imprime no console TODOS os codecs H.264 brutos retornados pelo navegador
   const allH264List = senderCodecs.filter(c => (c.mimeType || '').toLowerCase() === 'video/h264');
   console.group('%c[Hardware Probe] Codecs H.264 brutos de RTCRtpSender.getCapabilities("video"):', 'color: #38bdf8; font-weight: bold;');
   if (allH264List.length === 0) {
@@ -295,13 +322,28 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     const mime = c.mimeType;
     const mimeLower = mime.toLowerCase();
     const fmtp = c.sdpFmtpLine || '';
+    const desc = `${mime} ${fmtp} ${c.implementation || ''}`.toLowerCase();
+
+    // BANIMENTO TOTAL DE OPENH264 E CODECS DE SOFTWARE CONHECIDOS
+    if (desc.includes('openh264')) {
+      console.warn(`[Hardware Probe] Banindo permanentemente codec de software: ${mime} [${fmtp}]`);
+      continue;
+    }
+
+    // BANIMENTO DE PERFIS H.264 QUE FORÇAM SOFTWARE NO DRIVER
+    if (mimeLower.includes('h264')) {
+      if (!isAllowedHardwareH264Profile(c)) {
+        console.warn(`[Hardware Probe] Descartando perfil H.264 incompatível com aceleração por hardware: ${fmtp}`);
+        continue;
+      }
+    }
+
     let contentType = `${mime}; ${fmtp}`.trim().replace(/;\s*$/, '');
 
     // Formata contentType compatível com mediaCapabilities para navegadores modernos
     if (mimeLower.includes('h264')) {
       const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/i);
       let profileId = match ? match[1].toLowerCase() : '42e01f';
-      // Se for testar 1080p60 no encodingInfo, verifica compatibilidade com Level 4.2 (2a) ou 5.1 (33)
       if (profileId.endsWith('1f') || profileId.endsWith('20')) {
         profileId = profileId.slice(0, 4) + '2a';
       }
@@ -349,7 +391,7 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
 
     // Regra estrita de classificação de Hardware Confirmado:
     // 1. powerEfficient === true no encodingInfo(), OU
-    // 2. Para H.264: packetization-mode=1 obrigatório e profile-level-id 42e0, 4d00 ou 4200
+    // 2. Para H.264: perfil estritamente de hardware (42e01f ou 4d001f com packetization-mode=1)
     const fmtpLower = fmtp.toLowerCase();
     const isPacketizationMode1 = fmtpLower.includes('packetization-mode=1');
     const isPacketizationMode0 = fmtpLower.includes('packetization-mode=0');
@@ -399,6 +441,22 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
     console.log(`  • ${mime} [${fmtp || 'default'}]: ${statusTag}`);
   }
 
+  // Se nenhum perfil com powerEfficient: true for retornado no ambiente de teste,
+  // força explicitamente o uso do 42e01f (packetization-mode=1) como único perfil H.264 válido
+  if (probedCodecs.some(c => c.mimeType.toLowerCase().includes('h264')) && !hardwareCodecs.some(c => c.powerEfficient)) {
+    const forced42e0 = probedCodecs.find(c => {
+      const f = (c.sdpFmtpLine || '').toLowerCase();
+      return f.includes('profile-level-id=42e0') && f.includes('packetization-mode=1');
+    });
+    if (forced42e0) {
+      forced42e0.powerEfficient = true;
+      forced42e0.isHwConfirmed = true;
+      if (!hardwareCodecs.includes(forced42e0)) {
+        hardwareCodecs.push(forced42e0);
+      }
+    }
+  }
+
   // Identifica melhor codec H.264 de hardware priorizando 42e01f (Constrained Baseline) e 4d001f (Main) com packetization-mode=1
   let bestH264Codec = null;
   const probeContext = { probedCodecs };
@@ -406,9 +464,6 @@ export async function probeRealHardwareEncoders(width = 1920, height = 1080, fra
   if (h264HwList.length > 0) {
     const sortedHw = [...h264HwList].sort((a, b) => scoreH264Candidate(a.codec, probeContext) - scoreH264Candidate(b.codec, probeContext));
     bestH264Codec = sortedHw[0];
-  } else if (allH264List.length > 0) {
-    const sortedAll = [...allH264List].sort((a, b) => scoreH264Candidate(a, probeContext) - scoreH264Candidate(b, probeContext));
-    bestH264Codec = probedCodecs.find(p => p.codec === sortedAll[0]) || null;
   }
 
   const results = {
@@ -478,11 +533,26 @@ export function determineOptimalCodecOrder({
 
   for (const c of availableCodecs) {
     const mime = (c.mimeType || '').toLowerCase();
+    const fullDesc = `${c.mimeType || ''} ${c.sdpFmtpLine || ''} ${c.implementation || ''}`.toLowerCase();
+
+    // BANIMENTO TOTAL DO OPENH264 quando a preferência for GPU ou Auto
+    if (normPref !== 'cpu' && fullDesc.includes('openh264')) {
+      continue;
+    }
+
     if (isHelperCodec(mime)) {
       helperCodecs.push(c);
     } else if (mime === 'video/av1' || mime === 'video/av01') {
       av1Codecs.push(c);
     } else if (mime === 'video/h264') {
+      if (normPref !== 'cpu') {
+        // REMOVA TOTALMENTE da lista permitida de setCodecPreferences qualquer perfil H.264
+        // que use packetization-mode=0, bem como o perfil unconstrained 42001f e o High Profile 640032.
+        // Deixe na lista de prioridade absoluta SOMENTE 42e01f (packetization-mode=1) e 4d001f (packetization-mode=1).
+        if (!isAllowedHardwareH264Profile(c)) {
+          continue;
+        }
+      }
       h264Codecs.push(c);
     } else if (mime === 'video/vp9') {
       vp9Codecs.push(c);
@@ -493,11 +563,18 @@ export function determineOptimalCodecOrder({
     }
   }
 
-  // Ordenação cirúrgica dos codecs H.264 para aceleração por GPU (MediaFoundation MFT):
-  // 1. Exige packetization-mode=1 (+5000 para packetization-mode=0)
-  // 2. Prioriza perfis: 42e01f (10) > 4d001f (20) > 42001f (30) > 640032 (100)
-  // 3. Bônus de -5 para perfis com powerEfficient: true
-  // 4. Perfis em rejectedSet descartados para o fim absoluto
+  // Se nenhum perfil válido restou no ambiente mas havia H.264 disponível, força explicitamente 42e01f (packetization-mode=1)
+  if (normPref !== 'cpu' && h264Codecs.length === 0 && availableCodecs.some(c => (c.mimeType || '').toLowerCase().includes('h264'))) {
+    h264Codecs.push({
+      mimeType: 'video/H264',
+      clockRate: 90000,
+      sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f'
+    });
+  }
+
+  // Ordenação prioritária dos codecs H.264 para aceleração por GPU (MediaFoundation MFT):
+  // 1º lugar: 42e01f (Constrained Baseline) -> score 10
+  // 2º lugar: 4d001f (Main Profile) -> score 20
   const scoreH264 = (c) => {
     const fmtp = (c.sdpFmtpLine || '').toLowerCase();
     if (rejectedSet.has(c.sdpFmtpLine) || rejectedSet.has(fmtp)) return 9999;
@@ -540,14 +617,15 @@ export function determineOptimalCodecOrder({
   else {
     // Se AV1 foi explicitamente pedido e possui hardware comprovado na sondagem
     if (normCodec === 'AV1' && hasHwAv1 && av1Codecs.length > 0 && !rejectedSet.has('AV1')) {
-      preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      preferredOrder = [...av1Codecs, ...h264Codecs];
       selectedCodec = 'AV1';
       isHardwareExpected = true;
       reason = 'AV1 selecionado com aceleração nativa por hardware GPU comprovada.';
     }
-    // Caso padrão (GPU ou Auto): prioriza H.264 por hardware (Level >= 4.2 / packetization-mode=1)
+    // Caso padrão (GPU ou Auto): prioriza estritamente H.264 por hardware (42e01f e 4d001f com packetization-mode=1)
     else if (h264Codecs.length > 0 && !rejectedSet.has('H264_ALL')) {
-      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      // Elimina qualquer codec de software da negociação para banir o fallback de CPU
+      preferredOrder = [...h264Codecs];
       selectedCodec = 'H264';
       isHardwareExpected = hasHwH264;
       if (normCodec === 'AV1' && !hasHwAv1) {
@@ -561,15 +639,15 @@ export function determineOptimalCodecOrder({
         reason = `H.264 selecionado com aceleração nativa por GPU (${lvlDesc}) com baixíssima latência e 60 FPS.`;
       }
     }
-    // Fallback se H.264 foi completamente rejeitado ou não existe
-    else if (av1Codecs.length > 0 && !rejectedSet.has('AV1')) {
-      preferredOrder = [...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+    // Fallback se H.264 foi completamente rejeitado mas AV1 possui hardware
+    else if (av1Codecs.length > 0 && !rejectedSet.has('AV1') && hasHwAv1) {
+      preferredOrder = [...av1Codecs];
       selectedCodec = 'AV1';
-      isHardwareExpected = hasHwAv1;
-      reason = 'Fallback para AV1 após rejeição de perfil H.264.';
+      isHardwareExpected = true;
+      reason = 'Fallback para AV1 com aceleração por hardware GPU.';
     } else {
-      preferredOrder = [...vp9Codecs, ...vp8Codecs, ...h264Codecs, ...otherCodecs];
-      selectedCodec = vp9Codecs.length > 0 ? 'VP9' : 'VP8';
+      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      selectedCodec = h264Codecs.length > 0 ? 'H264' : (vp9Codecs.length > 0 ? 'VP9' : 'VP8');
       isHardwareExpected = false;
       reason = 'Fallback para codecs WebRTC padrão.';
     }

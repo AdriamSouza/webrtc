@@ -285,6 +285,38 @@ describe('5. Telemetria e Comprovação Real do Encoder', () => {
     assert.equal(analysis.isHardware, false);
     assert.equal(analysis.isSoftware, false);
   });
+
+  test('Regra de ouro física: avgEncodeTimeMs <= 12.0 ms deve forçar GPU Hardware mesmo com string OpenH264', () => {
+    const analysis = analyzeEncoderImplementation(
+      'OpenH264',
+      'H264',
+      null,
+      { framesEncoded: 120, bytesSent: 500000, framesDelta: 60, avgEncodeTimeMs: 4.91, cpuUsagePercent: 12.0 }
+    );
+
+    assert.equal(analysis.category, 'hardware');
+    assert.equal(analysis.isHardware, true);
+    assert.equal(analysis.isSoftware, false);
+    assert.equal(analysis.state, 'hardware_confirmed');
+    assert.match(analysis.label, /GPU Hardware ⚡/);
+    assert.match(analysis.evidence, /Tempo real de codificação ultrarrápido/);
+  });
+
+  test('Validação de CPU: se cpuUsagePercent > 25.0%, deve declarar obrigatoriamente software OpenH264 na CPU', () => {
+    const analysis = analyzeEncoderImplementation(
+      'ExternalEncoder (MediaFoundation)',
+      'H264',
+      true,
+      { framesEncoded: 120, bytesSent: 500000, framesDelta: 60, avgEncodeTimeMs: 4.91, cpuUsagePercent: 28.5 }
+    );
+
+    assert.equal(analysis.category, 'software');
+    assert.equal(analysis.isHardware, false);
+    assert.equal(analysis.isSoftware, true);
+    assert.equal(analysis.state, 'software_confirmed');
+    assert.match(analysis.label, /OpenH264 na CPU ⚠️/);
+    assert.match(analysis.evidence, /Uso elevado de CPU do processo/);
+  });
 });
 
 describe('6. Controle Adaptativo de Qualidade com Histerese e Proteção de CPU', () => {
@@ -421,7 +453,7 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     assert.equal(linkFromDesktop, 'https://hyperstream-g9gz.onrender.com/?room=SALA-TESTE-123&pin=4321');
   });
 
-  test('Deve ordenar estritamente os 7 perfis H.264 reais do Chromium priorizando 42e01f e 4d001f e rebaixando 42001f e 640032', () => {
+  test('Deve filtrar estritamente os 7 perfis H.264 banindo 42001f, 640032 e packetization-mode=0, deixando SOMENTE 42e01f e 4d001f (packetization-mode=1)', () => {
     const chromium7Profiles = [
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f' },
@@ -445,24 +477,31 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     });
 
     const h264InOrder = result.preferredOrder.filter(c => c.mimeType === 'video/H264');
-    // 1º lugar: 42e01f com packetization-mode=1
+    assert.equal(h264InOrder.length, 2, 'Devem restar estritamente apenas os 2 perfis de hardware confirmados');
     assert.ok(h264InOrder[0].sdpFmtpLine.includes('profile-level-id=42e01f'), '1º lugar deve ser 42e01f (Constrained Baseline)');
     assert.ok(h264InOrder[0].sdpFmtpLine.includes('packetization-mode=1'));
-
-    // 2º lugar: 4d001f com packetization-mode=1
     assert.ok(h264InOrder[1].sdpFmtpLine.includes('profile-level-id=4d001f'), '2º lugar deve ser 4d001f (Main Profile)');
     assert.ok(h264InOrder[1].sdpFmtpLine.includes('packetization-mode=1'));
 
-    // 3º lugar: 640032 com packetization-mode=1
-    assert.ok(h264InOrder[2].sdpFmtpLine.includes('profile-level-id=640032'), '3º lugar deve ser 640032 (High Profile)');
+    // Verifica que 42001f, 640032 e packetization-mode=0 foram totalmente eliminados
+    assert.ok(!result.preferredOrder.some(c => (c.sdpFmtpLine || '').includes('packetization-mode=0')), 'Nenhum perfil com packetization-mode=0 deve existir');
+    assert.ok(!result.preferredOrder.some(c => (c.sdpFmtpLine || '').includes('42001f')), '42001f deve ser totalmente banido');
+    assert.ok(!result.preferredOrder.some(c => (c.sdpFmtpLine || '').includes('640032')), '640032 deve ser totalmente banido');
+  });
 
-    // 4º lugar: 42001f com packetization-mode=1 (penalizado)
-    assert.ok(h264InOrder[3].sdpFmtpLine.includes('profile-level-id=42001f'), '4º lugar deve ser 42001f (Baseline unconstrained)');
-
-    // Posições 4, 5 e 6 devem ser os codecs com packetization-mode=0
-    for (let i = 4; i < 7; i++) {
-      assert.ok(h264InOrder[i].sdpFmtpLine.includes('packetization-mode=0'), 'Codecs com packetization-mode=0 devem ser penalizados para o final');
-    }
+  test('Deve banir completamente qualquer codec OpenH264 em determineOptimalCodecOrder', () => {
+    const listWithOpenH264 = [
+      { mimeType: 'video/H264', implementation: 'OpenH264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' }
+    ];
+    const caps = evaluateCodecCapabilities({ description: 'AMD Radeon RX 7600', vendor: 'AMD' }, { video_encode: 'enabled' });
+    const result = determineOptimalCodecOrder({
+      preference: 'gpu',
+      preferredCodec: 'H264',
+      availableCodecs: listWithOpenH264,
+      capabilities: caps
+    });
+    assert.ok(!result.preferredOrder.some(c => (c.implementation || '').includes('OpenH264')));
   });
 
   test('mungeSdpBandwidth deve garantir que 42e01f precede 42001f no m=video mesmo se 42001f vier antes no SDP bruto', () => {

@@ -1051,7 +1051,11 @@ export class QualityController {
                     degradationPreference: curParams.degradationPreference || 'maintain-framerate',
                     timestamp: Date.now()
                   };
-                  if (!enc.maxBitrate || (peerEntry.viewerState === 'active' && enc.maxBitrate < viewerConfig.maxBitrate)) {
+                  if (
+                    !enc.maxBitrate ||
+                    !enc.maxFramerate ||
+                    (peerEntry.viewerState === 'active' && (enc.maxBitrate < viewerConfig.maxBitrate || enc.maxFramerate < viewerConfig.maxFramerate))
+                  ) {
                     senderNeedsReapply = true;
                   }
                 } else {

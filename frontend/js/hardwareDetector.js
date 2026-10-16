@@ -524,8 +524,18 @@ export function determineOptimalCodecOrder({
     return m.includes('rtx') || m.includes('red') || m.includes('ulpfec') || m.includes('flexfec');
   };
 
+  // Grupos de reordenação estrita (REORDENA sem remover nenhum codec do getCapabilities):
+  // 1. H.264 com packetization-mode=1 e profile-level-id iniciando em 42e01f (ou 42e0)
+  // 2. H.264 packetization-mode=1 4d001f (ou 4d00)
+  // 3. demais H.264 packetization-mode=1 (exceto 42001f e 640032)
+  // 4. VP9 / AV1 / VP8 conforme preferência do usuário
+  // 5. H.264 packetization-mode=0, 42001f e 640032 por último
+  // 6. Entradas rtx, red, ulpfec na lista final
+  const h264Tier1_42e01f = [];
+  const h264Tier2_4d001f = [];
+  const h264Tier3_otherPm1 = [];
+  const h264Tier5_fallback = [];
   const av1Codecs = [];
-  const h264Codecs = [];
   const vp9Codecs = [];
   const vp8Codecs = [];
   const helperCodecs = [];
@@ -533,27 +543,30 @@ export function determineOptimalCodecOrder({
 
   for (const c of availableCodecs) {
     const mime = (c.mimeType || '').toLowerCase();
-    const fullDesc = `${c.mimeType || ''} ${c.sdpFmtpLine || ''} ${c.implementation || ''}`.toLowerCase();
-
-    // BANIMENTO TOTAL DO OPENH264 quando a preferência for GPU ou Auto
-    if (normPref !== 'cpu' && fullDesc.includes('openh264')) {
-      continue;
-    }
+    const fmtp = (c.sdpFmtpLine || '').toLowerCase();
 
     if (isHelperCodec(mime)) {
       helperCodecs.push(c);
     } else if (mime === 'video/av1' || mime === 'video/av01') {
       av1Codecs.push(c);
     } else if (mime === 'video/h264') {
-      if (normPref !== 'cpu') {
-        // REMOVA TOTALMENTE da lista permitida de setCodecPreferences qualquer perfil H.264
-        // que use packetization-mode=0, bem como o perfil unconstrained 42001f e o High Profile 640032.
-        // Deixe na lista de prioridade absoluta SOMENTE 42e01f (packetization-mode=1) e 4d001f (packetization-mode=1).
-        if (!isAllowedHardwareH264Profile(c)) {
-          continue;
-        }
+      const isMode0 = fmtp.includes('packetization-mode=0');
+      const isMode1 = fmtp.includes('packetization-mode=1') || !isMode0;
+      const pidMatch = fmtp.match(/profile-level-id=([0-9a-f]{6})/i);
+      const pid = pidMatch ? pidMatch[1].toLowerCase() : '';
+
+      const is42001fOr640032 = pid === '42001f' || pid === '640032' || pid.startsWith('4200');
+      const isOpenH264Tagged = `${c.implementation || ''}`.toLowerCase().includes('openh264');
+
+      if (!isMode1 || isMode0 || is42001fOr640032 || isOpenH264Tagged) {
+        h264Tier5_fallback.push(c);
+      } else if (pid.startsWith('42e01f') || pid.startsWith('42e0')) {
+        h264Tier1_42e01f.push(c);
+      } else if (pid.startsWith('4d001f') || pid.startsWith('4d00')) {
+        h264Tier2_4d001f.push(c);
+      } else {
+        h264Tier3_otherPm1.push(c);
       }
-      h264Codecs.push(c);
     } else if (mime === 'video/vp9') {
       vp9Codecs.push(c);
     } else if (mime === 'video/vp8') {
@@ -563,25 +576,38 @@ export function determineOptimalCodecOrder({
     }
   }
 
-  // Se nenhum perfil válido restou no ambiente mas havia H.264 disponível, força explicitamente 42e01f (packetization-mode=1)
-  if (normPref !== 'cpu' && h264Codecs.length === 0 && availableCodecs.some(c => (c.mimeType || '').toLowerCase().includes('h264'))) {
-    h264Codecs.push({
-      mimeType: 'video/H264',
-      clockRate: 90000,
-      sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f'
-    });
-  }
-
-  // Ordenação prioritária dos codecs H.264 para aceleração por GPU (MediaFoundation MFT):
-  // 1º lugar: 42e01f (Constrained Baseline) -> score 10
-  // 2º lugar: 4d001f (Main Profile) -> score 20
   const scoreH264 = (c) => {
     const fmtp = (c.sdpFmtpLine || '').toLowerCase();
     if (rejectedSet.has(c.sdpFmtpLine) || rejectedSet.has(fmtp)) return 9999;
     return scoreH264Candidate(c, hardwareProbe);
   };
 
-  h264Codecs.sort((a, b) => scoreH264(a) - scoreH264(b));
+  h264Tier1_42e01f.sort((a, b) => scoreH264(a) - scoreH264(b));
+  h264Tier2_4d001f.sort((a, b) => scoreH264(a) - scoreH264(b));
+  h264Tier3_otherPm1.sort((a, b) => scoreH264(a) - scoreH264(b));
+  h264Tier5_fallback.sort((a, b) => scoreH264(a) - scoreH264(b));
+
+  const h264PrimaryOrdered = [
+    ...h264Tier1_42e01f,
+    ...h264Tier2_4d001f,
+    ...h264Tier3_otherPm1
+  ];
+  const allH264Ordered = [
+    ...h264PrimaryOrdered,
+    ...h264Tier5_fallback
+  ];
+
+  // Ordem de VP9 / AV1 / VP8 conforme preferência do usuário
+  let nonH264Ordered = [];
+  if (normCodec === 'VP9') {
+    nonH264Ordered = [...vp9Codecs, ...av1Codecs, ...vp8Codecs, ...otherCodecs];
+  } else if (normCodec === 'AV1') {
+    nonH264Ordered = [...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+  } else if (normCodec === 'VP8') {
+    nonH264Ordered = [...vp8Codecs, ...vp9Codecs, ...av1Codecs, ...otherCodecs];
+  } else {
+    nonH264Ordered = [...vp9Codecs, ...av1Codecs, ...vp8Codecs, ...otherCodecs];
+  }
 
   let preferredOrder = [];
   let selectedCodec = 'H264';
@@ -595,37 +621,39 @@ export function determineOptimalCodecOrder({
   // 1. MODO CPU (Software explícito solicitado pelo usuário)
   if (normPref === 'cpu') {
     if (normCodec === 'AV1' && av1Codecs.length > 0) {
-      preferredOrder = [...av1Codecs, ...h264Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      preferredOrder = [...av1Codecs, ...h264PrimaryOrdered, ...vp9Codecs, ...vp8Codecs, ...otherCodecs, ...h264Tier5_fallback];
       selectedCodec = 'AV1';
       reason = 'Modo CPU selecionado com AV1: codificação executada pela biblioteca libaom.';
     } else if (normCodec === 'VP9' && vp9Codecs.length > 0) {
-      preferredOrder = [...vp9Codecs, ...av1Codecs, ...h264Codecs, ...vp8Codecs, ...otherCodecs];
+      preferredOrder = [...vp9Codecs, ...av1Codecs, ...h264PrimaryOrdered, ...vp8Codecs, ...otherCodecs, ...h264Tier5_fallback];
       selectedCodec = 'VP9';
       reason = 'Modo CPU selecionado com VP9: codificação executada pela biblioteca libvpx.';
     } else if (normCodec === 'VP8' && vp8Codecs.length > 0) {
-      preferredOrder = [...vp8Codecs, ...h264Codecs, ...av1Codecs, ...otherCodecs];
+      preferredOrder = [...vp8Codecs, ...h264PrimaryOrdered, ...av1Codecs, ...vp9Codecs, ...otherCodecs, ...h264Tier5_fallback];
       selectedCodec = 'VP8';
       reason = 'Modo CPU selecionado com VP8.';
     } else {
-      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
+      preferredOrder = [...h264PrimaryOrdered, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs, ...h264Tier5_fallback];
       selectedCodec = 'H264';
       reason = 'Modo CPU selecionado: codificação por software.';
     }
     isHardwareExpected = false;
   }
-  // 2. MODO GPU OU AUTOMÁTICO (Prioriza Aceleração por Hardware)
+  // 2. MODO GPU OU AUTOMÁTICO (Prioriza Aceleração por Hardware reordenando sem remover)
   else {
-    // Se AV1 foi explicitamente pedido e possui hardware comprovado na sondagem
     if (normCodec === 'AV1' && hasHwAv1 && av1Codecs.length > 0 && !rejectedSet.has('AV1')) {
-      preferredOrder = [...av1Codecs, ...h264Codecs];
+      preferredOrder = [...av1Codecs, ...h264PrimaryOrdered, ...vp9Codecs, ...vp8Codecs, ...otherCodecs, ...h264Tier5_fallback];
       selectedCodec = 'AV1';
       isHardwareExpected = true;
       reason = 'AV1 selecionado com aceleração nativa por hardware GPU comprovada.';
-    }
-    // Caso padrão (GPU ou Auto): prioriza estritamente H.264 por hardware (42e01f e 4d001f com packetization-mode=1)
-    else if (h264Codecs.length > 0 && !rejectedSet.has('H264_ALL')) {
-      // Elimina qualquer codec de software da negociação para banir o fallback de CPU
-      preferredOrder = [...h264Codecs];
+    } else if (allH264Ordered.length > 0 && !rejectedSet.has('H264_ALL')) {
+      preferredOrder = [
+        ...h264Tier1_42e01f,
+        ...h264Tier2_4d001f,
+        ...h264Tier3_otherPm1,
+        ...nonH264Ordered,
+        ...h264Tier5_fallback
+      ];
       selectedCodec = 'H264';
       isHardwareExpected = hasHwH264;
       if (normCodec === 'AV1' && !hasHwAv1) {
@@ -633,30 +661,27 @@ export function determineOptimalCodecOrder({
       } else if (!hasHwH264) {
         reason = 'Automático: codec padrão WebRTC do sistema (aceleração por GPU não detectada).';
       } else {
-        const topFmtp = h264Codecs[0]?.sdpFmtpLine || '';
+        const topFmtp = allH264Ordered[0]?.sdpFmtpLine || '';
         const parsed = parseH264ProfileLevel(topFmtp);
         const lvlDesc = parsed ? `Level 0x${parsed.levelHex} (${parsed.isLevel42Plus ? '>=4.2 1080p60/4K' : (parsed.hasAsymmetry ? 'com assimetria SDP' : 'MFT')})` : 'GPU Hardware';
         reason = `H.264 selecionado com aceleração nativa por GPU (${lvlDesc}) com baixíssima latência e 60 FPS.`;
       }
-    }
-    // Fallback se H.264 foi completamente rejeitado mas AV1 possui hardware
-    else if (av1Codecs.length > 0 && !rejectedSet.has('AV1') && hasHwAv1) {
-      preferredOrder = [...av1Codecs];
+    } else if (av1Codecs.length > 0 && !rejectedSet.has('AV1') && hasHwAv1) {
+      preferredOrder = [...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs, ...allH264Ordered];
       selectedCodec = 'AV1';
       isHardwareExpected = true;
       reason = 'Fallback para AV1 com aceleração por hardware GPU.';
     } else {
-      preferredOrder = [...h264Codecs, ...av1Codecs, ...vp9Codecs, ...vp8Codecs, ...otherCodecs];
-      selectedCodec = h264Codecs.length > 0 ? 'H264' : (vp9Codecs.length > 0 ? 'VP9' : 'VP8');
+      preferredOrder = [...h264PrimaryOrdered, ...nonH264Ordered, ...h264Tier5_fallback];
+      selectedCodec = allH264Ordered.length > 0 ? 'H264' : (vp9Codecs.length > 0 ? 'VP9' : 'VP8');
       isHardwareExpected = false;
       reason = 'Fallback para codecs WebRTC padrão.';
     }
   }
 
-  // Anexa codecs auxiliares (rtx, red, ulpfec) no final para manter suporte pleno a retransmissão e FEC
+  // 6. Mantém as entradas rtx, red, ulpfec na lista final (necessárias para retransmissão)
   preferredOrder = [...preferredOrder, ...helperCodecs];
 
-  // Garante fallback se a lista filtrada estiver vazia
   if (preferredOrder.length === 0 && availableCodecs.length > 0) {
     preferredOrder = [...availableCodecs];
   }

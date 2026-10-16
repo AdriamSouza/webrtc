@@ -28,23 +28,17 @@ app.commandLine.appendSwitch('enable-features', [
   'MediaFoundationVideoEncode',
   'MediaFoundationD3D11VideoCapture',
   'WindowsGraphicsCapture',
-  'WebRtcUseGpuMemoryBufferVideoFrames',
-  'AutogenMediaFoundationVideoEncode',
-  'ZeroCopyTabCapture'
+  'WebRtcUseGpuMemoryBufferVideoFrames'
 ].join(','));
-
-// 2. Flags críticas para desbloquear codificação por hardware (MediaFoundation / AMD AMF / D3D11) no Windows
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('force-high-performance-gpu');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
-app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
-app.commandLine.appendSwitch('force-high-performance-gpu');
 
 // 3. Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -447,6 +441,41 @@ ipcMain.handle('desktop:open-external', async (event, url) => {
     return true;
   }
   return false;
+});
+
+// IPC: Abrir janela interna chrome://gpu (1100x800) reutilizando instância se já estiver aberta
+let chromeGpuWindow = null;
+ipcMain.handle('desktop:open-chrome-gpu', async () => {
+  try {
+    if (chromeGpuWindow && !chromeGpuWindow.isDestroyed()) {
+      if (chromeGpuWindow.isMinimized()) chromeGpuWindow.restore();
+      chromeGpuWindow.show();
+      chromeGpuWindow.focus();
+      return { success: true, reused: true };
+    }
+
+    chromeGpuWindow = new BrowserWindow({
+      width: 1100,
+      height: 800,
+      title: 'chrome://gpu — Diagnóstico de GPU do Chromium',
+      backgroundColor: '#09090b',
+      autoHideMenuBar: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+
+    chromeGpuWindow.on('closed', () => {
+      chromeGpuWindow = null;
+    });
+
+    await chromeGpuWindow.loadURL('chrome://gpu');
+    return { success: true, reused: false };
+  } catch (err) {
+    console.error('[Desktop Main] Erro ao abrir chrome://gpu:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 // IPC: Obter versão instalada do aplicativo Desktop

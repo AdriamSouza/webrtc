@@ -115,6 +115,7 @@ const lightboxAuthor = document.getElementById('lightboxAuthor');
 const btnCloseLightbox = document.getElementById('btnCloseLightbox');
 const participantsList = document.getElementById('participantsList');
 const tabUserCount = document.getElementById('tabUserCount');
+const tabStreamCount = document.getElementById('tabStreamCount');
 
 // Elementos do DOM - HUD Telemetria
 const hudFps = document.getElementById('hudFps');
@@ -2026,7 +2027,7 @@ async function renderDiagnosticsData() {
           if (Array.isArray(gpuDiag.driverBugWorkarounds) && gpuDiag.driverBugWorkarounds.length > 0) {
             diagGpuWorkarounds.innerHTML = `<span style="color: #fbbf24; font-weight: 600;">Workarounds ativos:</span> ${escapeHtml(gpuDiag.driverBugWorkarounds.join(', '))}`;
           } else {
-            diagGpuWorkarounds.innerHTML = '<span style="color: #34d399; font-weight: 600;">Nenhum workaround ativo (disable-gpu-driver-bug-workarounds ativo ✅)</span>';
+            diagGpuWorkarounds.innerHTML = '<span style="color: #34d399; font-weight: 600;">Nenhum workaround bloqueador reportado pelo processo GPU</span>';
           }
         }
 
@@ -2102,9 +2103,9 @@ async function renderDiagnosticsData() {
           } else if (parsed.fullPid.startsWith('4d00')) {
             profileTag = ' [Main Profile - GPU MFT ⚡ 1080p60 OK]';
           } else if (parsed.fullPid.startsWith('6400')) {
-            profileTag = ' [High Profile - fallback OpenH264]';
+            profileTag = ' [High Profile - último na ordem]';
           } else if (parsed.fullPid.startsWith('4200')) {
-            profileTag = ' [Baseline unconstrained - OpenH264 CPU ⚠️]';
+            profileTag = ' [Baseline unconstrained - último na ordem]';
           }
         }
         return `[${i + 1}] ${c.mimeType} | "${c.sdpFmtpLine || ''}"${profileTag}`;
@@ -2117,28 +2118,52 @@ async function renderDiagnosticsData() {
   const diagMediaCapabilitiesProbe = document.getElementById('diagMediaCapabilitiesProbe');
   if (diagMediaCapabilitiesProbe) {
     const probe = webrtc.hardwareProbe || (await webrtc.probeHardware().catch(() => null));
+    const wcProbe = gpuEncoderEngine.lastProbeResult || (await gpuEncoderEngine.probeHardware().catch(() => null));
+
+    let htmlParts = [];
+
+    htmlParts.push(
+      `<div style="margin-bottom: 6px; padding: 6px 8px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 4px; color: #fde68a; font-size: 0.7rem;">` +
+      `⚠️ <strong>Aviso Técnico:</strong> <code>VideoEncoder.isConfigSupported</code> devolve de volta o <code>hardwareAcceleration</code> que foi passado. Portanto, <code>supported: true</code> por si só <strong>NÃO prova aceleração por hardware</strong> — a prova real é o Benchmark na Seção 4 (tempo de encode e fila) e o <code>chrome://gpu</code>.` +
+      `</div>`
+    );
+
     if (probe && Array.isArray(probe.probedCodecs)) {
       const h264Probed = probe.probedCodecs.filter(p => (p.mimeType || '').toLowerCase().includes('h264'));
       if (h264Probed.length > 0) {
-        diagMediaCapabilitiesProbe.innerHTML = h264Probed.map((p, idx) => {
-          const isHw = p.powerEfficient === true || p.isHwConfirmed;
-          const badge = isHw
-            ? '<span class="diag-badge-hw" style="font-size: 0.7rem; padding: 2px 6px;">⚡ GPU (powerEfficient: true)</span>'
-            : '<span class="diag-badge-sw" style="font-size: 0.7rem; padding: 2px 6px;">⚠️ CPU (powerEfficient: false)</span>';
+        htmlParts.push(`<div style="margin: 4px 0; font-weight: 600; color: #e2e8f0;">A) navigator.mediaCapabilities.encodingInfo (1080p60):</div>`);
+        htmlParts.push(h264Probed.map((p, idx) => {
+          const isSup = p.supported !== false;
+          const isPe = p.powerEfficient === true;
+          const badge = isPe
+            ? `<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">supported: ${isSup} • powerEfficient: true</span>`
+            : `<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">supported: ${isSup} • powerEfficient: false</span>`;
           const fmtp = p.sdpFmtpLine || 'default';
-          return `<div style="margin-bottom: 5px; padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace;">` +
+          return `<div style="margin-bottom: 4px; padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace;">` +
                  `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">` +
                  `<strong style="color: #f1f5f9;">[${idx + 1}] ${escapeHtml(p.mimeType)}</strong> ${badge}` +
                  `</div>` +
                  `<div style="font-size: 0.68rem; color: #94a3b8; word-break: break-all;">${escapeHtml(fmtp)}</div>` +
                  `</div>`;
-        }).join('');
-      } else {
-        diagMediaCapabilitiesProbe.textContent = 'Nenhum perfil H.264 encontrado na sondagem de hardware.';
+        }).join(''));
       }
-    } else {
-      diagMediaCapabilitiesProbe.textContent = 'Sondagem de hardware em andamento no motor Chromium...';
     }
+
+    if (wcProbe && Array.isArray(wcProbe.profiles) && wcProbe.profiles.length > 0) {
+      htmlParts.push(`<div style="margin: 8px 0 4px 0; font-weight: 600; color: #38bdf8;">B) WebCodecs VideoEncoder.isConfigSupported (Candidatos):</div>`);
+      htmlParts.push(wcProbe.profiles.map((p, idx) => {
+        const peStr = p.powerEfficient === null || p.powerEfficient === undefined ? 'N/A' : String(p.powerEfficient);
+        const badge = p.supported
+          ? `<span class="diag-badge-neutral" style="font-size: 0.68rem; padding: 1px 6px;">supported: true • powerEfficient: ${peStr} (${escapeHtml(p.hardwareAcceleration)})</span>`
+          : `<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">supported: false • powerEfficient: ${peStr}${p.error ? ' (' + escapeHtml(p.error) + ')' : ''}</span>`;
+        return `<div style="margin-bottom: 4px; padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace; display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap;">` +
+               `<span><strong style="color: #f8fafc;">[${idx + 1}] ${escapeHtml(p.codec)}</strong> — <span style="color: #94a3b8;">${escapeHtml(p.label)} (bitrateMode: ${escapeHtml(p.bitrateMode || 'omitido')})</span></span>` +
+               `${badge}` +
+               `</div>`;
+      }).join(''));
+    }
+
+    diagMediaCapabilitiesProbe.innerHTML = htmlParts.join('');
   }
 
   // Emite relatório detalhado no console do DevTools a cada 15 segundos ou na primeira abertura
@@ -2362,30 +2387,60 @@ async function handleTestGpuWebCodecs() {
     btn.textContent = '⏳ Testando Motor GPU WebCodecs...';
   }
 
+  const renderAttemptsList = (attempts = []) => {
+    if (!Array.isArray(attempts) || attempts.length === 0) {
+      return '<div style="margin-top: 6px; color: #34d399; font-size: 0.72rem;">✅ Nenhuma tentativa falhou (o 1º candidato funcionou de imediato).</div>';
+    }
+    const rows = attempts.map((a, idx) => {
+      const candDesc = a.candidato || (a.candidate
+        ? `${a.candidate.codec} (${a.candidate.hardwareAcceleration}, bitrateMode=${a.candidate.bitrateMode || 'omitido'}, ${a.candidate.width}x${a.candidate.height})`
+        : `Candidato #${idx + 1}`);
+      const errDesc = a.error || a.erro || 'Erro desconhecido';
+      return `
+        <div style="padding: 4px 8px; margin-bottom: 3px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 4px; font-family: monospace; font-size: 0.7rem;">
+          <div style="color: #fca5a5; font-weight: 600;">Tentativa #${idx + 1}: ${escapeHtml(candDesc)}</div>
+          <div style="color: #f87171;">↳ Erro: ${escapeHtml(errDesc)}</div>
+        </div>
+      `;
+    }).join('');
+    return `
+      <div style="margin-top: 8px;">
+        <div style="font-weight: 600; color: #fca5a5; margin-bottom: 4px; font-size: 0.73rem;">
+          ⚠️ Tentativas anteriores que falharam (${attempts.length}):
+        </div>
+        ${rows}
+      </div>
+    `;
+  };
+
   try {
-    probeListEl.innerHTML = '<span style="color: #38bdf8;">Sondando VideoEncoder.isConfigSupported (hardwareAcceleration: "prefer-hardware", Level 4.2)...</span>';
+    probeListEl.innerHTML = '<span style="color: #38bdf8;">Sondando candidatos via VideoEncoder.isConfigSupported...</span>';
     const probeRes = await gpuEncoderEngine.probeHardware();
 
-    if (!probeRes.supported) {
+    if (!probeRes.webCodecsAvailable && !probeRes.supported) {
       probeListEl.innerHTML = `<span style="color: #ef4444; font-weight: 600;">❌ API WebCodecs não disponível neste ambiente: ${escapeHtml(probeRes.reason || '')}</span>`;
       return;
     }
 
-    const profilesHtml = (probeRes.profiles || []).map(p => {
+    const profilesHtml = (probeRes.profiles || []).map((p, idx) => {
+      const peStr = p.powerEfficient === null || p.powerEfficient === undefined ? 'N/A' : String(p.powerEfficient);
       const badge = p.supported
-        ? '<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">⚡ Suportado (prefer-hardware)</span>'
-        : '<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">❌ Não suportado</span>';
+        ? `<span class="diag-badge-neutral" style="font-size: 0.68rem; padding: 1px 6px;">supported: true • powerEfficient: ${peStr}</span>`
+        : `<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">supported: false${p.error ? ' (' + escapeHtml(p.error) + ')' : ''}</span>`;
       return `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; margin-bottom: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace;">
-          <span><strong style="color: #f8fafc;">${escapeHtml(p.codec)}</strong> — <span style="color: #94a3b8;">${escapeHtml(p.label)}</span></span>
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; margin-bottom: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace; gap: 6px; flex-wrap: wrap;">
+          <span><strong style="color: #f8fafc;">#${idx + 1} ${escapeHtml(p.codec)}</strong> — <span style="color: #94a3b8;">${escapeHtml(p.label)} (bitrateMode: ${escapeHtml(p.bitrateMode || 'omitido')})</span></span>
           ${badge}
         </div>
       `;
     }).join('');
 
     probeListEl.innerHTML = `
+      <div style="margin-bottom: 4px; font-size: 0.7rem; color: #fde68a;">
+        ℹ️ <em>${escapeHtml(probeRes.probeDisclaimer || 'isConfigSupported apenas valida a configuração; o teste real ocorre no benchmark abaixo.')}</em>
+      </div>
       <div style="margin-bottom: 6px; font-weight: 600; color: #e2e8f0;">
-        1. Perfis WebCodecs 1080p @ 60 FPS (8 Mbps • Annex-B • Level 4.2):
+        1. Sondagem de Candidatos WebCodecs (isConfigSupported):
       </div>
       ${profilesHtml}
     `;
@@ -2396,58 +2451,82 @@ async function handleTestGpuWebCodecs() {
       if (!screenTrack || screenTrack.readyState !== 'live') {
         benchBoxEl.innerHTML = `
           <div style="color: #fbbf24; font-weight: 600;">
-            ℹ️ Inicie o Compartilhamento de Tela (60 FPS) e clique novamente para rodar o Benchmark Real de 4 segundos na GPU RX 7600 via <code>MediaStreamTrackProcessor</code> + <code>VideoEncoder</code>!
+            ℹ️ Inicie o Compartilhamento de Tela (60 FPS) e clique novamente para rodar o Benchmark Real de 4 segundos na GPU via <code>MediaStreamTrackProcessor</code> + <code>VideoEncoder</code>!
           </div>
         `;
       } else {
         benchBoxEl.innerHTML = `
           <div style="color: #38bdf8; font-weight: 600;">
-            ⚡ Executando Benchmark Real de Encode na GPU (4 segundos) lendo quadros D3D11 da captura de tela ativa...
+            ⚡ Lendo 1º quadro real para extrair resolução e testando candidatos sequencialmente no VideoEncoder (4 segundos)...
           </div>
         `;
         const bench = await gpuEncoderEngine.runBenchmark(screenTrack, 4000);
-        if (!bench.supported) {
-          benchBoxEl.innerHTML = `<div style="color: #ef4444; font-weight: 600;">❌ Falha no Benchmark GPU: ${escapeHtml(bench.error || 'Erro desconhecido')}</div>`;
+        if (!bench.supported || !bench.success) {
+          benchBoxEl.innerHTML = `
+            <div style="color: #ef4444; font-weight: 600; margin-bottom: 6px;">
+              ❌ Todos os candidatos WebCodecs falharam na criação/encode real: ${escapeHtml(bench.error || 'Erro desconhecido')}
+            </div>
+            <div style="font-size: 0.72rem; color: #cbd5e1; margin-bottom: 6px; font-family: monospace;">
+              Resolução Real do Frame: <strong>${bench.frameW || 0}x${bench.frameH || 0}</strong> • Dimensões Testadas no Encoder: <strong>${bench.encodedWidth || 0}x${bench.encodedHeight || 0}</strong>
+            </div>
+            ${renderAttemptsList(bench.attempts)}
+          `;
         } else {
-          const rendererCpu = bench.cpuUsage?.rendererCpuAvg !== null && bench.cpuUsage?.rendererCpuAvg !== undefined
-            ? `${bench.cpuUsage.rendererCpuAvg}%`
+          const rendererCpu = bench.cpuUsage?.rendererPercent !== null && bench.cpuUsage?.rendererPercent !== undefined
+            ? `${bench.cpuUsage.rendererPercent}%`
             : 'N/A';
-          const gpuProcCpu = bench.cpuUsage?.gpuProcessCpuAvg !== null && bench.cpuUsage?.gpuProcessCpuAvg !== undefined
-            ? `${bench.cpuUsage.gpuProcessCpuAvg}%`
+          const gpuProcCpu = bench.cpuUsage?.gpuProcessPercent !== null && bench.cpuUsage?.gpuProcessPercent !== undefined
+            ? `${bench.cpuUsage.gpuProcessPercent}%`
             : 'N/A';
-          const totalAppCpu = bench.cpuUsage?.totalAppCpuAvg !== null && bench.cpuUsage?.totalAppCpuAvg !== undefined
-            ? `${bench.cpuUsage.totalAppCpuAvg}%`
+          const totalAppCpu = bench.cpuUsage?.totalPercent !== null && bench.cpuUsage?.totalPercent !== undefined
+            ? `${bench.cpuUsage.totalPercent}%`
             : 'N/A';
 
+          const statusColor = bench.isHardwareConfirmed ? '#34d399' : (bench.usedNoPreferenceFallback ? '#fbbf24' : '#38bdf8');
+          const statusHeading = bench.isHardwareConfirmed
+            ? '✅ GPU Hardware Confirmado pelo Benchmark Real'
+            : (bench.usedNoPreferenceFallback
+              ? '⚠️ Fallback Diagnóstico (no-preference) Ativo — Codificador Software Provável'
+              : 'ℹ️ Codificação WebCodecs Concluída');
+
           benchBoxEl.innerHTML = `
-            <div style="margin-bottom: 6px; font-weight: 600; color: #34d399;">
-              ✅ Benchmark Real Concluído na GPU (${escapeHtml(bench.codec)} • ${bench.width}x${bench.height} • ${(bench.durationMs / 1000).toFixed(1)}s):
+            <div style="margin-bottom: 8px; font-weight: 600; color: ${statusColor};">
+              ${statusHeading} (${(bench.durationMs / 1000).toFixed(1)}s):
             </div>
-            <div class="diag-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
+            <div class="diag-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
               <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">Taxa Real (fpsEncoded):</span>
-                <strong class="diag-val" style="color: #34d399; font-size: 0.85rem;">${bench.fpsEncoded} FPS (${bench.framesEncoded} qds)</strong>
+                <span class="diag-label" style="font-size: 0.68rem;">Resolução Real (frameW x frameH):</span>
+                <strong class="diag-val" style="color: #f8fafc; font-size: 0.84rem;">${bench.frameW}x${bench.frameH}</strong>
               </div>
               <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">Tempo Médio Hardware:</span>
-                <strong class="diag-val" style="color: #38bdf8; font-size: 0.85rem;">${bench.avgHardwareEncodeTimeMs} ms/quadro</strong>
+                <span class="diag-label" style="font-size: 0.68rem;">Dimensões no Encoder:</span>
+                <strong class="diag-val" style="color: #38bdf8; font-size: 0.84rem;">${bench.encodedWidth}x${bench.encodedHeight}${bench.resolutionScaled ? ' (Reduzido <=1080p)' : ' (Nativo)'}</strong>
               </div>
               <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">Fila Encoder (Queue):</span>
-                <strong class="diag-val" style="color: #e2e8f0; font-size: 0.85rem;">méd: ${bench.encoderQueueSize?.avg ?? bench.encoderQueueSize ?? 0} (máx: ${bench.maxQueueSize ?? bench.encoderQueueSize?.max ?? 0})</strong>
+                <span class="diag-label" style="font-size: 0.68rem;">Candidato Aprovado:</span>
+                <strong class="diag-val" style="color: #34d399; font-size: 0.8rem;">${escapeHtml(bench.codec)} (${escapeHtml(bench.hardwareAcceleration)}, br=${escapeHtml(bench.bitrateMode || 'omitido')})</strong>
               </div>
               <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">CPU Renderer vs GPU Proc:</span>
-                <strong class="diag-val" style="color: #fbbf24; font-size: 0.8rem;">Tab: ${rendererCpu} | GPU: ${gpuProcCpu} (App: ${totalAppCpu})</strong>
+                <span class="diag-label" style="font-size: 0.68rem;">Caiu em no-preference?:</span>
+                <strong class="diag-val" style="color: ${bench.usedNoPreferenceFallback ? '#fbbf24' : '#34d399'}; font-size: 0.82rem;">${bench.usedNoPreferenceFallback ? '⚠️ Sim (no-preference)' : '✅ Não (prefer-hardware)'}</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">FPS &amp; Tempo de Encode:</span>
+                <strong class="diag-val" style="color: #34d399; font-size: 0.84rem;">${bench.fpsEncoded} FPS • ${bench.avgHardwareEncodeTimeMs} ms/frame</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Fila Máx &amp; CPU (Tab/GPU/App):</span>
+                <strong class="diag-val" style="color: #e2e8f0; font-size: 0.78rem;">fila máx: ${bench.maxQueueSize} | CPU: ${rendererCpu} / ${gpuProcCpu} / ${totalAppCpu}</strong>
               </div>
             </div>
+            ${renderAttemptsList(bench.attempts)}
           `;
         }
       }
     }
   } catch (err) {
     console.error('[Diagnostics] Erro ao testar WebCodecs GPU:', err);
-    probeListEl.innerHTML = `<span style="color: #ef4444;">Erro no teste WebCodecs: ${escapeHtml(err?.message || String(err))}</span>`;
+    probeListEl.innerHTML = `<span style="color: #ef4444;">Erro inesperado no teste WebCodecs: ${escapeHtml(err?.message || String(err))}</span>`;
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -2844,6 +2923,7 @@ function setupEventListeners() {
   const btnCloseDiagnostics = document.getElementById('btnCloseDiagnostics');
   const btnCloseDiagnosticsFooter = document.getElementById('btnCloseDiagnosticsFooter');
   const btnTestGpuWebCodecs = document.getElementById('btnTestGpuWebCodecs');
+  const btnOpenChromeGpu = document.getElementById('btnOpenChromeGpu');
   const btnToggleFloatingHud = document.getElementById('btnToggleFloatingHud');
 
   if (btnToggleFloatingHud && telemetryHud) {
@@ -2863,6 +2943,20 @@ function setupEventListeners() {
   }
   if (btnTestGpuWebCodecs) {
     btnTestGpuWebCodecs.addEventListener('click', handleTestGpuWebCodecs);
+  }
+  if (btnOpenChromeGpu) {
+    if (window.desktopAPI && typeof window.desktopAPI.openChromeGpu === 'function') {
+      btnOpenChromeGpu.addEventListener('click', async () => {
+        try {
+          await window.desktopAPI.openChromeGpu();
+        } catch (err) {
+          console.error('[Diagnostics] Erro ao abrir chrome://gpu:', err);
+        }
+      });
+    } else {
+      btnOpenChromeGpu.classList.add('hidden');
+      btnOpenChromeGpu.disabled = true;
+    }
   }
   if (diagnosticsModal) {
     diagnosticsModal.addEventListener('click', (e) => {

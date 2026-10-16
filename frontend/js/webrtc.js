@@ -656,7 +656,7 @@ export class WebRTCManager {
     }
 
     try {
-      // 1. Obtém lista real de codecs de envio com RTCRtpSender.getCapabilities (fallback para Receiver)
+      // 1. Obtém lista real de codecs de envio com RTCRtpSender.getCapabilities('video')
       const capabilities = (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function')
         ? RTCRtpSender.getCapabilities('video')
         : (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function' ? RTCRtpReceiver.getCapabilities('video') : null);
@@ -677,31 +677,14 @@ export class WebRTCManager {
       });
 
       if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
-        // Banimento total e definitivo de OpenH264 e descarte de perfis que forçam software
-        const isCpuMode = (this.encoderPreference || 'gpu') === 'cpu';
-        const finalOrder = optimal.preferredOrder.filter(c => {
-          const desc = `${c.mimeType || ''} ${c.sdpFmtpLine || ''} ${c.implementation || ''}`.toLowerCase();
-          if (desc.includes('openh264')) return false;
-
-          if (!isCpuMode && (c.mimeType || '').toLowerCase() === 'video/h264') {
-            const fmtp = (c.sdpFmtpLine || '').toLowerCase();
-            // REMOVA TOTALMENTE packetization-mode=0, 42001f e 640032
-            if (fmtp.includes('packetization-mode=0')) return false;
-            if (fmtp.includes('profile-level-id=42001f') || fmtp.includes('profile-level-id=640032')) return false;
-            // Somente 42e0 e 4d00 com packetization-mode=1
-            const match = fmtp.match(/profile-level-id=([0-9a-f]{6})/i);
-            const pid = match ? match[1].toLowerCase() : '';
-            if (!pid.startsWith('42e0') && !pid.startsWith('4d00')) return false;
-          }
-          return true;
-        });
-
-        if (finalOrder.length > 0) {
-          transceiver.setCodecPreferences(finalOrder);
-          this.lastPreferredCodecs = finalOrder;
-          const top = finalOrder[0];
-          console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
-        }
+        // Reordena (não remove): 1. 42e01f (pm=1), 2. 4d001f (pm=1), 3. demais H.264 (pm=1),
+        // 4. VP9/AV1/VP8 conforme preferência, 5. packetization-mode=0 / 42001f / 640032 por último,
+        // 6. rtx, red, ulpfec na lista final.
+        const finalOrder = optimal.preferredOrder;
+        transceiver.setCodecPreferences(finalOrder);
+        this.lastPreferredCodecs = finalOrder;
+        const top = finalOrder[0];
+        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
       }
     } catch (err) {
       console.warn('[WebRTC] Não foi possível definir preferência de codecs (usando padrão):', err.message);

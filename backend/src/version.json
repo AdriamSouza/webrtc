@@ -1,7 +1,7 @@
 {
-  "version": "1.4.7",
+  "version": "1.4.8",
   "protocolVersion": 2,
   "minClientProtocolVersion": 2,
-  "gitCommit": "ce5a8b9",
-  "buildDate": "2026-10-16T01:00:33.046Z"
+  "gitCommit": "b5d0d0e",
+  "buildDate": "2026-10-16T02:14:12.152Z"
 }

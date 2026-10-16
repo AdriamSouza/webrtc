@@ -1242,8 +1242,8 @@
           </div>
           <div class="diag-grid">
             <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Perfis H.264 Testados (navigator.mediaCapabilities.encodingInfo — 1080p @ 60 FPS):</span>
-              <div class="diag-val" id="diagMediaCapabilitiesProbe" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 180px; overflow-y: auto; color: #cbd5e1;">Sondando capacidades de aceleração por hardware...</div>
+              <span class="diag-label">Sondagem de Codecs (mediaCapabilities powerEfficient + WebCodecs isConfigSupported — 1080p @ 60 FPS):</span>
+              <div class="diag-val" id="diagMediaCapabilitiesProbe" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 240px; overflow-y: auto; color: #cbd5e1;">Sondando capacidades de aceleração por hardware...</div>
             </div>
             <div class="diag-card" style="grid-column: 1 / -1;">
               <span class="diag-label">Codecs WebRTC RTCRtpSender (H.264 SDP FMTP & Níveis):</span>
@@ -1321,20 +1321,25 @@
           </div>
         </div>
 
-        <!-- SEÇÃO 4: TESTE DE ENCODE WEBCODECS -->
+        <!-- SEÇÃO 4: TESTE WEBCODECS & CHROME://GPU -->
         <div class="diag-section">
           <div class="diag-section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <div>
-              <h4>Seção 4: Teste de Encode WebCodecs</h4>
-              <span class="diag-sublabel">VideoEncoder (hardwareAcceleration: 'prefer-hardware' • avc1.42e02a) + MediaStreamTrackProcessor</span>
+              <h4>Seção 4: Teste WebCodecs &amp; chrome://gpu</h4>
+              <span class="diag-sublabel">VideoEncoder (candidatos progressivos Level 4.2/4.0) + MediaStreamTrackProcessor</span>
             </div>
-            <button type="button" id="btnTestGpuWebCodecs" class="btn btn-primary btn-sm" style="font-weight: 600; padding: 6px 12px;">
-              ⚡ Testar Motor WebCodecs GPU
-            </button>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" id="btnTestGpuWebCodecs" class="btn btn-primary btn-sm" style="font-weight: 600; padding: 6px 12px;">
+                ⚡ Testar Motor WebCodecs GPU
+              </button>
+              <button type="button" id="btnOpenChromeGpu" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 6px 12px;">
+                🔍 Abrir chrome://gpu
+              </button>
+            </div>
           </div>
           <div id="diagWebCodecsResultPanel" style="margin-top: 8px; padding: 10px 12px; background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; font-size: 0.75rem; color: #cbd5e1;">
             <div id="diagWebCodecsProbeList" style="margin-bottom: 6px;">
-              Clique em <strong>"⚡ Testar Motor WebCodecs GPU"</strong> para sondar os perfis Level 4.2 (<code>avc1.42e02a</code> / <code>avc1.4d002a</code>) diretamente no <code>VideoEncoder</code> e, se houver captura de tela ativa, medir o desempenho real de hardware por 4 segundos.
+              Clique em <strong>"⚡ Testar Motor WebCodecs GPU"</strong> para validar cada candidato no <code>VideoEncoder</code> e, se houver captura de tela ativa, medir o desempenho real por candidato (ou use <strong>"🔍 Abrir chrome://gpu"</strong> para inspecionar o processo GPU).
             </div>
             <div id="diagWebCodecsBenchmarkBox" class="hidden" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);"></div>
           </div>

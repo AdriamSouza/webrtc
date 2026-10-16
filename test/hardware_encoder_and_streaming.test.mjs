@@ -459,15 +459,21 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     assert.equal(linkFromDesktop, 'https://hyperstream-g9gz.onrender.com/?room=SALA-TESTE-123&pin=4321');
   });
 
-  test('Deve filtrar estritamente os 7 perfis H.264 banindo 42001f, 640032 e packetization-mode=0, deixando SOMENTE 42e01f e 4d001f (packetization-mode=1)', () => {
-    const chromium7Profiles = [
+  test('Deve REORDENAR (sem remover) os perfis H.264, VP9/AV1/VP8 e auxiliares rtx/red/ulpfec conforme Etapa 3', () => {
+    const chromiumCodecs = [
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f' },
-      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032' }
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032' },
+      { mimeType: 'video/VP9', clockRate: 90000 },
+      { mimeType: 'video/AV1', clockRate: 90000 },
+      { mimeType: 'video/VP8', clockRate: 90000 },
+      { mimeType: 'video/rtx', clockRate: 90000 },
+      { mimeType: 'video/red', clockRate: 90000 },
+      { mimeType: 'video/ulpfec', clockRate: 90000 }
     ];
 
     const caps = evaluateCodecCapabilities(
@@ -478,24 +484,34 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     const result = determineOptimalCodecOrder({
       preference: 'gpu',
       preferredCodec: 'H264',
-      availableCodecs: chromium7Profiles,
+      availableCodecs: chromiumCodecs,
       capabilities: caps
     });
 
-    const h264InOrder = result.preferredOrder.filter(c => c.mimeType === 'video/H264');
-    assert.equal(h264InOrder.length, 2, 'Devem restar estritamente apenas os 2 perfis de hardware confirmados');
-    assert.ok(h264InOrder[0].sdpFmtpLine.includes('profile-level-id=42e01f'), '1º lugar deve ser 42e01f (Constrained Baseline)');
-    assert.ok(h264InOrder[0].sdpFmtpLine.includes('packetization-mode=1'));
-    assert.ok(h264InOrder[1].sdpFmtpLine.includes('profile-level-id=4d001f'), '2º lugar deve ser 4d001f (Main Profile)');
-    assert.ok(h264InOrder[1].sdpFmtpLine.includes('packetization-mode=1'));
+    // Todos os 13 codecs devem continuar presentes (REORDENAR, não remover)
+    assert.equal(result.preferredOrder.length, chromiumCodecs.length);
 
-    // Verifica que 42001f, 640032 e packetization-mode=0 foram totalmente eliminados
-    assert.ok(!result.preferredOrder.some(c => (c.sdpFmtpLine || '').includes('packetization-mode=0')), 'Nenhum perfil com packetization-mode=0 deve existir');
-    assert.ok(!result.preferredOrder.some(c => (c.sdpFmtpLine || '').includes('42001f')), '42001f deve ser totalmente banido');
-    assert.ok(!result.preferredOrder.some(c => (c.sdpFmtpLine || '').includes('640032')), '640032 deve ser totalmente banido');
+    // 1º lugar: H.264 packetization-mode=1 e profile-level-id iniciando em 42e01f
+    assert.ok(result.preferredOrder[0].sdpFmtpLine.includes('profile-level-id=42e01f'));
+    assert.ok(result.preferredOrder[0].sdpFmtpLine.includes('packetization-mode=1'));
+
+    // 2º lugar: H.264 packetization-mode=1 e profile-level-id 4d001f
+    assert.ok(result.preferredOrder[1].sdpFmtpLine.includes('profile-level-id=4d001f'));
+    assert.ok(result.preferredOrder[1].sdpFmtpLine.includes('packetization-mode=1'));
+
+    // VP9 / AV1 / VP8 vêm antes dos H.264 fallback (packetization-mode=0, 42001f, 640032)
+    const idxVp9 = result.preferredOrder.findIndex(c => c.mimeType === 'video/VP9');
+    const idx42001f = result.preferredOrder.findIndex(c => (c.sdpFmtpLine || '').includes('42001f'));
+    const idx640032 = result.preferredOrder.findIndex(c => (c.sdpFmtpLine || '').includes('640032'));
+    assert.ok(idxVp9 < idx42001f, 'VP9 deve vir antes de 42001f');
+    assert.ok(idxVp9 < idx640032, 'VP9 deve vir antes de 640032');
+
+    // rtx, red, ulpfec permanecem no final da lista
+    const lastThreeMimes = result.preferredOrder.slice(-3).map(c => c.mimeType);
+    assert.deepEqual(lastThreeMimes, ['video/rtx', 'video/red', 'video/ulpfec']);
   });
 
-  test('Deve banir completamente qualquer codec OpenH264 em determineOptimalCodecOrder', () => {
+  test('Deve rebaixar qualquer codec marcado com OpenH264 para o final dos codecs de vídeo sem removê-lo', () => {
     const listWithOpenH264 = [
       { mimeType: 'video/H264', implementation: 'OpenH264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' },
       { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' }
@@ -507,7 +523,9 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
       availableCodecs: listWithOpenH264,
       capabilities: caps
     });
-    assert.ok(!result.preferredOrder.some(c => (c.implementation || '').includes('OpenH264')));
+    assert.equal(result.preferredOrder.length, 2);
+    assert.ok(!result.preferredOrder[0].implementation);
+    assert.equal(result.preferredOrder[1].implementation, 'OpenH264');
   });
 
   test('mungeSdpBandwidth deve garantir que 42e01f precede 42001f no m=video mesmo se 42001f vier antes no SDP bruto', () => {
@@ -546,7 +564,7 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
 });
 
 describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEncoderEngine)', () => {
-  test('probeWebCodecsHardware testa avc1.42e02a, avc1.4d002a, avc1.64002a e av01.0.08M.08 com prefer-hardware', async () => {
+  test('probeWebCodecsHardware testa os 7 candidatos em ordem e não declara isHardwareAccelerated=true apenas por supported=true', async () => {
     const origVideoEncoder = globalThis.VideoEncoder;
     const testedConfigs = [];
 
@@ -563,32 +581,40 @@ describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEnco
     try {
       const res = await probeWebCodecsHardware();
       assert.equal(res.supported, true);
-      assert.equal(testedConfigs.length, 4);
+      assert.equal(testedConfigs.length, 7);
+      // 1º candidato: avc1.42e02a, prefer-hardware, annexb, SEM bitrateMode
       assert.equal(testedConfigs[0].codec, 'avc1.42e02a');
       assert.equal(testedConfigs[0].hardwareAcceleration, 'prefer-hardware');
+      assert.equal(testedConfigs[0].bitrateMode, undefined);
       assert.equal(testedConfigs[0].latencyMode, 'realtime');
       assert.equal(testedConfigs[0].width, 1920);
       assert.equal(testedConfigs[0].height, 1080);
       assert.equal(testedConfigs[0].framerate, 60);
       assert.equal(testedConfigs[0].bitrate, 8000000);
       assert.deepEqual(testedConfigs[0].avc, { format: 'annexb' });
+      // Fato técnico #2: isHardwareAccelerated é false no probe até que o benchmark confirme
+      assert.equal(res.profiles[0].isHardwareAccelerated, false);
       assert.equal(res.preferredCodec, 'avc1.42e02a');
     } finally {
       globalThis.VideoEncoder = origVideoEncoder;
     }
   });
 
-  test('runRealGpuEncodeBenchmark codifica VideoFrames com prefer-hardware, força keyframe a cada 120 quadros e fecha frames imediatamente', async () => {
+  test('runRealGpuEncodeBenchmark codifica VideoFrames com prefer-hardware, recupera de Encoder creation error tentando o próximo candidato e fecha todos os frames', async () => {
     const origVideoEncoder = globalThis.VideoEncoder;
     const origProcessor = globalThis.MediaStreamTrackProcessor;
 
     let closedFramesCount = 0;
     let keyFramesCount = 0;
     let configuredWith = null;
+    let encoderInstancesCreated = 0;
 
     globalThis.VideoEncoder = class MockVideoEncoder {
-      constructor({ output }) {
+      constructor({ output, error }) {
+        encoderInstancesCreated++;
+        this._instanceId = encoderInstancesCreated;
         this._output = output;
+        this._error = error;
         this.state = 'unconfigured';
         this.encodeQueueSize = 0;
       }
@@ -600,6 +626,12 @@ describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEnco
         this.state = 'configured';
       }
       encode(frame, opts) {
+        // Simula falha assíncrona "Encoder creation error" no 1º candidato
+        if (this._instanceId === 1) {
+          this.state = 'closed';
+          this._error(new DOMException('Encoder creation error.', 'OperationError'));
+          return;
+        }
         if (opts?.keyFrame) keyFramesCount++;
         this.encodeQueueSize = 1;
         this._output({
@@ -622,13 +654,15 @@ describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEnco
           getReader() {
             return {
               async read() {
-                if (frameIndex >= 130) {
+                if (frameIndex >= 131) {
                   return { done: true, value: undefined };
                 }
                 const idx = frameIndex++;
                 return {
                   done: false,
                   value: {
+                    displayWidth: 1920,
+                    displayHeight: 1080,
                     timestamp: idx * 16666,
                     close() {
                       closedFramesCount++;
@@ -654,14 +688,17 @@ describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEnco
       const result = await engine.runBenchmark(mockTrack, 500);
 
       assert.equal(result.supported, true);
+      assert.equal(result.success, true);
+      assert.equal(result.attempts.length, 1, 'Deve registrar a 1ª tentativa que falhou com Encoder creation error');
+      assert.match(result.attempts[0].error, /Encoder creation error/);
       assert.equal(configuredWith.hardwareAcceleration, 'prefer-hardware');
       assert.equal(configuredWith.latencyMode, 'realtime');
-      assert.equal(configuredWith.bitrateMode, 'constant');
+      assert.equal(configuredWith.bitrateMode, 'variable', '2º candidato aprovado deve usar bitrateMode: variable');
       assert.equal(configuredWith.codec, 'avc1.42e02a');
       assert.equal(result.framesRead, 130);
       assert.equal(result.framesEncoded, 130);
-      assert.equal(closedFramesCount, 130, 'Todos os VideoFrames devem receber frame.close() imediato');
-      assert.equal(keyFramesCount, 2, 'Deve forçar keyframe no quadro 0 e no quadro 120');
+      assert.equal(closedFramesCount, 131, 'Todos os 131 VideoFrames lidos (1 da tentativa falha + 130 do aprovado) devem receber frame.close()');
+      assert.equal(keyFramesCount, 2, 'Deve forçar keyframe no quadro 0 e no quadro 120 do candidato aprovado');
     } finally {
       globalThis.VideoEncoder = origVideoEncoder;
       globalThis.MediaStreamTrackProcessor = origProcessor;

@@ -245,14 +245,7 @@
             <span id="sidebarBtnLabel">Chat</span>
           </button>
 
-          <button id="btnToggleHud" class="btn btn-secondary btn-sm btn-icon-inline" title="Alternar métricas da transmissão">
-            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-            </svg>
-            <span>Telemetria</span>
-          </button>
-
-          <button id="btnDiagnostics" class="btn btn-secondary btn-sm btn-icon-inline" title="Diagnóstico de GPU, Codecs e WebRTC em Tempo Real">
+          <button id="btnDiagnostics" class="btn btn-secondary btn-sm btn-icon-inline" title="Diagnóstico Unificado de GPU, Codecs, Telemetria e WebRTC em Tempo Real">
             <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 20V10"/>
               <path d="M12 20V4"/>
@@ -345,8 +338,12 @@
                   </svg>
                   <span>Sua Prévia</span>
                 </span>
-                <div class="dock-actions">
-                  <button id="btnMinimizeDock" class="dock-btn" title="Minimizar prévias">
+                <div class="dock-actions" style="display: flex; align-items: center; gap: 6px;">
+                  <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; color: #94a3b8; cursor: pointer; user-select: none;" title="Pausa automaticamente a renderização local de 60 FPS ao transmitir tela para economizar CPU/GPU">
+                    <input type="checkbox" id="chkAutoPauseLocalPreview" checked style="accent-color: #38bdf8; cursor: pointer;">
+                    <span>Auto-Pausar</span>
+                  </label>
+                  <button id="btnMinimizeDock" class="dock-btn" title="Minimizar e pausar prévias locais">
                     <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <line x1="5" x2="19" y1="12" y2="12"/>
                     </svg>
@@ -1172,16 +1169,16 @@
             <path d="M12 20V4"/>
             <path d="M6 20v-6"/>
           </svg>
-          <h3>Auditoria & Diagnóstico em Tempo Real</h3>
+          <h3>Diagnóstico Unificado & Telemetria GPU</h3>
         </div>
         <button id="btnCloseDiagnostics" class="btn-icon-close" title="Fechar">&times;</button>
       </div>
 
       <div class="diagnostics-modal-body">
-        <!-- SEÇÃO 1: AMBIENTE, GPU & HARDWARE -->
+        <!-- SEÇÃO 1: STATUS DA GPU & HARDWARE -->
         <div class="diag-section">
           <div class="diag-section-header">
-            <h4>Aceleração de Hardware & GPU</h4>
+            <h4>Seção 1: Status da GPU & Hardware</h4>
             <span id="diagGpuStatusBadge" class="badge">Detectando...</span>
           </div>
           <div class="diag-grid" id="diagSystemGrid">
@@ -1202,7 +1199,7 @@
               <strong class="diag-val" id="diagGpuEncode">Carregando...</strong>
             </div>
             <div class="diag-card">
-              <span class="diag-label">Uso de CPU App:</span>
+              <span class="diag-label">Uso de CPU App (Total):</span>
               <strong class="diag-val" id="diagCpuUsage">---</strong>
             </div>
             <div class="diag-card">
@@ -1210,13 +1207,68 @@
               <strong class="diag-val" id="diagMemoryUsage">---</strong>
             </div>
           </div>
+          <!-- Detalhamento de CPU por Subprocesso (app.getAppMetrics) -->
+          <div style="margin-top: 10px; padding: 10px 12px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span class="diag-label" style="font-size: 0.72rem; color: #94a3b8; font-weight: 600;">Consumo de CPU por Subprocesso (Electron app.getAppMetrics):</span>
+              <span id="diagSubprocessSourceBadge" style="font-size: 0.68rem; color: #64748b;">Tempo Real</span>
+            </div>
+            <div class="diag-grid" id="diagSubprocessCpuGrid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Browser (Main):</span>
+                <strong class="diag-val" id="diagCpuBrowser" style="font-size: 0.8rem; color: #e2e8f0;">---</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">GPU Process:</span>
+                <strong class="diag-val" id="diagCpuGpu" style="font-size: 0.8rem; color: #38bdf8;">---</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Tab (Renderer):</span>
+                <strong class="diag-val" id="diagCpuRenderer" style="font-size: 0.8rem; color: #fbbf24;">---</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Utility (Audio/Video):</span>
+                <strong class="diag-val" id="diagCpuUtility" style="font-size: 0.8rem; color: #a78bfa;">---</strong>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- SEÇÃO 2: TRANSMISSÃO DE SAÍDA (OUTBOUND - HOST) -->
+        <!-- SEÇÃO 2: SONDAGEM DE CODECS (mediaCapabilities) -->
         <div class="diag-section">
           <div class="diag-section-header">
-            <h4>Transmissões Locais de Saída (Outbound Encoders)</h4>
-            <span class="diag-sublabel">Apenas inscritos ativos consomem encoders</span>
+            <h4>Seção 2: Sondagem de Codecs (mediaCapabilities & Perfis MFT)</h4>
+            <span class="diag-sublabel">Confirmação de powerEfficient: true em 1080p @ 60 FPS</span>
+          </div>
+          <div class="diag-grid">
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Perfis H.264 Testados (navigator.mediaCapabilities.encodingInfo — 1080p @ 60 FPS):</span>
+              <div class="diag-val" id="diagMediaCapabilitiesProbe" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 180px; overflow-y: auto; color: #cbd5e1;">Sondando capacidades de aceleração por hardware...</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Codecs WebRTC RTCRtpSender (H.264 SDP FMTP & Níveis):</span>
+              <div class="diag-val" id="diagRtcSenderProfiles" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #a5f3fc;">Consultando...</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Perfis de Hardware Video Encode Registrados no Boot (Chromium):</span>
+              <div class="diag-val" id="diagGpuEncProfiles" style="font-size: 0.75rem; white-space: pre-wrap; max-height: 100px; overflow-y: auto; color: #38bdf8;">Consultando...</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Workarounds de Driver Chromium (driverBugWorkarounds):</span>
+              <div class="diag-val" id="diagGpuWorkarounds" style="font-size: 0.75rem; white-space: pre-wrap;">Consultando...</div>
+            </div>
+            <div class="diag-card" style="grid-column: 1 / -1;">
+              <span class="diag-label">Logs do Processo GPU (MediaFoundation / D3D11 / AMF / VCN):</span>
+              <div class="diag-val" id="diagGpuLogs" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 100px; overflow-y: auto; color: #cbd5e1;">Nenhuma mensagem registrada.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SEÇÃO 3: TRANSMISSÕES DE SAÍDA (OUTBOUND ENCODERS) -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Seção 3: Transmissões de Saída (Outbound Encoders)</h4>
+            <span class="diag-sublabel">Codec, implementação real (MediaFoundationVideoEncodeAccelerator), avgEncodeTimeMs e bitrate</span>
           </div>
           <div id="hardwareFallbackAlert" class="alert-banner alert-banner-danger hidden" style="margin: 8px 0 12px 0; padding: 10px 14px; border-radius: 6px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; font-size: 0.8rem;">
             <div style="font-weight: 600; margin-bottom: 3px;">⚠️ ALERTA CRÍTICO: Fallback de Codificação para CPU Detectado</div>
@@ -1242,11 +1294,8 @@
               </tbody>
             </table>
           </div>
-        </div>
 
-        <!-- SEÇÃO 3: TRANSMISSÕES DE ENTRADA (INBOUND - PEERS) -->
-        <div class="diag-section">
-          <div class="diag-section-header">
+          <div class="diag-section-header" style="margin-top: 14px;">
             <h4>Transmissões Recebidas (Inbound Decoders)</h4>
             <span class="diag-sublabel">Métricas reais via RTCPeerConnection.getStats()</span>
           </div>
@@ -1272,40 +1321,32 @@
           </div>
         </div>
 
-        <!-- SEÇÃO 4: DIAGNÓSTICO DO PROCESSO GPU CHROMIUM & PERFIS MFT -->
+        <!-- SEÇÃO 4: TESTE DE ENCODE WEBCODECS -->
         <div class="diag-section">
-          <div class="diag-section-header">
-            <h4>Processo GPU & Codecs WebRTC (MediaFoundation / AMD AMF)</h4>
-            <span class="diag-sublabel">app.getGPUInfo('complete') & RTCRtpSender.getCapabilities</span>
+          <div class="diag-section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <h4>Seção 4: Teste de Encode WebCodecs</h4>
+              <span class="diag-sublabel">VideoEncoder (hardwareAcceleration: 'prefer-hardware' • avc1.42e02a) + MediaStreamTrackProcessor</span>
+            </div>
+            <button type="button" id="btnTestGpuWebCodecs" class="btn btn-primary btn-sm" style="font-weight: 600; padding: 6px 12px;">
+              ⚡ Testar Motor WebCodecs GPU
+            </button>
           </div>
-          <div class="diag-grid">
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Perfis de Hardware Video Encode Registrados no Boot (Chromium):</span>
-              <div class="diag-val" id="diagGpuEncProfiles" style="font-size: 0.75rem; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #38bdf8;">Consultando...</div>
+          <div id="diagWebCodecsResultPanel" style="margin-top: 8px; padding: 10px 12px; background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; font-size: 0.75rem; color: #cbd5e1;">
+            <div id="diagWebCodecsProbeList" style="margin-bottom: 6px;">
+              Clique em <strong>"⚡ Testar Motor WebCodecs GPU"</strong> para sondar os perfis Level 4.2 (<code>avc1.42e02a</code> / <code>avc1.4d002a</code>) diretamente no <code>VideoEncoder</code> e, se houver captura de tela ativa, medir o desempenho real de hardware por 4 segundos.
             </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Workarounds de Driver Chromium (driverBugWorkarounds):</span>
-              <div class="diag-val" id="diagGpuWorkarounds" style="font-size: 0.75rem; white-space: pre-wrap;">Consultando...</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Logs do Processo GPU (MediaFoundation / D3D11 / AMF / VCN):</span>
-              <div class="diag-val" id="diagGpuLogs" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #cbd5e1;">Nenhuma mensagem registrada.</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Codecs WebRTC RTCRtpSender (H.264 SDP FMTP & Níveis):</span>
-              <div class="diag-val" id="diagRtcSenderProfiles" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 140px; overflow-y: auto; color: #a5f3fc;">Consultando...</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Sondagem de Hardware Real no Motor Chromium (navigator.mediaCapabilities.encodingInfo — 1080p @ 60 FPS):</span>
-              <div class="diag-val" id="diagMediaCapabilitiesProbe" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 180px; overflow-y: auto; color: #cbd5e1;">Sondando capacidades de aceleração por hardware...</div>
-            </div>
+            <div id="diagWebCodecsBenchmarkBox" class="hidden" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);"></div>
           </div>
         </div>
       </div>
 
       <div class="modal-footer diag-footer">
         <span class="diag-live-pill"><span class="status-dot"></span> Atualização em tempo real (1.5s)</span>
-        <button type="button" id="btnCloseDiagnosticsFooter" class="btn btn-secondary">Fechar</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button type="button" id="btnToggleFloatingHud" class="btn btn-secondary btn-sm" title="Exibir ou ocultar o HUD flutuante compacto sobre o vídeo">Alternar HUD na Tela</button>
+          <button type="button" id="btnCloseDiagnosticsFooter" class="btn btn-secondary">Fechar</button>
+        </div>
       </div>
     </div>
   </div>

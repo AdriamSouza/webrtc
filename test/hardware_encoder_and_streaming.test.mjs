@@ -21,6 +21,12 @@ import {
   QualityController
 } from '../frontend/js/qualityController.js';
 import { WebRTCManager } from '../frontend/js/webrtc.js';
+import {
+  WEBCODECS_PROBE_CODECS,
+  probeWebCodecsHardware,
+  runRealGpuEncodeBenchmark,
+  GpuHardwareEncoderEngine
+} from '../frontend/js/gpuEncoderEngine.js';
 
 describe('1. Detecção e Classificação de Fabricante / Arquitetura de GPU', () => {
   test('Deve identificar GPU AMD Radeon (AMF / VCN) corretamente', () => {
@@ -538,4 +544,225 @@ describe('7. Munging de SDP e Priorização de Codecs na Negociação', () => {
     assert.equal(idx42001f, 3, '42001f (payload 101) deve ser rebaixado para a quarta posição');
   });
 });
+
+describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEncoderEngine)', () => {
+  test('probeWebCodecsHardware testa avc1.42e02a, avc1.4d002a, avc1.64002a e av01.0.08M.08 com prefer-hardware', async () => {
+    const origVideoEncoder = globalThis.VideoEncoder;
+    const testedConfigs = [];
+
+    globalThis.VideoEncoder = {
+      isConfigSupported: async (cfg) => {
+        testedConfigs.push(cfg);
+        return {
+          supported: cfg.codec === 'avc1.42e02a' || cfg.codec === 'avc1.4d002a',
+          config: cfg
+        };
+      }
+    };
+
+    try {
+      const res = await probeWebCodecsHardware();
+      assert.equal(res.supported, true);
+      assert.equal(testedConfigs.length, 4);
+      assert.equal(testedConfigs[0].codec, 'avc1.42e02a');
+      assert.equal(testedConfigs[0].hardwareAcceleration, 'prefer-hardware');
+      assert.equal(testedConfigs[0].latencyMode, 'realtime');
+      assert.equal(testedConfigs[0].width, 1920);
+      assert.equal(testedConfigs[0].height, 1080);
+      assert.equal(testedConfigs[0].framerate, 60);
+      assert.equal(testedConfigs[0].bitrate, 8000000);
+      assert.deepEqual(testedConfigs[0].avc, { format: 'annexb' });
+      assert.equal(res.preferredCodec, 'avc1.42e02a');
+    } finally {
+      globalThis.VideoEncoder = origVideoEncoder;
+    }
+  });
+
+  test('runRealGpuEncodeBenchmark codifica VideoFrames com prefer-hardware, força keyframe a cada 120 quadros e fecha frames imediatamente', async () => {
+    const origVideoEncoder = globalThis.VideoEncoder;
+    const origProcessor = globalThis.MediaStreamTrackProcessor;
+
+    let closedFramesCount = 0;
+    let keyFramesCount = 0;
+    let configuredWith = null;
+
+    globalThis.VideoEncoder = class MockVideoEncoder {
+      constructor({ output }) {
+        this._output = output;
+        this.state = 'unconfigured';
+        this.encodeQueueSize = 0;
+      }
+      static async isConfigSupported(cfg) {
+        return { supported: true, config: cfg };
+      }
+      configure(cfg) {
+        configuredWith = cfg;
+        this.state = 'configured';
+      }
+      encode(frame, opts) {
+        if (opts?.keyFrame) keyFramesCount++;
+        this.encodeQueueSize = 1;
+        this._output({
+          timestamp: frame.timestamp,
+          byteLength: 16384,
+          type: opts?.keyFrame ? 'key' : 'delta'
+        });
+        this.encodeQueueSize = 0;
+      }
+      async flush() {}
+      close() {
+        this.state = 'closed';
+      }
+    };
+
+    globalThis.MediaStreamTrackProcessor = class MockProcessor {
+      constructor() {
+        let frameIndex = 0;
+        this.readable = {
+          getReader() {
+            return {
+              async read() {
+                if (frameIndex >= 130) {
+                  return { done: true, value: undefined };
+                }
+                const idx = frameIndex++;
+                return {
+                  done: false,
+                  value: {
+                    timestamp: idx * 16666,
+                    close() {
+                      closedFramesCount++;
+                    }
+                  }
+                };
+              },
+              async cancel() {},
+              releaseLock() {}
+            };
+          }
+        };
+      }
+    };
+
+    try {
+      const mockTrack = {
+        readyState: 'live',
+        getSettings: () => ({ width: 1920, height: 1080, frameRate: 60 })
+      };
+
+      const engine = new GpuHardwareEncoderEngine();
+      const result = await engine.runBenchmark(mockTrack, 500);
+
+      assert.equal(result.supported, true);
+      assert.equal(configuredWith.hardwareAcceleration, 'prefer-hardware');
+      assert.equal(configuredWith.latencyMode, 'realtime');
+      assert.equal(configuredWith.bitrateMode, 'constant');
+      assert.equal(configuredWith.codec, 'avc1.42e02a');
+      assert.equal(result.framesRead, 130);
+      assert.equal(result.framesEncoded, 130);
+      assert.equal(closedFramesCount, 130, 'Todos os VideoFrames devem receber frame.close() imediato');
+      assert.equal(keyFramesCount, 2, 'Deve forçar keyframe no quadro 0 e no quadro 120');
+    } finally {
+      globalThis.VideoEncoder = origVideoEncoder;
+      globalThis.MediaStreamTrackProcessor = origProcessor;
+    }
+  });
+
+  test('GpuHardwareEncoderEngine expõe start(), pause(), resume(), stop() e getStatus() com fps, avgEncodeTimeMs e hardwareActive', async () => {
+    const origVideoEncoder = globalThis.VideoEncoder;
+    const origProcessor = globalThis.MediaStreamTrackProcessor;
+
+    let closedFramesCount = 0;
+
+    globalThis.VideoEncoder = class MockVideoEncoder {
+      constructor({ output }) {
+        this._output = output;
+        this.state = 'unconfigured';
+        this.encodeQueueSize = 0;
+      }
+      static async isConfigSupported(cfg) {
+        return { supported: true, config: cfg };
+      }
+      configure() {
+        this.state = 'configured';
+      }
+      encode(frame, opts) {
+        this._output({
+          timestamp: frame.timestamp,
+          byteLength: 8192,
+          type: opts?.keyFrame ? 'key' : 'delta'
+        });
+      }
+      async flush() {}
+      close() {
+        this.state = 'closed';
+      }
+    };
+
+    globalThis.MediaStreamTrackProcessor = class MockProcessor {
+      constructor() {
+        let frameIndex = 0;
+        this.readable = {
+          getReader() {
+            return {
+              async read() {
+                if (frameIndex >= 10) {
+                  return { done: true, value: undefined };
+                }
+                const idx = frameIndex++;
+                return {
+                  done: false,
+                  value: {
+                    timestamp: idx * 16666,
+                    close() {
+                      closedFramesCount++;
+                    }
+                  }
+                };
+              },
+              async cancel() {},
+              releaseLock() {}
+            };
+          }
+        };
+      }
+    };
+
+    try {
+      const mockTrack = {
+        readyState: 'live',
+        getSettings: () => ({ width: 1920, height: 1080, frameRate: 60 })
+      };
+
+      const engine = new GpuHardwareEncoderEngine();
+      const startRes = await engine.start(mockTrack);
+      assert.equal(startRes.started, true);
+      assert.equal(startRes.codec, 'avc1.42e02a');
+      assert.equal(startRes.hardwareActive, true);
+
+      // Aguarda processamento da fila simulada
+      await new Promise((r) => setTimeout(r, 25));
+
+      const status = engine.getStatus();
+      assert.equal(typeof status.fps, 'number');
+      assert.equal(typeof status.avgEncodeTimeMs, 'number');
+      assert.equal(status.hardwareActive, true);
+      assert.equal(status.framesEncoded, 10);
+      assert.equal(closedFramesCount, 10);
+
+      const pausedState = engine.pause();
+      assert.equal(pausedState.paused, true);
+
+      const resumedState = engine.resume();
+      assert.equal(resumedState.paused, false);
+
+      const finalStatus = await engine.stop();
+      assert.equal(finalStatus.running, false);
+    } finally {
+      globalThis.VideoEncoder = origVideoEncoder;
+      globalThis.MediaStreamTrackProcessor = origProcessor;
+    }
+  });
+});
+
 

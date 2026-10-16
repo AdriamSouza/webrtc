@@ -5,6 +5,7 @@ import { QualityController } from './qualityController.js';
 import { RoomState, getParticipantColor, getUserInitials } from './room.js';
 import { Icons } from './icons.js';
 import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS, probeRealHardwareEncoders, parseH264ProfileLevel } from './hardwareDetector.js';
+import { probeWebCodecsHardware, runRealGpuEncodeBenchmark, GpuHardwareEncoderEngine } from './gpuEncoderEngine.js';
 
 // Instanciação dos Módulos Centrais
 const signaling = new SignalingClient();
@@ -16,6 +17,7 @@ qualityController.setWebRTC(webrtc);
 webrtc.setQualityController(qualityController);
 const roomState = new RoomState();
 webrtc.setRoomState(roomState);
+const gpuEncoderEngine = new GpuHardwareEncoderEngine();
 
 function updateConnectionStatus(statusClass, text) {
   if (!connectionBadge) return;
@@ -49,7 +51,6 @@ const roomLockBadge = document.getElementById('roomLockBadge');
 const connectionBadge = document.getElementById('connectionBadge');
 const userCountBadge = document.getElementById('userCountBadge');
 const desktopAppBadge = document.getElementById('desktopAppBadge');
-const btnToggleHud = document.getElementById('btnToggleHud');
 const telemetryHud = document.getElementById('telemetryHud');
 
 // Elementos do DOM - Seletor de Layouts & Painel Lateral
@@ -79,6 +80,7 @@ const btnPromptCamera = document.getElementById('btnPromptCamera');
 const localDock = document.getElementById('localDock');
 const localDockContent = document.getElementById('localDockContent');
 const btnMinimizeDock = document.getElementById('btnMinimizeDock');
+const chkAutoPauseLocalPreview = document.getElementById('chkAutoPauseLocalPreview');
 const localDockPill = document.getElementById('localDockPill');
 const localDockPillLabel = document.getElementById('localDockPillLabel');
 
@@ -132,6 +134,12 @@ const localPreviews = new Map(); // Map<type ('camera'|'screen'), { cardEl, vide
 const stripVideoThumbnails = new Map(); // Map<tileId, HTMLVideoElement> - Cache de miniaturas de vídeo para Tira/Filmstrip (reutilização limpa)
 let currentSpotlightId = null;
 let isDockMinimized = false;
+let autoPauseLocalPreview = (() => {
+  try {
+    const saved = localStorage.getItem('hyperstream_auto_pause_local_preview');
+    return saved !== null ? saved === 'true' : true;
+  } catch (_) { return true; }
+})();
 let currentAttemptedPin = null;
 let isConnecting = false;
 const peerSyncTimers = new Map(); // Map<userId, number> - Timer de retry único por peer (previne loop exponencial)
@@ -926,7 +934,11 @@ function addOrUpdateLocalPreview(type, stream, title) {
     entry.stream = stream;
     if (entry.videoEl) {
       entry.videoEl.srcObject = stream;
-      entry.videoEl.play().catch(e => console.warn('[LocalDock] Play:', e));
+      if (entry.isHidden || isDockMinimized) {
+        try { entry.videoEl.pause(); } catch (_) {}
+      } else {
+        entry.videoEl.play().catch(e => console.warn('[LocalDock] Play:', e));
+      }
     }
     if (entry.isPinned) {
       addOrUpdateTile({
@@ -963,7 +975,7 @@ function addOrUpdateLocalPreview(type, stream, title) {
   videoWrap.className = `local-card-video-wrap is-${type}`;
 
   const videoEl = document.createElement('video');
-  videoEl.autoplay = true;
+  videoEl.autoplay = false;
   videoEl.playsInline = true;
   videoEl.muted = true;
   videoEl.srcObject = stream;
@@ -972,7 +984,7 @@ function addOrUpdateLocalPreview(type, stream, title) {
   const hiddenNotice = document.createElement('div');
   hiddenNotice.className = 'local-hidden-notice hidden';
   hiddenNotice.innerHTML = `
-    <span>${type === 'screen' ? 'Tela transmitindo (60 FPS)' : 'Câmera ativa'}</span>
+    <span>${type === 'screen' ? 'Prévia pausada (Economia GPU/CPU)' : 'Câmera ativa (prévia pausada)'}</span>
     <button class="btn-unhide-preview">Mostrar</button>
   `;
 
@@ -980,8 +992,6 @@ function addOrUpdateLocalPreview(type, stream, title) {
   cardEl.appendChild(videoWrap);
   cardEl.appendChild(hiddenNotice);
   localDockContent.appendChild(cardEl);
-
-  videoEl.play().catch(e => console.warn('[LocalDock] Autoplay:', e));
 
   entry = {
     cardEl,
@@ -992,7 +1002,8 @@ function addOrUpdateLocalPreview(type, stream, title) {
     title,
     type,
     isHidden: false,
-    isPinned: false
+    isPinned: false,
+    togglePreviewVisibility: null
   };
   localPreviews.set(type, entry);
 
@@ -1006,8 +1017,24 @@ function addOrUpdateLocalPreview(type, stream, title) {
     cardEl.classList.toggle('preview-hidden', entry.isHidden);
     videoWrap.style.display = entry.isHidden ? 'none' : 'flex';
     hiddenNotice.classList.toggle('hidden', !entry.isHidden);
-    btnToggle.title = entry.isHidden ? 'Mostrar prévia' : 'Ocultar prévia';
+    btnToggle.title = entry.isHidden ? 'Mostrar prévia' : 'Ocultar e pausar prévia';
+
+    if (entry.videoEl) {
+      if (entry.isHidden || isDockMinimized) {
+        try { entry.videoEl.pause(); } catch (_) {}
+      } else {
+        entry.videoEl.play().catch(e => console.warn('[LocalDock] Play:', e));
+      }
+    }
   };
+  entry.togglePreviewVisibility = togglePreviewVisibility;
+
+  // Modo "Auto-Pausar Prévia Local Ao Transmitir": pausa renderização 1080p60 local para economizar CPU/GPU
+  if (type === 'screen' && autoPauseLocalPreview) {
+    togglePreviewVisibility(true);
+  } else if (!isDockMinimized) {
+    videoEl.play().catch(e => console.warn('[LocalDock] Autoplay:', e));
+  }
 
   btnToggle.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1032,9 +1059,15 @@ function addOrUpdateLocalPreview(type, stream, title) {
         type
       });
       cardEl.style.display = 'none';
+      if (entry.videoEl) {
+        try { entry.videoEl.pause(); } catch (_) {}
+      }
     } else {
       removeTile(`local-${type}`);
       cardEl.style.display = 'block';
+      if (entry.videoEl && !entry.isHidden && !isDockMinimized) {
+        entry.videoEl.play().catch(() => {});
+      }
     }
   });
 
@@ -1086,10 +1119,21 @@ function updateLocalDockVisibility() {
       localDock.classList.add('hidden');
       localDockPill.classList.remove('hidden');
       const types = Array.from(localPreviews.keys()).map(t => t === 'screen' ? 'Tela 60 FPS' : 'Câmera').join(' + ');
-      localDockPillLabel.textContent = `${types} Ativa${localPreviews.size > 1 ? 's' : ''}`;
+      localDockPillLabel.textContent = `${types} Ativa${localPreviews.size > 1 ? 's' : ''} (Pausada)`;
+      // Garante que o decodificador/compositor local pare de desenhar quadros enquanto minimizado
+      localPreviews.forEach(p => {
+        if (p.videoEl && !p.videoEl.paused) {
+          try { p.videoEl.pause(); } catch (_) {}
+        }
+      });
     } else {
       localDock.classList.remove('hidden');
       localDockPill.classList.add('hidden');
+      localPreviews.forEach(p => {
+        if (p.videoEl && !p.isHidden && !p.isPinned && p.videoEl.paused) {
+          p.videoEl.play().catch(() => {});
+        }
+      });
     }
   }
   updateGridLayout();
@@ -1159,7 +1203,7 @@ class VoiceActivityDetector {
       source.connect(analyser);
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      this.monitoredStreams.set(userId, { analyser, dataArray, source, lastSpoke: 0 });
+      this.monitoredStreams.set(userId, { analyser, dataArray, source, stream, lastSpoke: 0 });
 
       this.startLoop();
     } catch (err) {
@@ -1182,12 +1226,21 @@ class VoiceActivityDetector {
 
   startLoop() {
     if (this.checkInterval) return;
+    // Intervalo otimizado para 150ms (reduz em 60% as chamadas getByteFrequencyData no processo Renderer)
     this.checkInterval = setInterval(() => {
       const now = Date.now();
       this.monitoredStreams.forEach((entry, userId) => {
-        // Se for o usuário local e estiver mutado no app, não marca como speaking
+        // Se for o usuário local e o microfone estiver mutado, pausa leitura de FFT
         if (userId === roomState.myUserId) {
           if (media && typeof media.isAudioMuted === 'function' && media.isAudioMuted()) {
+            this.setSpeaking(userId, false);
+            return;
+          }
+        }
+        // Também ignora se todas as tracks de áudio do stream estiverem desabilitadas ou encerradas
+        if (entry.stream && typeof entry.stream.getAudioTracks === 'function') {
+          const tracks = entry.stream.getAudioTracks();
+          if (tracks.length === 0 || tracks.every(t => !t.enabled || t.readyState === 'ended')) {
             this.setSpeaking(userId, false);
             return;
           }
@@ -1204,11 +1257,11 @@ class VoiceActivityDetector {
         if (avg > 13) {
           entry.lastSpoke = now;
           this.setSpeaking(userId, true);
-        } else if (now - entry.lastSpoke > 320) {
+        } else if (now - entry.lastSpoke > 350) {
           this.setSpeaking(userId, false);
         }
       });
-    }, 60);
+    }, 150);
   }
 
   setSpeaking(userId, isSpeaking) {
@@ -1924,6 +1977,31 @@ async function renderDiagnosticsData() {
         if (diagMemoryUsage && gpuDiag.memoryUsageMB !== undefined) {
           diagMemoryUsage.textContent = `${gpuDiag.memoryUsageMB} MB`;
         }
+
+        // ETAPA 3.3: Detalhamento de CPU por Subprocesso (Browser, GPU Process, Tab Renderer, Utility)
+        const diagCpuBrowser = document.getElementById('diagCpuBrowser');
+        const diagCpuGpu = document.getElementById('diagCpuGpu');
+        const diagCpuRenderer = document.getElementById('diagCpuRenderer');
+        const diagCpuUtility = document.getElementById('diagCpuUtility');
+        const sub = gpuDiag.subprocessCpu || {};
+        const findFromBreakdown = (labelKey) => {
+          if (sub[labelKey]) return sub[labelKey];
+          if (Array.isArray(gpuDiag.processBreakdown)) {
+            return gpuDiag.processBreakdown.find(p => p.name === labelKey) || null;
+          }
+          return null;
+        };
+        const fmtSub = (entry) => {
+          if (!entry) return '0.0% (0 MB)';
+          const cpuVal = typeof entry.cpuPercent === 'number' ? entry.cpuPercent.toFixed(1) : '0.0';
+          const memVal = entry.memoryMB !== undefined ? entry.memoryMB : 0;
+          return `${cpuVal}% (${memVal} MB)`;
+        };
+        if (diagCpuBrowser) diagCpuBrowser.textContent = fmtSub(findFromBreakdown('Browser (Main)'));
+        if (diagCpuGpu) diagCpuGpu.textContent = fmtSub(findFromBreakdown('GPU Process'));
+        if (diagCpuRenderer) diagCpuRenderer.textContent = fmtSub(findFromBreakdown('Tab (Renderer)'));
+        if (diagCpuUtility) diagCpuUtility.textContent = fmtSub(findFromBreakdown('Utility (Audio/Video)'));
+
         if (diagGpuStatusBadge) {
           diagGpuStatusBadge.textContent = isEncodeHw ? `${evaluated.vendorInfo.vendor} Acelerado ⚡` : 'GPU Detectada';
           diagGpuStatusBadge.className = isEncodeHw ? 'badge badge-success' : 'badge';
@@ -1982,6 +2060,14 @@ async function renderDiagnosticsData() {
         diagCpuUsage.textContent = 'N/A (Navegador)';
         diagCpuUsage.title = 'Métricas de CPU do sistema não são expostas pela Sandbox do Navegador';
       }
+      const diagCpuBrowser = document.getElementById('diagCpuBrowser');
+      const diagCpuGpu = document.getElementById('diagCpuGpu');
+      const diagCpuRenderer = document.getElementById('diagCpuRenderer');
+      const diagCpuUtility = document.getElementById('diagCpuUtility');
+      if (diagCpuBrowser) diagCpuBrowser.textContent = 'N/A (Web)';
+      if (diagCpuGpu) diagCpuGpu.textContent = 'N/A (Web)';
+      if (diagCpuRenderer) diagCpuRenderer.textContent = 'N/A (Web)';
+      if (diagCpuUtility) diagCpuUtility.textContent = 'N/A (Web)';
       if (diagMemoryUsage) {
         const heapMem = (window.performance && performance.memory) ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
         diagMemoryUsage.textContent = heapMem ? `${heapMem} MB (Heap JS)` : 'N/A (Navegador)';
@@ -2261,6 +2347,111 @@ async function renderDiagnosticsData() {
           </tr>
         `;
       }).join('');
+    }
+  }
+}
+
+async function handleTestGpuWebCodecs() {
+  const btn = document.getElementById('btnTestGpuWebCodecs');
+  const probeListEl = document.getElementById('diagWebCodecsProbeList');
+  const benchBoxEl = document.getElementById('diagWebCodecsBenchmarkBox');
+  if (!probeListEl) return;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Testando Motor GPU WebCodecs...';
+  }
+
+  try {
+    probeListEl.innerHTML = '<span style="color: #38bdf8;">Sondando VideoEncoder.isConfigSupported (hardwareAcceleration: "prefer-hardware", Level 4.2)...</span>';
+    const probeRes = await gpuEncoderEngine.probeHardware();
+
+    if (!probeRes.supported) {
+      probeListEl.innerHTML = `<span style="color: #ef4444; font-weight: 600;">❌ API WebCodecs não disponível neste ambiente: ${escapeHtml(probeRes.reason || '')}</span>`;
+      return;
+    }
+
+    const profilesHtml = (probeRes.profiles || []).map(p => {
+      const badge = p.supported
+        ? '<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">⚡ Suportado (prefer-hardware)</span>'
+        : '<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">❌ Não suportado</span>';
+      return `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; margin-bottom: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); font-family: monospace;">
+          <span><strong style="color: #f8fafc;">${escapeHtml(p.codec)}</strong> — <span style="color: #94a3b8;">${escapeHtml(p.label)}</span></span>
+          ${badge}
+        </div>
+      `;
+    }).join('');
+
+    probeListEl.innerHTML = `
+      <div style="margin-bottom: 6px; font-weight: 600; color: #e2e8f0;">
+        1. Perfis WebCodecs 1080p @ 60 FPS (8 Mbps • Annex-B • Level 4.2):
+      </div>
+      ${profilesHtml}
+    `;
+
+    const screenTrack = media && typeof media.getScreenVideoTrack === 'function' ? media.getScreenVideoTrack() : null;
+    if (benchBoxEl) {
+      benchBoxEl.classList.remove('hidden');
+      if (!screenTrack || screenTrack.readyState !== 'live') {
+        benchBoxEl.innerHTML = `
+          <div style="color: #fbbf24; font-weight: 600;">
+            ℹ️ Inicie o Compartilhamento de Tela (60 FPS) e clique novamente para rodar o Benchmark Real de 4 segundos na GPU RX 7600 via <code>MediaStreamTrackProcessor</code> + <code>VideoEncoder</code>!
+          </div>
+        `;
+      } else {
+        benchBoxEl.innerHTML = `
+          <div style="color: #38bdf8; font-weight: 600;">
+            ⚡ Executando Benchmark Real de Encode na GPU (4 segundos) lendo quadros D3D11 da captura de tela ativa...
+          </div>
+        `;
+        const bench = await gpuEncoderEngine.runBenchmark(screenTrack, 4000);
+        if (!bench.supported) {
+          benchBoxEl.innerHTML = `<div style="color: #ef4444; font-weight: 600;">❌ Falha no Benchmark GPU: ${escapeHtml(bench.error || 'Erro desconhecido')}</div>`;
+        } else {
+          const rendererCpu = bench.cpuUsage?.rendererCpuAvg !== null && bench.cpuUsage?.rendererCpuAvg !== undefined
+            ? `${bench.cpuUsage.rendererCpuAvg}%`
+            : 'N/A';
+          const gpuProcCpu = bench.cpuUsage?.gpuProcessCpuAvg !== null && bench.cpuUsage?.gpuProcessCpuAvg !== undefined
+            ? `${bench.cpuUsage.gpuProcessCpuAvg}%`
+            : 'N/A';
+          const totalAppCpu = bench.cpuUsage?.totalAppCpuAvg !== null && bench.cpuUsage?.totalAppCpuAvg !== undefined
+            ? `${bench.cpuUsage.totalAppCpuAvg}%`
+            : 'N/A';
+
+          benchBoxEl.innerHTML = `
+            <div style="margin-bottom: 6px; font-weight: 600; color: #34d399;">
+              ✅ Benchmark Real Concluído na GPU (${escapeHtml(bench.codec)} • ${bench.width}x${bench.height} • ${(bench.durationMs / 1000).toFixed(1)}s):
+            </div>
+            <div class="diag-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Taxa Real (fpsEncoded):</span>
+                <strong class="diag-val" style="color: #34d399; font-size: 0.85rem;">${bench.fpsEncoded} FPS (${bench.framesEncoded} qds)</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Tempo Médio Hardware:</span>
+                <strong class="diag-val" style="color: #38bdf8; font-size: 0.85rem;">${bench.avgHardwareEncodeTimeMs} ms/quadro</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">Fila Encoder (Queue):</span>
+                <strong class="diag-val" style="color: #e2e8f0; font-size: 0.85rem;">méd: ${bench.encoderQueueSize?.avg ?? bench.encoderQueueSize ?? 0} (máx: ${bench.maxQueueSize ?? bench.encoderQueueSize?.max ?? 0})</strong>
+              </div>
+              <div class="diag-card" style="padding: 6px 8px;">
+                <span class="diag-label" style="font-size: 0.68rem;">CPU Renderer vs GPU Proc:</span>
+                <strong class="diag-val" style="color: #fbbf24; font-size: 0.8rem;">Tab: ${rendererCpu} | GPU: ${gpuProcCpu} (App: ${totalAppCpu})</strong>
+              </div>
+            </div>
+          `;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Diagnostics] Erro ao testar WebCodecs GPU:', err);
+    probeListEl.innerHTML = `<span style="color: #ef4444;">Erro no teste WebCodecs: ${escapeHtml(err?.message || String(err))}</span>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '⚡ Testar Motor WebCodecs GPU';
     }
   }
 }
@@ -2647,15 +2838,19 @@ function setupEventListeners() {
     });
   }
 
-  btnToggleHud.addEventListener('click', () => {
-    telemetryHud.classList.toggle('hidden');
-  });
-
-  // --- BOTÃO DE DIAGNÓSTICO EM TEMPO REAL ---
+  // --- BOTÃO DE DIAGNÓSTICO UNIFICADO EM TEMPO REAL ---
   const btnDiagnostics = document.getElementById('btnDiagnostics');
   const diagnosticsModal = document.getElementById('diagnosticsModal');
   const btnCloseDiagnostics = document.getElementById('btnCloseDiagnostics');
   const btnCloseDiagnosticsFooter = document.getElementById('btnCloseDiagnosticsFooter');
+  const btnTestGpuWebCodecs = document.getElementById('btnTestGpuWebCodecs');
+  const btnToggleFloatingHud = document.getElementById('btnToggleFloatingHud');
+
+  if (btnToggleFloatingHud && telemetryHud) {
+    btnToggleFloatingHud.addEventListener('click', () => {
+      telemetryHud.classList.toggle('hidden');
+    });
+  }
 
   if (btnDiagnostics) {
     btnDiagnostics.addEventListener('click', openDiagnosticsModal);
@@ -2665,6 +2860,9 @@ function setupEventListeners() {
   }
   if (btnCloseDiagnosticsFooter) {
     btnCloseDiagnosticsFooter.addEventListener('click', closeDiagnosticsModal);
+  }
+  if (btnTestGpuWebCodecs) {
+    btnTestGpuWebCodecs.addEventListener('click', handleTestGpuWebCodecs);
   }
   if (diagnosticsModal) {
     diagnosticsModal.addEventListener('click', (e) => {
@@ -2683,6 +2881,18 @@ function setupEventListeners() {
       appendSystemChat(`Perfil de transmissão alterado para: ${btn.textContent.trim()}`);
     });
   });
+
+  if (chkAutoPauseLocalPreview) {
+    chkAutoPauseLocalPreview.checked = autoPauseLocalPreview;
+    chkAutoPauseLocalPreview.addEventListener('change', () => {
+      autoPauseLocalPreview = chkAutoPauseLocalPreview.checked;
+      try { localStorage.setItem('hyperstream_auto_pause_local_preview', autoPauseLocalPreview ? 'true' : 'false'); } catch (_) {}
+      const screenPreview = localPreviews.get('screen');
+      if (screenPreview && typeof screenPreview.togglePreviewVisibility === 'function') {
+        screenPreview.togglePreviewVisibility(autoPauseLocalPreview);
+      }
+    });
+  }
 
   if (btnMinimizeDock) {
     btnMinimizeDock.addEventListener('click', () => {
@@ -5286,15 +5496,21 @@ function setupSettingsModal() {
     });
 
     localPreviews.forEach((preview) => {
-      if (preview.videoEl && preview.videoEl.paused && !preview.isHidden) {
+      if (preview.videoEl && preview.videoEl.paused && !preview.isHidden && !preview.isPinned && !isDockMinimized) {
         preview.videoEl.play().catch(() => {});
       }
     });
   }
 
-  // 1. Recuperação imediata quando o aplicativo volta do segundo plano
+  // 1. Recuperação imediata quando o aplicativo volta do segundo plano (e pausa de prévia local quando minimizado/oculto)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
+    if (document.hidden) {
+      localPreviews.forEach((preview) => {
+        if (preview.videoEl && !preview.videoEl.paused) {
+          try { preview.videoEl.pause(); } catch (_) {}
+        }
+      });
+    } else {
       console.log('[App] Janela voltou a ficar visível. Executando recuperação defensiva de transmissões...');
       resumeAllActiveVideos();
       if (roomState.roomId) {

@@ -104,12 +104,16 @@ export class MediaManager {
 
     const fps = this.targetFps || 60;
     
-    // Constraints para getDisplayMedia com framerate explícito (ideal e max)
-    // O Chromium requer 'max' explícito para não limitar a captura a 30 FPS padrão
+    // Constraints para getDisplayMedia com dimensão e framerate explícitos (ideal e max)
+    // No Electron moderno + setDisplayMediaRequestHandler, getDisplayMedia com 1920x1080@60
+    // ativa o pipeline nativo WGC D3D11 Zero-Copy (NV12 GpuMemoryBuffer), evitando captura legada ARGB/CPU.
     const displayConstraints = {
       video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
         frameRate: { ideal: fps, max: fps }
-      }
+      },
+      audio: Boolean(this.captureSystemAudio)
     };
 
     if (this.targetResolution === '4k') {
@@ -118,6 +122,12 @@ export class MediaManager {
     } else if (this.targetResolution === '1440p' || this.targetResolution === '2k') {
       displayConstraints.video.width = { ideal: 2560, max: 2560 };
       displayConstraints.video.height = { ideal: 1440, max: 1440 };
+    } else if (this.targetResolution === '720p') {
+      displayConstraints.video.width = { ideal: 1280, max: 1280 };
+      displayConstraints.video.height = { ideal: 720, max: 720 };
+    } else if (this.targetResolution === '480p') {
+      displayConstraints.video.width = { ideal: 854, max: 854 };
+      displayConstraints.video.height = { ideal: 480, max: 480 };
     }
 
     // Recarrega filtros salvos do localStorage para garantir sincronismo com o painel de configurações
@@ -157,14 +167,17 @@ export class MediaManager {
     try {
       stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
     } catch (captureErr) {
-      // Se falhou e tinha áudio solicitado via configs, tenta fallback imediato apenas com vídeo
+      // Se falhou e tinha áudio solicitado via configs, tenta fallback imediato apenas com vídeo mantendo WGC D3D11 1080p60
       if (displayConstraints.audio) {
         console.warn('[MediaManager] Falha ao capturar tela com áudio, tentando fallback somente vídeo:', captureErr.message);
         displayConstraints.audio = false;
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: {
+            width: displayConstraints.video.width,
+            height: displayConstraints.video.height,
             frameRate: { ideal: fps, max: fps }
-          }
+          },
+          audio: false
         });
       } else {
         throw captureErr;

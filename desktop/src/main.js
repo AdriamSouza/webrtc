@@ -23,20 +23,28 @@ const __dirname = path.dirname(__filename);
 // FLAGS CHROMIUM DE ULTRA-PERFORMANCE (WGC + GPU ACCELERATION)
 // ========================================================
 // 1. Unificação estrita de enable-features em uma ÚNICA chamada antes de app.whenReady()
-app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoEncode,MediaFoundationD3D11VideoCapture,WindowsGraphicsCapture,ZeroCopyTabCapture');
+// Destrava texturas D3D11 NV12 GpuMemoryBuffer no WebRTC e MediaFoundationVideoEncodeAccelerator na AMD RX 7600
+app.commandLine.appendSwitch('enable-features', [
+  'MediaFoundationVideoEncode',
+  'MediaFoundationD3D11VideoCapture',
+  'WindowsGraphicsCapture',
+  'WebRtcUseGpuMemoryBufferVideoFrames',
+  'AutogenMediaFoundationVideoEncode',
+  'ZeroCopyTabCapture'
+].join(','));
 
 // 2. Flags críticas para desbloquear codificação por hardware (MediaFoundation / AMD AMF / D3D11) no Windows
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
-// CRÍTICO: Chromium desativa H.264 HW encode em drivers AMD no Windows via workarounds internos. Esta flag destrava o pipeline!
-app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
 app.commandLine.appendSwitch('force-high-performance-gpu');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 // 3. Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -446,23 +454,83 @@ ipcMain.handle('desktop:get-version', () => {
   return app.getVersion();
 });
 
-// IPC: Obter uso real de CPU do processo Electron
-ipcMain.handle('desktop:get-cpu-usage', () => {
+// Coleta métricas de CPU e Memória por subprocesso do Electron via app.getAppMetrics()
+function collectProcessMetricsBreakdown() {
   let totalCpuPercent = 0;
+  let totalMemoryKB = 0;
+  let browserCpuPercent = 0;
+  let gpuProcessCpuPercent = 0;
+  let rendererCpuPercent = 0;
+  let utilityCpuPercent = 0;
+  const processBreakdown = [];
+
   try {
     if (typeof app.getAppMetrics === 'function') {
       const metrics = app.getAppMetrics();
       for (const m of metrics) {
-        totalCpuPercent += (m.cpu?.percentCPUUsage || 0);
+        const cpu = m.cpu?.percentCPUUsage || 0;
+        const memKB = m.memory?.workingSetSize || 0;
+        totalCpuPercent += cpu;
+        totalMemoryKB += memKB;
+
+        let friendlyName = m.type;
+        if (m.type === 'Browser') {
+          friendlyName = 'Browser (Main)';
+          browserCpuPercent += cpu;
+        } else if (m.type === 'GPU') {
+          friendlyName = 'GPU Process';
+          gpuProcessCpuPercent += cpu;
+        } else if (m.type === 'Tab') {
+          friendlyName = 'Tab (Renderer)';
+          rendererCpuPercent += cpu;
+        } else if (m.type === 'Utility') {
+          friendlyName = 'Utility (Audio/Video)';
+          utilityCpuPercent += cpu;
+        } else {
+          utilityCpuPercent += cpu;
+        }
+
+        processBreakdown.push({
+          pid: m.pid,
+          type: m.type,
+          name: friendlyName,
+          cpuPercent: Number(cpu.toFixed(1)),
+          memoryMB: Math.round(memKB / 1024)
+        });
       }
     }
-  } catch (_) {}
-  if (totalCpuPercent === 0 && process.getCPUUsage) {
-    try {
-      totalCpuPercent = process.getCPUUsage()?.percentCPUUsage || 0;
-    } catch (_) {}
+  } catch (err) {
+    console.warn('[Desktop Main] Erro ao consultar app.getAppMetrics():', err.message);
   }
-  return { cpuUsagePercent: Number(totalCpuPercent.toFixed(1)) };
+
+  if (processBreakdown.length === 0) {
+    const cpuInfo = process.getCPUUsage ? process.getCPUUsage() : null;
+    const cpuPct = cpuInfo?.percentCPUUsage || 0;
+    totalCpuPercent = cpuPct;
+    browserCpuPercent = cpuPct;
+    processBreakdown.push({
+      pid: process.pid,
+      type: 'Browser',
+      name: 'Browser (Main)',
+      cpuPercent: Number(cpuPct.toFixed(1)),
+      memoryMB: 0
+    });
+  }
+
+  return {
+    cpuUsagePercent: Number(totalCpuPercent.toFixed(1)),
+    browserCpuPercent: Number(browserCpuPercent.toFixed(1)),
+    gpuProcessCpuPercent: Number(gpuProcessCpuPercent.toFixed(1)),
+    rendererCpuPercent: Number(rendererCpuPercent.toFixed(1)),
+    utilityCpuPercent: Number(utilityCpuPercent.toFixed(1)),
+    memoryUsageMB: Math.round(totalMemoryKB / 1024),
+    processBreakdown
+  };
+}
+
+// IPC: Obter uso real de CPU detalhado por subprocesso do Electron
+ipcMain.handle('desktop:get-cpu-usage', () => {
+  return collectProcessMetricsBreakdown();
 });
 
 // Cache em memória para diagnóstico estático de GPU (executa apenas 1 vez para não congelar o processo GPU)
@@ -522,60 +590,7 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
            text.includes('workaround') || text.includes('fallback');
   }).map(l => (typeof l === 'string' ? l : `[${l.header || 'GPU'}] ${l.message || JSON.stringify(l)}`)) : [];
 
-  let totalCpuPercent = 0;
-  let totalMemoryKB = 0;
-  const processBreakdown = [];
-
-  try {
-    if (typeof app.getAppMetrics === 'function') {
-      const metrics = app.getAppMetrics();
-      for (const m of metrics) {
-        const cpu = m.cpu?.percentCPUUsage || 0;
-        const memKB = m.memory?.workingSetSize || 0;
-        totalCpuPercent += cpu;
-        totalMemoryKB += memKB;
-
-        let friendlyName = m.type;
-        if (m.type === 'Browser') friendlyName = 'Principal (Main)';
-        else if (m.type === 'Tab') friendlyName = 'Interface & WebRTC (Renderer)';
-        else if (m.type === 'GPU') friendlyName = 'Aceleração GPU & Captura';
-        else if (m.type === 'Utility') friendlyName = 'Utilitário de Sistema';
-
-        processBreakdown.push({
-          pid: m.pid,
-          type: m.type,
-          name: friendlyName,
-          cpuPercent: Number(cpu.toFixed(1)),
-          memoryMB: Math.round(memKB / 1024)
-        });
-      }
-    }
-  } catch (err) {
-    console.warn('[Desktop Main] Erro ao consultar app.getAppMetrics():', err.message);
-  }
-
-  // Fallback caso app.getAppMetrics esteja vazio
-  if (processBreakdown.length === 0) {
-    let mainMemKB = 0;
-    try {
-      const memInfo = process.getProcessMemoryInfo ? await process.getProcessMemoryInfo() : null;
-      if (memInfo?.workingSetSize) mainMemKB = memInfo.workingSetSize;
-    } catch (_) {}
-    const cpuInfo = process.getCPUUsage ? process.getCPUUsage() : null;
-    const cpuPct = cpuInfo?.percentCPUUsage || 0;
-    totalCpuPercent = cpuPct;
-    totalMemoryKB = mainMemKB;
-    processBreakdown.push({
-      pid: process.pid,
-      type: 'Browser',
-      name: 'Processo Principal',
-      cpuPercent: Number(cpuPct.toFixed(1)),
-      memoryMB: Math.round(mainMemKB / 1024)
-    });
-  }
-
-  const memoryUsageMB = Math.round(totalMemoryKB / 1024);
-  const cpuUsagePercent = Number(totalCpuPercent.toFixed(1));
+  const metricsSummary = collectProcessMetricsBreakdown();
 
   let systemGpu = cachedSystemGpu;
   if (!systemGpu && process.platform === 'win32') {
@@ -615,9 +630,13 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
     relevantGpuLogs,
     platform: process.platform,
     arch: process.arch,
-    cpuUsagePercent,
-    memoryUsageMB,
-    processBreakdown,
+    cpuUsagePercent: metricsSummary.cpuUsagePercent,
+    browserCpuPercent: metricsSummary.browserCpuPercent,
+    gpuProcessCpuPercent: metricsSummary.gpuProcessCpuPercent,
+    rendererCpuPercent: metricsSummary.rendererCpuPercent,
+    utilityCpuPercent: metricsSummary.utilityCpuPercent,
+    memoryUsageMB: metricsSummary.memoryUsageMB,
+    processBreakdown: metricsSummary.processBreakdown,
     electronVersion: process.versions.electron,
     chromeVersion: process.versions.chrome
   };

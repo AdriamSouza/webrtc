@@ -4201,7 +4201,7 @@ body.dark-theme {
     padding: 4px 8px;
   }
 
-  #btnToggleHud span,
+  #btnDiagnostics span,
   #btnOpenSettings span {
     display: none;
   }

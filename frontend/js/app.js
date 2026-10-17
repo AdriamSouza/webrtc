@@ -4,7 +4,7 @@ import { WebRTCManager } from './webrtc.js';
 import { QualityController } from './qualityController.js';
 import { RoomState, getParticipantColor, getUserInitials } from './room.js';
 import { Icons } from './icons.js';
-import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS, probeRealHardwareEncoders, parseH264ProfileLevel } from './hardwareDetector.js';
+import { evaluateCodecCapabilities, identifyGpuVendor, STREAM_RESOLUTIONS, probeRealHardwareEncoders, parseH264ProfileLevel, classifyCodecImplementation } from './hardwareDetector.js';
 import { probeWebCodecsHardware, runRealGpuEncodeBenchmark, GpuHardwareEncoderEngine } from './gpuEncoderEngine.js';
 
 // Instanciação dos Módulos Centrais
@@ -2196,11 +2196,15 @@ async function renderDiagnosticsData() {
 
   const fallbackAlert = document.getElementById('hardwareFallbackAlert');
   const fallbackAlertText = document.getElementById('hardwareFallbackAlertText');
-  const activeSoftwareOutbound = outboundStreams.find(s => s.hwState === 'software_confirmed' && (s.framesEncoded > 15 || s.bytesSent > 30000));
+  const activeSoftwareOutbound = outboundStreams.find(s => {
+    const implName = s.rawImplementation || s.encoderImplementation || '';
+    const isSwByRule = s.hwState === 'software_confirmed' || classifyCodecImplementation(implName).hwState === 'software_confirmed';
+    return isSwByRule && (s.framesEncoded > 0 || s.bytesSent > 0);
+  });
   if (fallbackAlert) {
     if (activeSoftwareOutbound && (webrtc.getEncoderPreference ? webrtc.getEncoderPreference() : 'gpu') !== 'cpu') {
       if (fallbackAlertText) {
-        fallbackAlertText.innerHTML = `Codificador ativo: <strong style="color: #fca5a5;">[SOFTWARE (CPU): ${escapeHtml(activeSoftwareOutbound.rawImplementation || activeSoftwareOutbound.encoderImplementation)}]</strong> no codec <strong>${escapeHtml(activeSoftwareOutbound.codec)}</strong>.<br>Motivo: A aceleração por hardware GPU não pôde ser ativada para este perfil no driver. O sistema está renegociando para restaurar a GPU ou operando via CPU.`;
+        fallbackAlertText.innerHTML = `Codificador ativo: <strong style="color: #fca5a5;">[Software (CPU): ${escapeHtml(activeSoftwareOutbound.rawImplementation || activeSoftwareOutbound.encoderImplementation)}]</strong> no codec <strong>${escapeHtml(activeSoftwareOutbound.codec)}</strong>.<br>Motivo: A implementação reportada pelo WebRTC foi classificada como software na CPU pela regra prioritária.`;
       }
       fallbackAlert.classList.remove('hidden');
     } else {
@@ -2234,14 +2238,15 @@ async function renderDiagnosticsData() {
     } else {
       outboundTbody.innerHTML = outboundStreams.map(s => {
         const targetName = roomState.participants.get(s.targetUserId || s.targetPeerId)?.name || s.targetPeerName || s.targetUserId || 'Todos';
-        const badgeClass = s.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
-        const badgeLabel = s.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software ⚠️' : 'Não determinado'));
         const rawImpl = s.rawImplementation || s.encoderImplementation || 'Não informado';
+        const classified = classifyCodecImplementation(rawImpl);
+        const badgeClass = s.hwBadgeClass || classified.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
+        const badgeLabel = s.hwLabel || classified.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software (CPU)' : 'Indeterminado'));
 
         const peTag = typeof s.powerEfficientEncoder === 'boolean'
           ? (s.powerEfficientEncoder
-            ? '<span class="diag-badge-hw" style="margin-left: 4px; font-size: 0.65rem; padding: 1px 5px;" title="Chromium WebRTC confirma aceleração nativa por hardware">[powerEfficient: true]</span>'
-            : '<span class="diag-badge-sw" style="margin-left: 4px; font-size: 0.65rem; padding: 1px 5px;" title="Chromium WebRTC acusa codificador por software">[powerEfficient: false]</span>')
+            ? '<span class="diag-badge-hw" style="margin-left: 4px; font-size: 0.65rem; padding: 1px 5px;" title="Valor bruto powerEfficientEncoder retornado pelo WebRTC">[powerEfficient: true]</span>'
+            : '<span class="diag-badge-sw" style="margin-left: 4px; font-size: 0.65rem; padding: 1px 5px;" title="Valor bruto powerEfficientEncoder retornado pelo WebRTC">[powerEfficient: false]</span>')
           : '';
 
         const fmtpDisplay = (s.sdpFmtpLine && s.sdpFmtpLine !== '--')
@@ -2250,7 +2255,7 @@ async function renderDiagnosticsData() {
 
         const implBadge = `
           <div>
-            <span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>
+            <span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} — <code>${escapeHtml(rawImpl)}</code></span>
             ${peTag}
             ${fmtpDisplay}
           </div>
@@ -2352,10 +2357,11 @@ async function renderDiagnosticsData() {
     } else {
       inboundTbody.innerHTML = inboundStreams.map(s => {
         const senderName = roomState.participants.get(s.peerId)?.name || s.senderName || s.peerId;
-        const badgeClass = s.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
-        const badgeLabel = s.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software ⚠️' : 'Não determinado'));
         const rawImpl = s.rawImplementation || s.decoderImplementation || 'Não informado';
-        const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} (${escapeHtml(rawImpl)})</span>`;
+        const classified = classifyCodecImplementation(rawImpl);
+        const badgeClass = s.hwBadgeClass || classified.hwBadgeClass || (s.hwState === 'hardware_confirmed' || s.isHardware ? 'diag-badge-hw' : (s.hwState === 'software_confirmed' || s.isSoftware ? 'diag-badge-sw' : 'diag-badge-neutral'));
+        const badgeLabel = s.hwLabel || classified.hwLabel || (s.hwState === 'hardware_confirmed' ? 'GPU Hardware ⚡' : (s.hwState === 'software_confirmed' ? 'Software (CPU)' : 'Indeterminado'));
+        const implBadge = `<span class="${badgeClass}" title="${escapeHtml(s.hwEvidence || '')}">${escapeHtml(badgeLabel)} — <code>${escapeHtml(rawImpl)}</code></span>`;
 
         const bitrateStr = s.bitrateMbps ? `${s.bitrateMbps} Mbps` : `${s.bitrateKbps || 0} kbps`;
         const fpsStr = (s.fps !== undefined && s.fps !== null && s.fps !== '') ? `${s.fps} fps` : '--';
@@ -2374,6 +2380,227 @@ async function renderDiagnosticsData() {
       }).join('');
     }
   }
+
+  await renderRtpSenderH264Section4();
+}
+
+async function collectRtpSenderH264AndNegotiated() {
+  let allCodecs = [];
+  try {
+    if (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function') {
+      allCodecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
+    }
+  } catch (_) {}
+
+  const h264Entries = allCodecs
+    .filter(c => (c.mimeType || '').toLowerCase() === 'video/h264')
+    .map((c, index) => {
+      const sdpFmtpLine = c.sdpFmtpLine || '';
+      const parsed = parseH264ProfileLevel(sdpFmtpLine);
+      const pidMatch = sdpFmtpLine.match(/profile-level-id=([0-9a-fA-F]{6})/i);
+      const pmMatch = sdpFmtpLine.match(/packetization-mode=([0-9]+)/i);
+      const profileLevelId = pidMatch ? pidMatch[1].toLowerCase() : (parsed?.fullPid || null);
+      const packetizationMode = pmMatch ? pmMatch[1] : null;
+      const levelIdc = parsed ? parsed.levelIdc : (profileLevelId ? parseInt(profileLevelId.slice(4, 6), 16) : null);
+      const levelHex = levelIdc !== null && !isNaN(levelIdc) ? `0x${levelIdc.toString(16).padStart(2, '0')}` : null;
+      const isLevel42OrAbove = levelIdc !== null && !isNaN(levelIdc) && levelIdc >= 0x2a;
+      const isLevel50OrAbove = levelIdc !== null && !isNaN(levelIdc) && levelIdc >= 0x32;
+
+      return {
+        index: index + 1,
+        mimeType: c.mimeType,
+        clockRate: c.clockRate ?? null,
+        sdpFmtpLine,
+        profileLevelId,
+        packetizationMode,
+        levelIdc,
+        levelHex,
+        isLevel42OrAbove,
+        isLevel50OrAbove
+      };
+    });
+
+  const hasLevelAtLeast42 = h264Entries.some(e => e.isLevel42OrAbove);
+  const hasLevelAtLeast50 = h264Entries.some(e => e.isLevel50OrAbove);
+
+  const rtpSenderH264Capabilities = {
+    totalCount: h264Entries.length,
+    hasLevelAtLeast42_0x2a: hasLevelAtLeast42,
+    hasLevelAtLeast50_0x32: hasLevelAtLeast50,
+    entries: h264Entries
+  };
+
+  const negotiatedOutbound = [];
+  if (webrtc && webrtc.peers && webrtc.peers.size > 0) {
+    for (const [peerId, pc] of webrtc.peers.entries()) {
+      if (!pc || typeof pc.getStats !== 'function') continue;
+      try {
+        const stats = await pc.getStats();
+        const codecsById = new Map();
+        stats.forEach(report => {
+          if (report.type === 'codec') {
+            codecsById.set(report.id, report);
+          }
+        });
+        stats.forEach(report => {
+          if (report.type === 'outbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
+            const isTransmitting = (report.framesEncoded > 0 || report.bytesSent > 0 || report.framesSent > 0);
+            if (!isTransmitting && pc.connectionState !== 'connected') return;
+            const codecReport = report.codecId ? codecsById.get(report.codecId) : null;
+            const impl = report.encoderImplementation || null;
+            const classified = classifyCodecImplementation(impl);
+            negotiatedOutbound.push({
+              peerId,
+              peerName: roomState.participants.get(peerId)?.name || peerId,
+              connectionState: pc.connectionState || null,
+              reportId: report.id,
+              mid: report.mid ?? null,
+              mimeType: codecReport?.mimeType || null,
+              payloadType: codecReport?.payloadType ?? report.payloadType ?? null,
+              sdpFmtpLine: codecReport?.sdpFmtpLine || null,
+              encoderImplementation: impl,
+              powerEfficientEncoder: report.powerEfficientEncoder ?? null,
+              hwState: classified.hwState,
+              hwLabel: classified.hwLabel,
+              frameWidth: report.frameWidth ?? null,
+              frameHeight: report.frameHeight ?? null,
+              framesPerSecond: report.framesPerSecond ?? null,
+              framesEncoded: report.framesEncoded ?? 0,
+              bytesSent: report.bytesSent ?? 0
+            });
+          }
+        });
+      } catch (_) {}
+    }
+  }
+
+  return { rtpSenderH264Capabilities, negotiatedOutbound };
+}
+
+function highlightFmtpLineHtml(sdpFmtpLine = '') {
+  if (!sdpFmtpLine) return '<span style="color: #64748b;">(sem sdpFmtpLine)</span>';
+  return escapeHtml(sdpFmtpLine)
+    .replace(
+      /(profile-level-id=([0-9a-fA-F]{6}))/gi,
+      '<strong style="color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 0 4px; border-radius: 3px;">$1</strong>'
+    )
+    .replace(
+      /(packetization-mode=([0-9]+))/gi,
+      '<strong style="color: #a78bfa; background: rgba(167, 139, 250, 0.15); padding: 0 4px; border-radius: 3px;">$1</strong>'
+    );
+}
+
+async function renderRtpSenderH264Section4(precollected = null) {
+  const boxEl = document.getElementById('diagRtpSenderH264Box');
+  if (!boxEl) return;
+
+  const data = precollected || (await collectRtpSenderH264AndNegotiated());
+  const caps = data.rtpSenderH264Capabilities;
+  const negotiated = data.negotiatedOutbound || [];
+
+  const level42Badge = caps.hasLevelAtLeast42_0x2a
+    ? '<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">Sim (&gt;= 0x2a / Level 4.2) ✅</span>'
+    : '<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">Não (&lt; 0x2a) ❌</span>';
+
+  const level50Badge = caps.hasLevelAtLeast50_0x32
+    ? '<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">Sim (&gt;= 0x32 / Level 5.0) ✅</span>'
+    : '<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">Não (&lt; 0x32) ❌</span>';
+
+  const entriesRowsHtml = caps.entries.length > 0
+    ? caps.entries.map(e => {
+        const lvlTag = e.isLevel50OrAbove
+          ? '<span class="diag-badge-hw" style="font-size: 0.65rem; padding: 1px 5px;">&gt;= 0x32 (L5.0+)</span>'
+          : (e.isLevel42OrAbove
+            ? '<span class="diag-badge-hw" style="font-size: 0.65rem; padding: 1px 5px;">&gt;= 0x2a (L4.2+)</span>'
+            : `<span class="diag-badge-neutral" style="font-size: 0.65rem; padding: 1px 5px;">${escapeHtml(e.levelHex || 'N/A')} (&lt; 0x2a)</span>`);
+        return `
+          <tr>
+            <td style="font-family: monospace;">#${e.index}</td>
+            <td style="font-family: monospace; font-weight: 600; color: #f8fafc;">${escapeHtml(e.mimeType)}</td>
+            <td style="font-family: monospace; color: #38bdf8; font-weight: 600;">${escapeHtml(e.profileLevelId || '--')} ${lvlTag}</td>
+            <td style="font-family: monospace; color: #a78bfa; font-weight: 600;">${escapeHtml(e.packetizationMode ?? '--')}</td>
+            <td style="font-family: monospace; word-break: break-all;">${highlightFmtpLineHtml(e.sdpFmtpLine)}</td>
+          </tr>
+        `;
+      }).join('')
+    : '<tr><td colspan="5" class="diag-empty">Nenhuma entrada H264 retornada por RTCRtpSender.getCapabilities("video").codecs.</td></tr>';
+
+  let negotiatedHtml = '';
+  if (negotiated.length > 0) {
+    const negRows = negotiated.map(n => {
+      const peStr = n.powerEfficientEncoder === null || n.powerEfficientEncoder === undefined
+        ? 'null'
+        : String(n.powerEfficientEncoder);
+      const rawImpl = n.encoderImplementation || 'Não informado';
+      const classified = classifyCodecImplementation(rawImpl);
+      return `
+        <tr>
+          <td><strong>${escapeHtml(n.peerName)}</strong></td>
+          <td style="font-family: monospace; font-weight: 600;">${escapeHtml(n.mimeType || '--')}</td>
+          <td style="font-family: monospace; word-break: break-all;">${highlightFmtpLineHtml(n.sdpFmtpLine || '')}</td>
+          <td><span class="${classified.hwBadgeClass}">${escapeHtml(classified.hwLabel)} — <code>${escapeHtml(rawImpl)}</code></span></td>
+          <td style="font-family: monospace;"><strong>${escapeHtml(peStr)}</strong></td>
+        </tr>
+      `;
+    }).join('');
+    negotiatedHtml = `
+      <div style="margin-top: 8px; margin-bottom: 4px; font-weight: 600; color: #38bdf8; font-size: 0.73rem;">
+        Negociado na Transmissão Ativa (getStats outbound-rtp + codec):
+      </div>
+      <div class="diag-table-container">
+        <table class="diag-table" style="font-size: 0.71rem;">
+          <thead>
+            <tr>
+              <th>Peer</th>
+              <th>Codec</th>
+              <th>sdpFmtpLine Negociado</th>
+              <th>encoderImplementation</th>
+              <th>powerEfficientEncoder</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${negRows}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } else {
+    negotiatedHtml = `
+      <div style="margin-top: 6px; color: #94a3b8; font-size: 0.71rem;">
+        <em>Negociado (getStats outbound-rtp): nenhum peer conectado com transmissão de vídeo ativa no momento.</em>
+      </div>
+    `;
+  }
+
+  boxEl.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
+      <div style="font-weight: 600; color: #e2e8f0; font-size: 0.74rem;">
+        Capacidades H.264 do RTCRtpSender (<code>RTCRtpSender.getCapabilities('video').codecs</code>):
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.71rem;">
+        <span>Total H.264: <strong style="color: #f8fafc;">${caps.totalCount}</strong></span>
+        <span>Nível &gt;= 0x2a (L4.2): ${level42Badge}</span>
+        <span>Nível &gt;= 0x32 (L5.0): ${level50Badge}</span>
+      </div>
+    </div>
+    <div class="diag-table-container">
+      <table class="diag-table" style="font-size: 0.71rem;">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>mimeType</th>
+            <th>profile-level-id</th>
+            <th>packetization-mode</th>
+            <th>sdpFmtpLine Completo</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entriesRowsHtml}
+        </tbody>
+      </table>
+    </div>
+    ${negotiatedHtml}
+  `;
 }
 
 async function handleTestGpuWebCodecs() {
@@ -2535,12 +2762,197 @@ async function handleTestGpuWebCodecs() {
   }
 }
 
+async function probeEnvReportWebCodecsMatrix() {
+  const codecs = ['avc1.42e02a', 'avc1.4d002a', 'avc1.64002a'];
+  const framerates = [30, 60];
+  const avcVariants = [
+    { key: 'sem annexb', avc: undefined },
+    { key: 'com annexb', avc: { format: 'annexb' } }
+  ];
+
+  const matrix = [];
+  const hasVideoEncoder = typeof globalThis.VideoEncoder !== 'undefined' &&
+                          typeof globalThis.VideoEncoder.isConfigSupported === 'function';
+
+  for (const codec of codecs) {
+    for (const framerate of framerates) {
+      for (const variant of avcVariants) {
+        const config = {
+          codec,
+          width: 1920,
+          height: 1080,
+          bitrate: 8_000_000,
+          framerate,
+          hardwareAcceleration: 'prefer-hardware',
+          latencyMode: 'realtime'
+        };
+        if (variant.avc) {
+          config.avc = variant.avc;
+        }
+
+        let supported = false;
+        let resolvedConfig = null;
+        let error = null;
+
+        if (!hasVideoEncoder) {
+          error = 'VideoEncoder.isConfigSupported indisponível';
+        } else {
+          try {
+            const res = await globalThis.VideoEncoder.isConfigSupported(config);
+            supported = Boolean(res?.supported);
+            resolvedConfig = res?.config || null;
+          } catch (err) {
+            supported = false;
+            error = err?.message || String(err);
+          }
+        }
+
+        matrix.push({
+          codec,
+          framerate,
+          formato: variant.key,
+          width: 1920,
+          height: 1080,
+          bitrate: 8_000_000,
+          hardwareAcceleration: 'prefer-hardware',
+          latencyMode: 'realtime',
+          avc: variant.avc || null,
+          supported,
+          resolvedConfig,
+          error
+        });
+      }
+    }
+  }
+
+  return matrix;
+}
+
+function renderEnvReportMatrixTable(matrix = [], statusBannerHtml = '') {
+  const matrixBoxEl = document.getElementById('diagEnvReportMatrixBox');
+  if (!matrixBoxEl) return;
+
+  const rowsHtml = matrix.map((item) => {
+    const supBadge = item.supported
+      ? '<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">true ✅</span>'
+      : `<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">false ❌${item.error ? ' (' + escapeHtml(item.error) + ')' : ''}</span>`;
+    return `
+      <tr>
+        <td style="font-family: monospace; font-weight: 600; color: #f8fafc;">${escapeHtml(item.codec)}</td>
+        <td style="font-family: monospace;">${item.framerate} fps</td>
+        <td style="font-family: monospace;">${escapeHtml(item.formato)}</td>
+        <td>${supBadge}</td>
+      </tr>
+    `;
+  }).join('');
+
+  matrixBoxEl.classList.remove('hidden');
+  matrixBoxEl.innerHTML = `
+    ${statusBannerHtml}
+    <div style="margin-bottom: 6px; font-weight: 600; color: #e2e8f0; font-size: 0.74rem;">
+      Matriz VideoEncoder.isConfigSupported (1920x1080 • 8 Mbps • realtime • prefer-hardware):
+    </div>
+    <div class="diag-table-container">
+      <table class="diag-table" style="font-size: 0.72rem;">
+        <thead>
+          <tr>
+            <th>Codec</th>
+            <th>FPS</th>
+            <th>Formato AVC</th>
+            <th>Supported</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function handleCopyEnvReport() {
+  const btn = document.getElementById('btnCopyEnvReport');
+  const origText = btn ? btn.textContent : '📋 Copiar relatório de ambiente';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Coletando relatório...';
+  }
+
+  try {
+    let envData = {};
+    if (window.desktopAPI && typeof window.desktopAPI.getEnvReport === 'function') {
+      envData = await window.desktopAPI.getEnvReport();
+    } else {
+      envData = {
+        note: 'Coletado no navegador (window.desktopAPI.getEnvReport indisponível fora do Electron)'
+      };
+    }
+
+    const [matrix, rtpAndNegotiated] = await Promise.all([
+      probeEnvReportWebCodecsMatrix(),
+      collectRtpSenderH264AndNegotiated()
+    ]);
+
+    const fullReport = {
+      collectedAt: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      ...envData,
+      rtpSenderH264Capabilities: rtpAndNegotiated.rtpSenderH264Capabilities,
+      negotiatedOutbound: rtpAndNegotiated.negotiatedOutbound,
+      videoEncoderIsConfigSupportedMatrix: matrix
+    };
+
+    const jsonString = JSON.stringify(fullReport, null, 2);
+    let copiedOk = false;
+    try {
+      await navigator.clipboard.writeText(jsonString);
+      copiedOk = true;
+    } catch (_) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = jsonString;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        copiedOk = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {}
+    }
+
+    const banner = copiedOk
+      ? '<div style="margin-bottom: 8px; padding: 6px 10px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; color: #34d399; font-weight: 600; font-size: 0.73rem;">✅ Relatório completo de ambiente (JSON) copiado para a área de transferência!</div>'
+      : '<div style="margin-bottom: 8px; padding: 6px 10px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 4px; color: #fbbf24; font-weight: 600; font-size: 0.73rem;">⚠️ Matriz gerada (veja o console para o JSON completo caso a área de transferência esteja bloqueada).</div>';
+
+    console.log('[EnvReport JSON]', fullReport);
+    await renderRtpSenderH264Section4(rtpAndNegotiated);
+    renderEnvReportMatrixTable(matrix, banner);
+
+    if (btn) {
+      btn.textContent = copiedOk ? '✅ Relatório copiado!' : '⚠️ Ver Console';
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }, 2500);
+    }
+  } catch (err) {
+    console.error('[Diagnostics] Erro ao gerar relatório de ambiente:', err);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+}
+
 async function openDiagnosticsModal() {
   const modal = document.getElementById('diagnosticsModal');
   if (!modal) return;
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
   await renderDiagnosticsData();
+  probeEnvReportWebCodecsMatrix()
+    .then((matrix) => renderEnvReportMatrixTable(matrix))
+    .catch((err) => console.warn('[Diagnostics] Erro ao renderizar matriz inicial WebCodecs:', err));
   if (!diagnosticsInterval) {
     diagnosticsInterval = setInterval(() => {
       renderDiagnosticsData().catch(e => console.warn('[Diagnostics] Erro na atualização periódica:', e));
@@ -2923,6 +3335,7 @@ function setupEventListeners() {
   const btnCloseDiagnostics = document.getElementById('btnCloseDiagnostics');
   const btnCloseDiagnosticsFooter = document.getElementById('btnCloseDiagnosticsFooter');
   const btnTestGpuWebCodecs = document.getElementById('btnTestGpuWebCodecs');
+  const btnCopyEnvReport = document.getElementById('btnCopyEnvReport');
   const btnOpenChromeGpu = document.getElementById('btnOpenChromeGpu');
   const btnToggleFloatingHud = document.getElementById('btnToggleFloatingHud');
 
@@ -2943,6 +3356,9 @@ function setupEventListeners() {
   }
   if (btnTestGpuWebCodecs) {
     btnTestGpuWebCodecs.addEventListener('click', handleTestGpuWebCodecs);
+  }
+  if (btnCopyEnvReport) {
+    btnCopyEnvReport.addEventListener('click', handleCopyEnvReport);
   }
   if (btnOpenChromeGpu) {
     if (window.desktopAPI && typeof window.desktopAPI.openChromeGpu === 'function') {

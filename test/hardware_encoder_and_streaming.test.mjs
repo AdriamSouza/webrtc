@@ -820,4 +820,76 @@ describe('8. Motor de Codificação Direta em GPU via WebCodecs (GpuHardwareEnco
   });
 });
 
+describe('9. Opção Priorizar H.264 High 5.0 (640032) para teste em configureCodecPreferences', () => {
+  const sampleCapabilities = {
+    codecs: [
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f' },
+      { mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032' },
+      { mimeType: 'video/VP9', clockRate: 90000 },
+      { mimeType: 'video/AV1', clockRate: 90000 },
+      { mimeType: 'video/VP8', clockRate: 90000 },
+      { mimeType: 'video/rtx', clockRate: 90000 },
+      { mimeType: 'video/red', clockRate: 90000 },
+      { mimeType: 'video/ulpfec', clockRate: 90000 }
+    ]
+  };
 
+  test('Padrão (desativada): mantém 42e01f (pm=1) no topo, seguido de 4d001f (pm=1)', () => {
+    const origSender = globalThis.RTCRtpSender;
+    globalThis.RTCRtpSender = { getCapabilities: () => sampleCapabilities };
+    try {
+      const wm = new WebRTCManager(null);
+      assert.equal(wm.getPrioritizeH264High50(), false);
+
+      let appliedOrder = null;
+      const mockTransceiver = {
+        setCodecPreferences: (codecs) => { appliedOrder = codecs; }
+      };
+
+      wm.configureCodecPreferences(mockTransceiver);
+      assert.ok(appliedOrder);
+      assert.equal(appliedOrder.length, sampleCapabilities.codecs.length);
+      assert.ok(appliedOrder[0].sdpFmtpLine.includes('profile-level-id=42e01f'));
+      assert.ok(appliedOrder[0].sdpFmtpLine.includes('packetization-mode=1'));
+      assert.ok(appliedOrder[1].sdpFmtpLine.includes('profile-level-id=4d001f'));
+      assert.ok(appliedOrder[1].sdpFmtpLine.includes('packetization-mode=1'));
+    } finally {
+      globalThis.RTCRtpSender = origSender;
+    }
+  });
+
+  test('Ativada: coloca no topo H.264 640032 (pm=1), depois 42e01f (pm=1) e 4d001f (pm=1), mantendo rtx/red/ulpfec', () => {
+    const origSender = globalThis.RTCRtpSender;
+    globalThis.RTCRtpSender = { getCapabilities: () => sampleCapabilities };
+    try {
+      const wm = new WebRTCManager(null);
+      wm.prioritizeH264High50 = true;
+      assert.equal(wm.getPrioritizeH264High50(), true);
+
+      let appliedOrder = null;
+      const mockTransceiver = {
+        setCodecPreferences: (codecs) => { appliedOrder = codecs; }
+      };
+
+      wm.configureCodecPreferences(mockTransceiver);
+      assert.ok(appliedOrder);
+      assert.equal(appliedOrder.length, sampleCapabilities.codecs.length);
+      assert.ok(appliedOrder[0].sdpFmtpLine.includes('profile-level-id=640032'));
+      assert.ok(appliedOrder[0].sdpFmtpLine.includes('packetization-mode=1'));
+      assert.ok(appliedOrder[1].sdpFmtpLine.includes('profile-level-id=42e01f'));
+      assert.ok(appliedOrder[1].sdpFmtpLine.includes('packetization-mode=1'));
+      assert.ok(appliedOrder[2].sdpFmtpLine.includes('profile-level-id=4d001f'));
+      assert.ok(appliedOrder[2].sdpFmtpLine.includes('packetization-mode=1'));
+
+      const lastThreeMimes = appliedOrder.slice(-3).map(c => c.mimeType);
+      assert.deepEqual(lastThreeMimes, ['video/rtx', 'video/red', 'video/ulpfec']);
+    } finally {
+      globalThis.RTCRtpSender = origSender;
+    }
+  });
+});

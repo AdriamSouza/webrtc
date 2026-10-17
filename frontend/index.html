@@ -851,6 +851,16 @@
             </select>
           </div>
 
+          <div class="form-group" style="margin-top: 10px;">
+            <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="settingPrioritizeH264High50">
+              <span>Priorizar H.264 High 5.0 (640032) para teste</span>
+            </label>
+            <span class="form-hint" style="display:block; margin-top:4px; font-size:0.75rem; color:#94a3b8;">
+              Quando ativa, coloca no topo de <code>setCodecPreferences</code> a entrada H.264 <code>profile-level-id=640032</code> (<code>packetization-mode=1</code>), seguida de <code>42e01f</code> e <code>4d001f</code>.
+            </span>
+          </div>
+
           <div class="settings-section">
             <label class="settings-label">Aceleração de Hardware Detectada nesta Máquina</label>
             <div id="codecCapabilitiesList" class="codecs-list">

@@ -41,6 +41,16 @@ export class WebRTCManager {
     this.encoderPreference = (() => {
       try { return localStorage.getItem('hyperstream_encoder_preference') || 'gpu'; } catch (_) { return 'gpu'; }
     })();
+    this.prioritizeH264High50 = (() => {
+      try {
+        const raw = localStorage.getItem('webrtc_stream_settings');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return Boolean(parsed.prioritizeH264High50);
+        }
+        return false;
+      } catch (_) { return false; }
+    })();
     this.rejectedHardwareProfiles = new Set();
     this.attemptedFallbacks = new Map();
     this.hardwareProbe = null;
@@ -373,8 +383,8 @@ export class WebRTCManager {
             return 900;
           };
 
-          // Reordena se setCodecPreferences não foi suportado ou para garantir perfis H.264
-          if (!this.lastPreferredCodecs || this.lastPreferredCodecs.length === 0 || pref === 'H264' || pref === 'AUTO') {
+          // Reordena se setCodecPreferences não foi suportado ou para garantir perfis H.264 (exceto quando High 5.0 para teste estiver ativo via setCodecPreferences)
+          if (!this.prioritizeH264High50 && (!this.lastPreferredCodecs || this.lastPreferredCodecs.length === 0 || pref === 'H264' || pref === 'AUTO')) {
             const sortedPayloads = [...payloads].sort((a, b) => scorePayload(a) - scorePayload(b));
             lines[0] = [...header, ...sortedPayloads].join(' ');
           } else {
@@ -627,6 +637,16 @@ export class WebRTCManager {
     await this.applyCodecPreferencesToAllPeers();
   }
 
+  getPrioritizeH264High50() {
+    return Boolean(this.prioritizeH264High50);
+  }
+
+  async setPrioritizeH264High50(enabled) {
+    this.prioritizeH264High50 = Boolean(enabled);
+    console.log(`[WebRTC] Priorizar H.264 High 5.0 (640032) para teste: ${this.prioritizeH264High50 ? 'ATIVADO' : 'DESATIVADO'}`);
+    await this.applyCodecPreferencesToAllPeers();
+  }
+
   /**
    * Executa sondagem real de hardware com probeRealHardwareEncoders
    */
@@ -677,14 +697,54 @@ export class WebRTCManager {
       });
 
       if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
-        // Reordena (não remove): 1. 42e01f (pm=1), 2. 4d001f (pm=1), 3. demais H.264 (pm=1),
-        // 4. VP9/AV1/VP8 conforme preferência, 5. packetization-mode=0 / 42001f / 640032 por último,
-        // 6. rtx, red, ulpfec na lista final.
-        const finalOrder = optimal.preferredOrder;
+        let finalOrder = optimal.preferredOrder;
+        let appliedReason = optimal.reason;
+
+        // Quando a opção "Priorizar H.264 High 5.0 (640032) para teste" está ativa:
+        // Coloca no topo: 1º H.264 profile-level-id=640032 packetization-mode=1,
+        // 2º 42e01f packetization-mode=1, 3º 4d001f packetization-mode=1, mantendo rtx/red/ulpfec no final.
+        if (this.prioritizeH264High50) {
+          const isHelper = (mime = '') => {
+            const m = mime.toLowerCase();
+            return m.includes('rtx') || m.includes('red') || m.includes('ulpfec') || m.includes('flexfec');
+          };
+          const h264High50 = [];
+          const h26442e01f = [];
+          const h2644d001f = [];
+          const restVideo = [];
+          const helpers = [];
+
+          for (const c of optimal.preferredOrder) {
+            const mime = (c.mimeType || '').toLowerCase();
+            const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+            if (isHelper(mime)) {
+              helpers.push(c);
+            } else if (mime === 'video/h264' && fmtp.includes('packetization-mode=1') && fmtp.includes('profile-level-id=640032')) {
+              h264High50.push(c);
+            } else if (mime === 'video/h264' && fmtp.includes('packetization-mode=1') && fmtp.includes('profile-level-id=42e01f')) {
+              h26442e01f.push(c);
+            } else if (mime === 'video/h264' && fmtp.includes('packetization-mode=1') && fmtp.includes('profile-level-id=4d001f')) {
+              h2644d001f.push(c);
+            } else {
+              restVideo.push(c);
+            }
+          }
+
+          finalOrder = [
+            ...h264High50,
+            ...h26442e01f,
+            ...h2644d001f,
+            ...restVideo,
+            ...helpers
+          ];
+          appliedReason = 'Modo de teste ativo: H.264 High 5.0 (640032 pm=1) no topo, seguido por 42e01f (pm=1) e 4d001f (pm=1)';
+        }
+
         transceiver.setCodecPreferences(finalOrder);
         this.lastPreferredCodecs = finalOrder;
         const top = finalOrder[0];
-        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${optimal.reason})`);
+        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}${this.prioritizeH264High50 ? ' [High5.0=640032]' : ''}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${appliedReason})`);
+        console.log('[WebRTC] Ordem final aplicada em configureCodecPreferences:', finalOrder.map((c, idx) => `${idx + 1}. ${c.mimeType}${c.sdpFmtpLine ? ` [${c.sdpFmtpLine}]` : ''}`));
       }
     } catch (err) {
       console.warn('[WebRTC] Não foi possível definir preferência de codecs (usando padrão):', err.message);

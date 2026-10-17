@@ -5600,6 +5600,22 @@ function setupSettingsModal() {
     });
   }
 
+  const settingPrioritizeH264High50 = document.getElementById('settingPrioritizeH264High50');
+  if (settingPrioritizeH264High50) {
+    settingPrioritizeH264High50.checked = Boolean(webrtc.getPrioritizeH264High50());
+    settingPrioritizeH264High50.addEventListener('change', async () => {
+      const enabled = Boolean(settingPrioritizeH264High50.checked);
+      console.log(`[Settings] Priorizar H.264 High 5.0 (640032) para teste: ${enabled}`);
+      await webrtc.setPrioritizeH264High50(enabled);
+      saveSettingsState();
+      appendSystemChat(`Priorizar H.264 High 5.0 (640032) para teste: ${enabled ? 'Ativado' : 'Desativado'}`);
+      const diagModal = document.getElementById('diagnosticsModal');
+      if (diagModal && !diagModal.classList.contains('hidden')) {
+        renderDiagnosticsData().catch(() => {});
+      }
+    });
+  }
+
   // Cartões Clicáveis de Codecs de Vídeo
   const codecCards = [
     { el: document.getElementById('codecCardH264'), val: 'H264' },
@@ -5900,6 +5916,7 @@ function setupSettingsModal() {
         minBitrate: settingMinBitrate ? settingMinBitrate.value : '4000000',
         codec: settingPreferredCodec ? settingPreferredCodec.value : 'auto',
         encoderPreference: settingEncoderPreference ? settingEncoderPreference.value : 'auto',
+        prioritizeH264High50: settingPrioritizeH264High50 ? Boolean(settingPrioritizeH264High50.checked) : false,
         captureSystemAudio: settingCaptureSystemAudio ? settingCaptureSystemAudio.checked : true,
         captureCameraAudio: settingCaptureCameraAudio ? settingCaptureCameraAudio.checked : false,
         micDeviceId: settingMicDeviceSelect ? settingMicDeviceSelect.value : '',
@@ -5915,6 +5932,10 @@ function setupSettingsModal() {
     try {
       const raw = localStorage.getItem('webrtc_stream_settings');
       if (!raw) {
+        if (settingPrioritizeH264High50) {
+          settingPrioritizeH264High50.checked = false;
+        }
+        webrtc.prioritizeH264High50 = false;
         if (settingCaptureSystemAudio) {
           settingCaptureSystemAudio.checked = true;
           media.setCaptureSystemAudio(true);
@@ -5949,6 +5970,11 @@ function setupSettingsModal() {
       if (s.minBitrate && settingMinBitrate) {
         settingMinBitrate.value = s.minBitrate;
       }
+      const high50 = Boolean(s.prioritizeH264High50);
+      if (settingPrioritizeH264High50) {
+        settingPrioritizeH264High50.checked = high50;
+      }
+      webrtc.prioritizeH264High50 = high50;
       if (s.encoderPreference && settingEncoderPreference) {
         settingEncoderPreference.value = s.encoderPreference;
         webrtc.setEncoderPreference(s.encoderPreference);

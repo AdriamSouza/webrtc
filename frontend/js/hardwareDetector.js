@@ -246,6 +246,64 @@ export function clearProbeHardwareCache() {
 }
 
 /**
+ * Classifica o nome de implementação de um codificador/decodificador (outbound/inbound)
+ * aplicando estritamente a regra de prioridade da Etapa 4 ANTES de qualquer outro critério:
+ * 1. Se contiver (case-insensitive): "openh264", "libvpx", "libaom", "libdav1d", "dav1d",
+ *    "ffmpeg", "software", "sw" como palavra (\bsw\b), ou "SimulcastEncoderAdapter" seguido
+ *    de implementação de software => hwState = 'software_confirmed', rótulo "Software (CPU)",
+ *    badgeClass = 'diag-badge-sw'.
+ * 2. Só classifica como 'hardware_confirmed' se contiver "MediaFoundation", "ExternalEncoder"
+ *    (ou "ExternalDecoder"), "VideoToolbox", "VAAPI", "NVENC", "AMF" ou "QSV".
+ * 3. Qualquer outro caso => 'indeterminado', com o texto bruto da implementação visível.
+ */
+export function classifyCodecImplementation(implName) {
+  const raw = implName !== undefined && implName !== null ? String(implName).trim() : '';
+  const rawDisplay = raw || 'Não informado';
+  const s = raw.toLowerCase();
+
+  const swSubPattern = /(openh264|libvpx|libaom|libdav1d|dav1d|ffmpeg|software|\bsw\b)/i;
+  const simulcastSwPattern = /simulcastencoderadapter[\s\S]*(openh264|libvpx|libaom|libdav1d|dav1d|ffmpeg|software|\bsw\b)/i;
+
+  if (raw && (swSubPattern.test(s) || simulcastSwPattern.test(s))) {
+    return {
+      hwState: 'software_confirmed',
+      category: 'software',
+      hwLabel: 'Software (CPU)',
+      hwBadgeClass: 'diag-badge-sw',
+      isHardware: false,
+      isSoftware: true,
+      isUnknown: false,
+      rawImplementation: rawDisplay
+    };
+  }
+
+  const hwPattern = /(mediafoundation|externalencoder|externaldecoder|videotoolbox|vaapi|nvenc|amf|qsv)/i;
+  if (raw && hwPattern.test(s)) {
+    return {
+      hwState: 'hardware_confirmed',
+      category: 'hardware',
+      hwLabel: 'GPU Hardware ⚡',
+      hwBadgeClass: 'diag-badge-hw',
+      isHardware: true,
+      isSoftware: false,
+      isUnknown: false,
+      rawImplementation: rawDisplay
+    };
+  }
+
+  return {
+    hwState: 'indeterminado',
+    category: 'inconclusive',
+    hwLabel: 'Indeterminado',
+    hwBadgeClass: 'diag-badge-neutral',
+    isHardware: false,
+    isSoftware: false,
+    isUnknown: true,
+    rawImplementation: rawDisplay
+  };
+}
+
+/**
  * Verifica se um codec H.264 possui perfil estritamente de hardware suportado
  * Apenas 42e01f (Constrained Baseline) e 4d001f (Main Profile) com packetization-mode=1
  * Bane permanentemente OpenH264, packetization-mode=0, 42001f e 640032

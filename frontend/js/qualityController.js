@@ -57,26 +57,27 @@ export const QUALITY_PROFILES = {
   }
 };
 
+import { classifyCodecImplementation } from './hardwareDetector.js';
+
 /**
  * Avalia se o nome da implementação de codificador/decodificador do Chromium
- * corresponde a aceleração por hardware GPU (NVENC, AMF, D3D11, MediaFoundation)
+ * corresponde a aceleração por hardware GPU segundo a regra estrita da Etapa 4.
  */
 export function isHardwareCodecImplementation(implName) {
-  if (!implName) return false;
-  const s = String(implName).toLowerCase();
-  if (s.startsWith('externalencoder') || s.startsWith('externaldecoder')) return true;
-  if (s.includes('d3d11') || s.includes('nvenc') || s.includes('amf') || s.includes('mediafoundation') || s.includes('qsv') || s.includes('hardware')) return true;
-  if (s.includes('openh264') || s.includes('libvpx') || s.includes('libaom') || s.includes('dav1d') || s.includes('ffmpeg')) return false;
-  return false;
+  return classifyCodecImplementation(implName).isHardware;
 }
 
 /**
  * Análise técnica detalhada da implementação do codificador de vídeo
- * Taxonomia rigorosa de 3 estados operacionais + inativo:
- * - 'hardware_confirmed': Hardware confirmado por evidência direta (MFT, NVENC, AMF, D3D11, etc.)
- * - 'software_confirmed': Software confirmado por evidência direta (libaom, openh264, libvpx, dav1d, etc.)
- * - 'unknown': Implementação não informada pelo WebRTC ou não catalogada (sem suposição de CPU)
- * - 'inactive': Fluxo sem atividade de codificação
+ * Regra da Etapa 4 aplicada ANTES de qualquer outro critério:
+ * - Se encoderImplementation/rawImplementation contiver (sem diferenciar maiúsculas):
+ *   "openh264", "libvpx", "libaom", "libdav1d", "ffmpeg", "software", "sw" como palavra,
+ *   ou "SimulcastEncoderAdapter" seguido de implementação de software =>
+ *   hwState = 'software_confirmed', rótulo "Software (CPU)", classe de badge de software ('diag-badge-sw').
+ *   Isso vale MESMO que a GPU esteja detectada e MESMO que powerEfficientEncoder seja true.
+ * - Só classifica como 'hardware_confirmed' se a implementação contiver
+ *   "MediaFoundation", "ExternalEncoder", "VideoToolbox", "VAAPI", "NVENC", "AMF" ou "QSV".
+ * - Qualquer outro caso: 'indeterminado', com o texto bruto da implementação visível.
  */
 export function analyzeEncoderImplementation(implName, codecName = '', isPowerEfficient = null, activityInfo = {}) {
   // Trata caso onde activityInfo foi passado como 3º argumento para compatibilidade reversa
@@ -89,8 +90,6 @@ export function analyzeEncoderImplementation(implName, codecName = '', isPowerEf
     framesEncoded = null,
     bytesSent = null,
     framesDelta = null,
-    avgEncodeTimeMs = null,
-    cpuUsagePercent = null,
     qualityLimitationReason = 'none'
   } = activityInfo;
 
@@ -112,141 +111,71 @@ export function analyzeEncoderImplementation(implName, codecName = '', isPowerEf
     };
   }
 
-  const numericCpuUsage = typeof cpuUsagePercent === 'number'
-    ? cpuUsagePercent
-    : (typeof cpuUsagePercent === 'string' ? parseFloat(cpuUsagePercent) : null);
-  const isHighCpu = numericCpuUsage !== null && !isNaN(numericCpuUsage) && numericCpuUsage > 25.0;
-
-  const numericEncodeTime = typeof avgEncodeTimeMs === 'number'
-    ? avgEncodeTimeMs
-    : (typeof avgEncodeTimeMs === 'string' ? parseFloat(avgEncodeTimeMs) : null);
-  const isFastHwEncode = numericEncodeTime !== null && !isNaN(numericEncodeTime) && numericEncodeTime > 0 && numericEncodeTime <= 12.0;
-
-  // 1. VALIDAÇÃO REAL DE USO DE CPU DO PROCESSO:
-  // Se o uso de CPU do processo do Electron exceder 25% durante a transmissão,
-  // o sistema DEVE declarar obrigatoriamente software_confirmed ("OpenH264 na CPU ⚠️"),
-  // independentemente do tempo de encode reportado pelo WebRTC.
-  if (isHighCpu) {
-    const rawImpl = implName || (codecName ? `${codecName} Software` : 'OpenH264');
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: 'OpenH264 na CPU ⚠️',
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: `${rawImpl} [CPU: ${numericCpuUsage.toFixed(1)}%]`,
-      powerEfficient: false,
-      qualityLimitationReason,
-      evidence: `Uso elevado de CPU do processo (${numericCpuUsage.toFixed(1)}% > 25.0%) detectado durante a transmissão — codificação executada em software na CPU (OpenH264)`
-    };
-  }
-
-  // 2. REGRA DE OURO FÍSICA: TEMPO REAL DE ENCODE <= 12.0 ms
-  // Se avgEncodeTimeMs <= 12.0 ms (como os 4.91 ms medidos na RX 7600),
-  // o sistema DEVE classificar obrigatoriamente como hardware_confirmed ("GPU Hardware ⚡"),
-  // independentemente da string encoderImplementation retornada pelo Chromium!
-  // (Nenhum encoder de software em CPU atinge 4.9 ms em 1080p60).
-  if (isFastHwEncode) {
-    const rawImpl = implName ? `${implName} [${numericEncodeTime}ms]` : `GPU Hardware [${numericEncodeTime}ms]`;
-    return {
-      state: 'hardware_confirmed',
-      category: 'hardware',
-      label: 'GPU Hardware ⚡',
-      badgeClass: 'diag-badge-hw',
-      isHardware: true,
-      isSoftware: false,
-      isUnknown: false,
-      rawImplementation: rawImpl,
-      powerEfficient: true,
-      qualityLimitationReason,
-      evidence: `GPU Hardware Confirmado (${rawImpl}) — Tempo real de codificação ultrarrápido (${numericEncodeTime} ms <= 12.0 ms), comprovando aceleração física na GPU (AMD AMF / Direct3D 11 / MediaFoundation)`
-    };
-  }
-
+  const classified = classifyCodecImplementation(implName);
+  const rawDisplay = classified.rawImplementation;
   const s = String(implName || '').toLowerCase();
-  const isHwImpl = s.startsWith('externalencoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('nvenc') || s.includes('amf') || s.includes('vcn') || s.includes('qsv') || s.includes('vaapi') || s.includes('hardware');
-  const isSwImpl = s.includes('openh264') || s.includes('libaom') || s.includes('libvpx') || s.includes('dav1d') || s.includes('ffmpeg') || s.includes('software');
 
-  // 3. Hardware confirmado: powerEfficient === true OU nome comprovadamente de hardware (sem indicador de software)
-  if (isPowerEfficient === true || (isHwImpl && !isSwImpl && isPowerEfficient !== false)) {
-    const rawImpl = implName ? `${implName}${isPowerEfficient === true ? ' [powerEfficient]' : ''}` : 'Hardware GPU [powerEfficient]';
-    return {
-      state: 'hardware_confirmed',
-      category: 'hardware',
-      label: 'GPU Hardware ⚡',
-      badgeClass: 'diag-badge-hw',
-      isHardware: true,
-      isSoftware: false,
-      isUnknown: false,
-      rawImplementation: rawImpl,
-      powerEfficient: isPowerEfficient ?? true,
-      qualityLimitationReason,
-      evidence: `GPU Hardware Confirmado (${rawImpl}) via DirectX 11 / MediaFoundationVideoEncodeAccelerator`
-    };
-  }
-
-  // 4. Software confirmado: powerEfficient === false (quando framesEncoded > 15) OU nome de software
-  if (isPowerEfficient === false || isSwImpl) {
-    const rawImpl = implName || `${codecName} Software`;
-    let evidenceText = `Software / CPU (${rawImpl}) — Fallback ativo para codificador de software`;
+  // 1. Regra prioritária absoluta: implementação de software explícita
+  if (classified.hwState === 'software_confirmed') {
+    let evidenceText = `Software (CPU) (${rawDisplay}) — Codificador por software detectado`;
     if (s.includes('libaom')) {
-      evidenceText = `Software / CPU (${rawImpl}) — Hardware/driver não expôs codificador AV1 ao WebRTC; fallback ativo para biblioteca libaom multi-threaded`;
+      evidenceText = `Software (CPU) (${rawDisplay}) — Hardware/driver não expôs codificador AV1 ao WebRTC; fallback ativo para biblioteca libaom multi-threaded`;
     } else if (s.includes('openh264')) {
-      evidenceText = `Software / CPU (${rawImpl}) — Fallback ativo para OpenH264 (Cisco)`;
+      evidenceText = `Software (CPU) (${rawDisplay}) — Codificador OpenH264 (Cisco) em CPU`;
     } else if (s.includes('libvpx')) {
-      evidenceText = `Software / CPU (${rawImpl}) — Codificador VP8/VP9 por CPU`;
+      evidenceText = `Software (CPU) (${rawDisplay}) — Codificador VP8/VP9 por CPU`;
     }
     return {
       state: 'software_confirmed',
       category: 'software',
-      label: `Software (CPU: ${implName || codecName}) ⚠️`,
+      label: 'Software (CPU)',
       badgeClass: 'diag-badge-sw',
       isHardware: false,
       isSoftware: true,
       isUnknown: false,
-      rawImplementation: rawImpl,
-      powerEfficient: false,
+      rawImplementation: rawDisplay,
+      powerEfficient: isPowerEfficient,
       qualityLimitationReason,
       evidence: evidenceText
     };
   }
 
-  // 5. Ausência de implementação e de sinal de powerEfficient
-  if (!implName) {
+  // 2. Só classifica como 'hardware_confirmed' se contiver MediaFoundation, ExternalEncoder, VideoToolbox, VAAPI, NVENC, AMF ou QSV
+  if (classified.hwState === 'hardware_confirmed') {
     return {
-      state: 'unknown',
-      category: 'inconclusive',
-      label: 'Não determinado',
-      badgeClass: 'diag-badge-neutral',
-      isHardware: false,
+      state: 'hardware_confirmed',
+      category: 'hardware',
+      label: 'GPU Hardware ⚡',
+      badgeClass: 'diag-badge-hw',
+      isHardware: true,
       isSoftware: false,
-      isUnknown: true,
-      rawImplementation: 'Não informado pelo WebRTC',
-      powerEfficient: null,
+      isUnknown: false,
+      rawImplementation: rawDisplay,
+      powerEfficient: isPowerEfficient,
       qualityLimitationReason,
-      evidence: 'A API getStats() do Chromium nesta plataforma não expôs encoderImplementation no relatório outbound-rtp. Não é possível determinar se a codificação é executada via GPU (MFT/D3D11) ou CPU.'
+      evidence: `GPU Hardware Confirmado (${rawDisplay}) via DirectX 11 / MediaFoundationVideoEncodeAccelerator`
     };
   }
 
+  // 3. Qualquer outro caso: 'indeterminado', com o texto bruto da implementação visível
   return {
-    state: 'unknown',
+    state: 'indeterminado',
     category: 'inconclusive',
-    label: `Não determinado (${implName})`,
+    label: 'Indeterminado',
     badgeClass: 'diag-badge-neutral',
     isHardware: false,
     isSoftware: false,
     isUnknown: true,
-    rawImplementation: implName,
+    rawImplementation: rawDisplay,
     powerEfficient: isPowerEfficient,
     qualityLimitationReason,
-    evidence: `Implementação não catalogada: ${implName}`
+    evidence: `Implementação indeterminada: ${rawDisplay}`
   };
 }
 
 /**
- * Análise técnica detalhada da implementação do decodificador de vídeo
+ * Análise técnica detalhada da implementação do decodificador de vídeo (inbound)
+ * Segue a mesma regra estrita da Etapa 4.
  */
 export function analyzeDecoderImplementation(implName, powerEfficient = false, activityInfo = {}) {
   const { framesDecoded = null, bytesReceived = null, framesDelta = null } = activityInfo;
@@ -266,23 +195,24 @@ export function analyzeDecoderImplementation(implName, powerEfficient = false, a
     };
   }
 
-  if (!implName && !powerEfficient) {
+  const classified = classifyCodecImplementation(implName);
+  const rawDisplay = classified.rawImplementation;
+
+  if (classified.hwState === 'software_confirmed') {
     return {
-      state: 'unknown',
-      category: 'inconclusive',
-      label: 'Não determinado',
-      badgeClass: 'diag-badge-neutral',
+      state: 'software_confirmed',
+      category: 'software',
+      label: 'Software (CPU)',
+      badgeClass: 'diag-badge-sw',
       isHardware: false,
-      isSoftware: false,
-      isUnknown: true,
-      rawImplementation: 'Não informado pelo WebRTC',
-      evidence: 'A API getStats() do Chromium nesta plataforma não expôs decoderImplementation. Não é possível determinar se a decodificação é executada via GPU (D3D11/DXVA) ou CPU.'
+      isSoftware: true,
+      isUnknown: false,
+      rawImplementation: rawDisplay,
+      evidence: `Software (CPU) (${rawDisplay})`
     };
   }
 
-  const s = String(implName || '').toLowerCase();
-  if (s.startsWith('externaldecoder') || s.includes('d3d11') || s.includes('mediafoundation') || s.includes('hardware') || powerEfficient) {
-    const raw = implName || (powerEfficient ? 'D3D11 [powerEfficient]' : 'MediaFoundation');
+  if (classified.hwState === 'hardware_confirmed') {
     return {
       state: 'hardware_confirmed',
       category: 'hardware',
@@ -291,46 +221,21 @@ export function analyzeDecoderImplementation(implName, powerEfficient = false, a
       isHardware: true,
       isSoftware: false,
       isUnknown: false,
-      rawImplementation: raw,
-      evidence: `GPU Hardware Confirmado (${raw}) via D3D11/MediaFoundationVideoDecoder`
+      rawImplementation: rawDisplay,
+      evidence: `GPU Hardware Confirmado (${rawDisplay}) via D3D11/MediaFoundationVideoDecoder`
     };
   }
-  if (s.includes('dav1d')) {
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: 'Software (CPU: dav1d) ⚠️',
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `Software / CPU (${implName}) — Decodificador AV1 multi-threaded via CPU`
-    };
-  }
-  if (s.includes('ffmpeg') || s.includes('openh264') || s.includes('libvpx')) {
-    return {
-      state: 'software_confirmed',
-      category: 'software',
-      label: `Software (CPU: ${implName}) ⚠️`,
-      badgeClass: 'diag-badge-sw',
-      isHardware: false,
-      isSoftware: true,
-      isUnknown: false,
-      rawImplementation: implName,
-      evidence: `Software / CPU (${implName})`
-    };
-  }
+
   return {
-    state: 'unknown',
+    state: 'indeterminado',
     category: 'inconclusive',
-    label: `Não determinado (${implName || 'Padrão'})`,
+    label: 'Indeterminado',
     badgeClass: 'diag-badge-neutral',
     isHardware: false,
     isSoftware: false,
     isUnknown: true,
-    rawImplementation: implName || 'Padrão',
-    evidence: `Implementação de decodificação: ${implName || 'Padrão do Sistema'}`
+    rawImplementation: rawDisplay,
+    evidence: `Implementação indeterminada: ${rawDisplay}`
   };
 }
 
@@ -1263,7 +1168,7 @@ export class QualityController {
               streamType,
               codec: cName || 'DESCONHECIDO',
               sdpFmtpLine: codecDetail?.sdpFmtpLine || '--',
-              decoderImplementation: decoderImpl || (isPowerEfficient ? 'Hardware D3D11' : 'Não informado'),
+              decoderImplementation: decoderImpl || 'Não informado',
               powerEfficientDecoder: isPowerEfficient,
               hwState: analysis.state,
               isHardware: analysis.isHardware,

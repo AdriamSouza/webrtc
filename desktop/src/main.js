@@ -35,11 +35,9 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('force-high-performance-gpu');
-app.commandLine.appendSwitch('enable-accelerated-video-encode');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
-app.commandLine.appendSwitch('enable-webrtc-hw-h264-encoding');
 
 // 3. Mantém execução fluida e timers ativos em segundo plano sem desativar VSync ou sobrecarregar GPU/CPU
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -358,6 +356,16 @@ async function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (
+      input.type === 'keyDown' &&
+      (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i'))
+    ) {
+      event.preventDefault();
+      mainWindow.webContents.toggleDevTools();
+    }
   });
 }
 
@@ -721,11 +729,9 @@ ipcMain.handle('desktop:env-report', async () => {
     { name: 'enable-gpu-rasterization', configuredValue: null },
     { name: 'enable-zero-copy', configuredValue: null },
     { name: 'force-high-performance-gpu', configuredValue: null },
-    { name: 'enable-accelerated-video-encode', configuredValue: null },
     { name: 'enable-accelerated-video-decode', configuredValue: null },
     { name: 'enable-gpu-memory-buffer-video-frames', configuredValue: null },
     { name: 'enable-native-gpu-memory-buffers', configuredValue: null },
-    { name: 'enable-webrtc-hw-h264-encoding', configuredValue: null },
     { name: 'disable-renderer-backgrounding', configuredValue: null },
     { name: 'disable-background-timer-throttling', configuredValue: null },
     { name: 'disable-backgrounding-occluded-windows', configuredValue: null },

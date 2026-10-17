@@ -101,20 +101,22 @@ test('1. Taxonomia de Codificadores: Hardware vs Software vs Inconclusivo vs Ina
   assert.equal(hwMf.isSoftware, false);
   assert.match(hwMf.evidence, /DirectX 11/);
 
-  const hwD3D11 = analyzeEncoderImplementation('D3D11VideoEncoder', 'H264', { framesEncoded: 60, bytesSent: 30000 });
-  assert.equal(hwD3D11.category, 'hardware');
-  assert.equal(hwD3D11.isHardware, true);
+  const hwNvenc = analyzeEncoderImplementation('NVENC', 'H264', { framesEncoded: 60, bytesSent: 30000 });
+  assert.equal(hwNvenc.category, 'hardware');
+  assert.equal(hwNvenc.isHardware, true);
 
   // B. Fallback de Software confirmado
   const swAom = analyzeEncoderImplementation('libaom', 'AV1', { framesEncoded: 90, bytesSent: 40000 });
   assert.equal(swAom.category, 'software');
   assert.equal(swAom.isHardware, false);
   assert.equal(swAom.isSoftware, true);
+  assert.equal(swAom.label, 'Software (CPU)');
   assert.match(swAom.evidence, /libaom/);
 
   const swOpenH264 = analyzeEncoderImplementation('OpenH264', 'H264', { framesEncoded: 30, bytesSent: 15000 });
   assert.equal(swOpenH264.category, 'software');
   assert.equal(swOpenH264.isSoftware, true);
+  assert.equal(swOpenH264.label, 'Software (CPU)');
 
   // C. Inativo / Ocioso (sem frames codificados)
   const inactive = analyzeEncoderImplementation('ExternalEncoder (MediaFoundation)', 'AV1', { framesEncoded: 0, bytesSent: 0 });
@@ -122,9 +124,10 @@ test('1. Taxonomia de Codificadores: Hardware vs Software vs Inconclusivo vs Ina
   assert.equal(inactive.isHardware, false);
   assert.equal(inactive.label, 'Sem Atividade / Ocioso');
 
-  // D. Inconclusivo / Desconhecido
+  // D. Inconclusivo / Indeterminado
   const unknown = analyzeEncoderImplementation('CustomUnknownEncoderV3', 'VP9', { framesEncoded: 10, bytesSent: 5000 });
   assert.equal(unknown.category, 'inconclusive');
+  assert.equal(unknown.state, 'indeterminado');
   assert.equal(unknown.isHardware, false);
   assert.equal(unknown.isSoftware, false);
 });
@@ -134,13 +137,15 @@ test('2. Taxonomia de Decodificadores: Hardware vs Software vs Inativo', () => {
   assert.equal(hwDec.category, 'hardware');
   assert.equal(hwDec.isHardware, true);
 
-  const hwPower = analyzeDecoderImplementation(null, true, { framesDecoded: 50, bytesReceived: 40000 });
-  assert.equal(hwPower.category, 'hardware');
-  assert.equal(hwPower.isHardware, true);
+  const indetPower = analyzeDecoderImplementation(null, true, { framesDecoded: 50, bytesReceived: 40000 });
+  assert.equal(indetPower.category, 'inconclusive');
+  assert.equal(indetPower.state, 'indeterminado');
+  assert.equal(indetPower.isHardware, false);
 
   const swDav1d = analyzeDecoderImplementation('dav1d', false, { framesDecoded: 120, bytesReceived: 60000 });
   assert.equal(swDav1d.category, 'software');
   assert.equal(swDav1d.isSoftware, true);
+  assert.equal(swDav1d.label, 'Software (CPU)');
 
   const inactive = analyzeDecoderImplementation('dav1d', false, { framesDecoded: 0, bytesReceived: 0 });
   assert.equal(inactive.category, 'inactive');
@@ -560,13 +565,13 @@ test('10. encoderImplementation ausente: Deve classificar como unknown sem alarm
   assert.equal(diag.outboundStreams.length, 1);
   const stream = diag.outboundStreams[0];
   assert.equal(stream.codec, 'H264');
-  assert.equal(stream.hwState, 'unknown', 'Deve estar no estado estrito unknown');
+  assert.equal(stream.hwState, 'indeterminado', 'Deve estar no estado estrito indeterminado');
   assert.equal(stream.isHardware, false, 'Não deve declarar hardware sem prova');
   assert.equal(stream.isSoftware, false, 'NÃO deve declarar software/CPU por falta de informação!');
   assert.equal(stream.isUnknown, true, 'Deve sinalizar isUnknown como true');
   assert.equal(stream.hwCategory, 'inconclusive');
   assert.equal(stream.hwBadgeClass, 'diag-badge-neutral', 'Badge deve ser neutro e não de aviso de CPU');
-  assert.equal(stream.hwLabel, 'Não determinado');
+  assert.equal(stream.hwLabel, 'Indeterminado');
 
   // Verifica que formattedCodec NÃO inclui 'Software ⚠️'
   assert.equal(reportedMetrics.codec, 'H264', 'Codec formatado não deve acusar Software CPU falsamente');
@@ -617,7 +622,7 @@ test('11. Isolamento Multi-Peer: Conexões independentes com codecs distintos n�
     }
   ]);
 
-  // Peer 3 (Carlos): H264 com encoderImplementation ausente (unknown)
+  // Peer 3 (Carlos): H264 com encoderImplementation ausente (indeterminado)
   const pcCarlos = new MockPeerConnection();
   pcCarlos.setReports([
     { id: 'codec-carlos', type: 'codec', mimeType: 'video/H264' },
@@ -663,9 +668,9 @@ test('11. Isolamento Multi-Peer: Conexões independentes com codecs distintos n�
   assert.equal(streamBob.isHardware, true);
   assert.equal(streamBob.isSoftware, false);
 
-  // Carlos: Unknown
+  // Carlos: Indeterminado
   assert.equal(streamCarlos.codec, 'H264');
-  assert.equal(streamCarlos.hwState, 'unknown');
+  assert.equal(streamCarlos.hwState, 'indeterminado');
   assert.equal(streamCarlos.isHardware, false);
   assert.equal(streamCarlos.isSoftware, false);
 
@@ -706,7 +711,7 @@ test('12. Entrada e saída de espectadores: Não altera diagnóstico dos peers e
   assert.equal(diag.outboundStreams.length, 1);
   assert.equal(diag.outboundStreams[0].hwState, 'hardware_confirmed');
 
-  // 2. Bob (celular) entra na sala com encoderImplementation desconhecido (unknown)
+  // 2. Bob (celular) entra na sala com encoderImplementation desconhecido (indeterminado)
   const pcBob = new MockPeerConnection();
   pcBob.setReports([
     { id: 'codec-bob', type: 'codec', mimeType: 'video/H264' },
@@ -734,9 +739,9 @@ test('12. Entrada e saída de espectadores: Não altera diagnóstico dos peers e
   assert.equal(aliceAfterBob.hwState, 'hardware_confirmed', 'Entrada de Bob não deve alterar o diagnóstico de Alice!');
   assert.equal(aliceAfterBob.isHardware, true);
 
-  // Bob deve estar como unknown
+  // Bob deve estar como indeterminado
   const bobStream = diag.outboundStreams.find(s => s.targetPeerId === 'peer-2');
-  assert.equal(bobStream.hwState, 'unknown');
+  assert.equal(bobStream.hwState, 'indeterminado');
   assert.equal(bobStream.isSoftware, false);
 
   // 3. Bob sai da sala

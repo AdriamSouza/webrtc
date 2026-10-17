@@ -266,7 +266,7 @@ describe('5. Telemetria e Comprovação Real do Encoder', () => {
     assert.match(analysis.evidence, /DirectX 11/);
   });
 
-  test('libaom deve ser categorizado estritamente como Software CPU sem falsos positivos de GPU', () => {
+  test('libaom deve ser categorizado estritamente como Software (CPU) sem falsos positivos de GPU', () => {
     const analysis = analyzeEncoderImplementation(
       'libaom',
       'AV1',
@@ -276,7 +276,7 @@ describe('5. Telemetria e Comprovação Real do Encoder', () => {
     assert.equal(analysis.category, 'software');
     assert.equal(analysis.isHardware, false);
     assert.equal(analysis.isSoftware, true);
-    assert.match(analysis.label, /Software \(CPU: libaom\)/);
+    assert.equal(analysis.label, 'Software (CPU)');
     assert.match(analysis.evidence, /fallback ativo para biblioteca libaom/);
   });
 
@@ -292,36 +292,54 @@ describe('5. Telemetria e Comprovação Real do Encoder', () => {
     assert.equal(analysis.isSoftware, false);
   });
 
-  test('Regra de ouro física: avgEncodeTimeMs <= 12.0 ms deve forçar GPU Hardware mesmo com string OpenH264', () => {
-    const analysis = analyzeEncoderImplementation(
+  test('Regra prioritária Etapa 4: OpenH264 ou SimulcastEncoderAdapter + software deve declarar software_confirmed MESMO com powerEfficient=true', () => {
+    const analysisOpen = analyzeEncoderImplementation(
       'OpenH264',
       'H264',
-      null,
+      true,
       { framesEncoded: 120, bytesSent: 500000, framesDelta: 60, avgEncodeTimeMs: 4.91, cpuUsagePercent: 12.0 }
     );
 
-    assert.equal(analysis.category, 'hardware');
-    assert.equal(analysis.isHardware, true);
-    assert.equal(analysis.isSoftware, false);
-    assert.equal(analysis.state, 'hardware_confirmed');
-    assert.match(analysis.label, /GPU Hardware ⚡/);
-    assert.match(analysis.evidence, /Tempo real de codificação ultrarrápido/);
+    assert.equal(analysisOpen.category, 'software');
+    assert.equal(analysisOpen.isHardware, false);
+    assert.equal(analysisOpen.isSoftware, true);
+    assert.equal(analysisOpen.state, 'software_confirmed');
+    assert.equal(analysisOpen.label, 'Software (CPU)');
+    assert.equal(analysisOpen.badgeClass, 'diag-badge-sw');
+
+    const analysisSimulcast = analyzeEncoderImplementation(
+      'SimulcastEncoderAdapter (OpenH264)',
+      'H264',
+      true,
+      { framesEncoded: 120, bytesSent: 500000, framesDelta: 60 }
+    );
+    assert.equal(analysisSimulcast.state, 'software_confirmed');
+    assert.equal(analysisSimulcast.label, 'Software (CPU)');
+    assert.equal(analysisSimulcast.badgeClass, 'diag-badge-sw');
   });
 
-  test('Validação de CPU: se cpuUsagePercent > 25.0%, deve declarar obrigatoriamente software OpenH264 na CPU', () => {
-    const analysis = analyzeEncoderImplementation(
+  test('Regra Etapa 4: só classifica como hardware_confirmed para MediaFoundation, ExternalEncoder, VideoToolbox, VAAPI, NVENC, AMF ou QSV; outros são indeterminado', () => {
+    const analysisHw = analyzeEncoderImplementation(
       'ExternalEncoder (MediaFoundation)',
       'H264',
       true,
-      { framesEncoded: 120, bytesSent: 500000, framesDelta: 60, avgEncodeTimeMs: 4.91, cpuUsagePercent: 28.5 }
+      { framesEncoded: 120, bytesSent: 500000, framesDelta: 60 }
     );
 
-    assert.equal(analysis.category, 'software');
-    assert.equal(analysis.isHardware, false);
-    assert.equal(analysis.isSoftware, true);
-    assert.equal(analysis.state, 'software_confirmed');
-    assert.match(analysis.label, /OpenH264 na CPU ⚠️/);
-    assert.match(analysis.evidence, /Uso elevado de CPU do processo/);
+    assert.equal(analysisHw.category, 'hardware');
+    assert.equal(analysisHw.isHardware, true);
+    assert.equal(analysisHw.state, 'hardware_confirmed');
+
+    const analysisIndet = analyzeEncoderImplementation(
+      'GenericUnknownEncoder',
+      'H264',
+      true,
+      { framesEncoded: 120, bytesSent: 500000, framesDelta: 60 }
+    );
+    assert.equal(analysisIndet.state, 'indeterminado');
+    assert.equal(analysisIndet.isHardware, false);
+    assert.equal(analysisIndet.isSoftware, false);
+    assert.equal(analysisIndet.rawImplementation, 'GenericUnknownEncoder');
   });
 });
 

@@ -241,7 +241,6 @@ describe('1. Gerenciador Adaptativo: Controle Individual de Parâmetros por RTCR
       assert.ok(s.applied, 'Campo applied deve estar preenchido');
       assert.ok(s.observed, 'Campo observed deve estar preenchido');
       assert.equal(s.adaptationError, null, 'Nenhum erro de adaptação');
-      assert.ok(typeof s.estimatedSavingsPercent === 'number');
     });
 
     // Alice (Ativo)
@@ -255,14 +254,12 @@ describe('1. Gerenciador Adaptativo: Controle Individual de Parâmetros por RTCR
     assert.equal(stream2.requested.maxFramerate, 15);
     assert.equal(stream2.applied.maxFramerate, 15);
     assert.equal(stream2.observed.width, 960);
-    assert.equal(stream2.estimatedSavingsPercent, 85);
 
     // Carlos (Inativo)
     const stream3 = diag.outboundStreams.find(s => s.targetUserId === 'peer-3');
     assert.equal(stream3.requested.maxFramerate, 5);
     assert.equal(stream3.applied.maxFramerate, 5);
     assert.equal(stream3.observed.width, 480);
-    assert.equal(stream3.estimatedSavingsPercent, 95);
   });
 
 });

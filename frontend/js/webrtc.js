@@ -9,7 +9,7 @@
  * - Compatibilidade robusta com Chrome, Edge e Firefox
  */
 
-import { determineOptimalCodecOrder, evaluateCodecCapabilities, probeRealHardwareEncoders } from './hardwareDetector.js';
+import { determineOptimalCodecOrder, evaluateCodecCapabilities } from './hardwareDetector.js';
 
 export class WebRTCManager {
   constructor(signalingClient, iceServers = []) {
@@ -36,10 +36,7 @@ export class WebRTCManager {
     this.onRemoteTrackUnmuted = null;
     this.onNegotiationComplete = null;
     this.preferredCodec = (() => {
-      try { return localStorage.getItem('hyperstream_preferred_codec') || 'H264'; } catch (_) { return 'H264'; }
-    })();
-    this.encoderPreference = (() => {
-      try { return localStorage.getItem('hyperstream_encoder_preference') || 'gpu'; } catch (_) { return 'gpu'; }
+      try { return localStorage.getItem('hyperstream_preferred_codec') || 'auto'; } catch (_) { return 'auto'; }
     })();
     this.prioritizeH264High50 = (() => {
       try {
@@ -51,9 +48,6 @@ export class WebRTCManager {
         return false;
       } catch (_) { return false; }
     })();
-    this.rejectedHardwareProfiles = new Set();
-    this.attemptedFallbacks = new Map();
-    this.hardwareProbe = null;
     this.lastPreferredCodecs = null;
     this.hardwareCapabilities = evaluateCodecCapabilities();
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
@@ -61,11 +55,6 @@ export class WebRTCManager {
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
     this.roomState = null;
     this.qualityController = null;
-
-    // Dispara sondagem assíncrona de hardware imediatamente na inicialização
-    this.probeHardware().catch(err => {
-      console.warn('[WebRTC] Erro inicial ao sondar hardware:', err.message);
-    });
   }
 
   setIceServers(servers) {
@@ -358,8 +347,6 @@ export class WebRTCManager {
           const header = mParts.slice(0, 3);
           const payloads = mParts.slice(3);
 
-          const isCpuPref = this.encoderPreference === 'cpu';
-
           const scoreH264Payload = (pt) => {
             const fmtp = (payloadFmtpMap.get(pt) || '').toLowerCase();
             const isMode0 = fmtp.includes('packetization-mode=0');
@@ -373,10 +360,10 @@ export class WebRTCManager {
 
           const scorePayload = (pt) => {
             const cName = codecPayloadMap.get(pt) || '';
+            if (pref !== 'AUTO' && cName === pref && cName !== 'H264') return 5;
             if (cName === 'H264') {
               return scoreH264Payload(pt);
             }
-            if (isCpuPref && pref !== 'AUTO' && cName === pref) return 5;
             if (cName === 'AV1') return 500;
             if (cName === 'VP9') return 600;
             if (cName === 'VP8') return 700;
@@ -390,7 +377,7 @@ export class WebRTCManager {
           } else {
             lines[0] = [...header, ...payloads].join(' ');
           }
-          console.log('[WebRTC SDP] m=video ordenado para GPU Hardware:', lines[0].split(' ').slice(3, 7).map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`));
+          console.log('[WebRTC SDP] m=video ordenado:', lines[0].split(' ').slice(3, 7).map(p => `${p}(${codecPayloadMap.get(p) || 'rtx'})`));
         }
 
         // 3. Aplica limites de banda b=AS e b=TIAS na seção
@@ -626,17 +613,6 @@ export class WebRTCManager {
     this.hardwareCapabilities = caps;
   }
 
-  getEncoderPreference() {
-    return this.encoderPreference || 'auto';
-  }
-
-  async setEncoderPreference(pref) {
-    this.encoderPreference = pref;
-    try { localStorage.setItem('hyperstream_encoder_preference', pref); } catch (_) {}
-    console.log(`[WebRTC] Preferência de codificador (CPU/GPU) alterada para: ${pref}`);
-    await this.applyCodecPreferencesToAllPeers();
-  }
-
   getPrioritizeH264High50() {
     return Boolean(this.prioritizeH264High50);
   }
@@ -648,27 +624,8 @@ export class WebRTCManager {
   }
 
   /**
-   * Executa sondagem real de hardware com probeRealHardwareEncoders
-   */
-  async probeHardware(options = {}) {
-    try {
-      this.hardwareProbe = await probeRealHardwareEncoders(
-        options.width || 1920,
-        options.height || 1080,
-        options.framerate || 60,
-        options.bitrate || this.targetMaxBitrate || 8000000
-      );
-      this.hardwareCapabilities = evaluateCodecCapabilities({}, {}, this.hardwareProbe);
-      return this.hardwareProbe;
-    } catch (err) {
-      console.warn('[WebRTC] Erro durante probeRealHardwareEncoders:', err.message);
-      return null;
-    }
-  }
-
-  /**
-   * Configura preferência de codecs no Transceiver WebRTC conforme seleção do usuário,
-   * capacidades reais de hardware (GPU vs CPU) e descarte de perfis com falha de runtime.
+   * Configura preferência de codecs no Transceiver WebRTC conforme seleção do usuário.
+   * Quando AV1 é escolhido, coloca AV1 no topo mantendo H.264 logo abaixo como fallback, e rtx/red/ulpfec ao final.
    */
   configureCodecPreferences(transceiver) {
     if (!transceiver || typeof transceiver.setCodecPreferences !== 'function') {
@@ -676,24 +633,17 @@ export class WebRTCManager {
     }
 
     try {
-      // 1. Obtém lista real de codecs de envio com RTCRtpSender.getCapabilities('video')
       const capabilities = (typeof RTCRtpSender !== 'undefined' && typeof RTCRtpSender.getCapabilities === 'function')
         ? RTCRtpSender.getCapabilities('video')
         : (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function' ? RTCRtpReceiver.getCapabilities('video') : null);
 
       if (!capabilities || !capabilities.codecs) return;
 
-      const allH264 = (capabilities.codecs || []).filter(c => (c.mimeType || '').toLowerCase() === 'video/h264');
-      console.log('[WebRTC Transceiver] Codecs H.264 disponíveis no getCapabilities:', allH264.map(c => `[${c.mimeType}] "${c.sdpFmtpLine || ''}"`));
-
-      const caps = this.hardwareCapabilities || evaluateCodecCapabilities();
       const optimal = determineOptimalCodecOrder({
-        preference: this.encoderPreference || 'gpu',
-        preferredCodec: this.preferredCodec || 'H264',
+        preferredCodec: this.preferredCodec || 'auto',
         availableCodecs: capabilities.codecs,
-        capabilities: caps,
-        hardwareProbe: this.hardwareProbe,
-        rejectedProfiles: this.rejectedHardwareProfiles
+        capabilities: this.hardwareCapabilities,
+        prioritizeH264High50: this.prioritizeH264High50
       });
 
       if (optimal.preferredOrder && optimal.preferredOrder.length > 0) {
@@ -743,7 +693,7 @@ export class WebRTCManager {
         transceiver.setCodecPreferences(finalOrder);
         this.lastPreferredCodecs = finalOrder;
         const top = finalOrder[0];
-        console.log(`[WebRTC] Ordem de codecs aplicada (${this.encoderPreference}/${this.preferredCodec}${this.prioritizeH264High50 ? ' [High5.0=640032]' : ''}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${appliedReason})`);
+        console.log(`[WebRTC] Ordem de codecs aplicada (${this.preferredCodec || 'auto'}${this.prioritizeH264High50 ? ' [High5.0=640032]' : ''}): 1º ${top?.mimeType} [${top?.sdpFmtpLine || 'default'}] (${appliedReason})`);
         console.log('[WebRTC] Ordem final aplicada em configureCodecPreferences:', finalOrder.map((c, idx) => `${idx + 1}. ${c.mimeType}${c.sdpFmtpLine ? ` [${c.sdpFmtpLine}]` : ''}`));
       }
     } catch (err) {

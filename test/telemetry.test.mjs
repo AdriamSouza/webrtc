@@ -93,62 +93,69 @@ class MockWebRTCManager {
 // 1. TESTES UNITÁRIOS DE TAXONOMIA DE CODECS E ENCODERS
 // ========================================================
 
-test('1. Taxonomia de Codificadores: Hardware vs Software vs Inconclusivo vs Inativo', () => {
-  // A. Aceleração por Hardware confirmada
+test('1. Taxonomia de Codificadores: GPU vs CPU vs Texto Cru vs Aguardando Movimento', () => {
+  // A. Aceleração por GPU
   const hwMf = analyzeEncoderImplementation('ExternalEncoder (MediaFoundation)', 'AV1', { framesEncoded: 120, bytesSent: 50000 });
-  assert.equal(hwMf.category, 'hardware');
+  assert.equal(hwMf.type, 'gpu');
+  assert.equal(hwMf.badge, 'GPU');
   assert.equal(hwMf.isHardware, true);
   assert.equal(hwMf.isSoftware, false);
-  assert.match(hwMf.evidence, /DirectX 11/);
 
   const hwNvenc = analyzeEncoderImplementation('NVENC', 'H264', { framesEncoded: 60, bytesSent: 30000 });
-  assert.equal(hwNvenc.category, 'hardware');
+  assert.equal(hwNvenc.type, 'gpu');
+  assert.equal(hwNvenc.badge, 'GPU');
   assert.equal(hwNvenc.isHardware, true);
 
-  // B. Fallback de Software confirmado
+  // B. Software na CPU
   const swAom = analyzeEncoderImplementation('libaom', 'AV1', { framesEncoded: 90, bytesSent: 40000 });
-  assert.equal(swAom.category, 'software');
+  assert.equal(swAom.type, 'cpu');
+  assert.equal(swAom.badge, 'CPU');
   assert.equal(swAom.isHardware, false);
   assert.equal(swAom.isSoftware, true);
-  assert.equal(swAom.label, 'Software (CPU)');
-  assert.match(swAom.evidence, /libaom/);
+  assert.equal(swAom.label, 'CPU');
 
   const swOpenH264 = analyzeEncoderImplementation('OpenH264', 'H264', { framesEncoded: 30, bytesSent: 15000 });
-  assert.equal(swOpenH264.category, 'software');
+  assert.equal(swOpenH264.type, 'cpu');
+  assert.equal(swOpenH264.badge, 'CPU');
   assert.equal(swOpenH264.isSoftware, true);
-  assert.equal(swOpenH264.label, 'Software (CPU)');
+  assert.equal(swOpenH264.label, 'CPU');
 
-  // C. Inativo / Ocioso (sem frames codificados)
+  // C. Sem tráfego -> aguardando movimento
   const inactive = analyzeEncoderImplementation('ExternalEncoder (MediaFoundation)', 'AV1', { framesEncoded: 0, bytesSent: 0 });
-  assert.equal(inactive.category, 'inactive');
+  assert.equal(inactive.type, 'idle');
+  assert.equal(inactive.badge, null);
   assert.equal(inactive.isHardware, false);
-  assert.equal(inactive.label, 'Sem Atividade / Ocioso');
+  assert.equal(inactive.label, 'aguardando movimento');
 
-  // D. Inconclusivo / Indeterminado
+  // D. Qualquer outro valor -> texto cru sem badge
   const unknown = analyzeEncoderImplementation('CustomUnknownEncoderV3', 'VP9', { framesEncoded: 10, bytesSent: 5000 });
-  assert.equal(unknown.category, 'inconclusive');
-  assert.equal(unknown.state, 'indeterminado');
+  assert.equal(unknown.type, 'raw');
+  assert.equal(unknown.badge, null);
+  assert.equal(unknown.label, 'CustomUnknownEncoderV3');
   assert.equal(unknown.isHardware, false);
   assert.equal(unknown.isSoftware, false);
 });
 
-test('2. Taxonomia de Decodificadores: Hardware vs Software vs Inativo', () => {
+test('2. Taxonomia de Decodificadores: GPU vs CPU vs Texto Cru vs Aguardando Movimento', () => {
   const hwDec = analyzeDecoderImplementation('ExternalDecoder', false, { framesDecoded: 100, bytesReceived: 80000 });
-  assert.equal(hwDec.category, 'hardware');
+  assert.equal(hwDec.type, 'gpu');
+  assert.equal(hwDec.badge, 'GPU');
   assert.equal(hwDec.isHardware, true);
 
   const indetPower = analyzeDecoderImplementation(null, true, { framesDecoded: 50, bytesReceived: 40000 });
-  assert.equal(indetPower.category, 'inconclusive');
-  assert.equal(indetPower.state, 'indeterminado');
+  assert.equal(indetPower.type, 'raw');
+  assert.equal(indetPower.badge, null);
   assert.equal(indetPower.isHardware, false);
 
   const swDav1d = analyzeDecoderImplementation('dav1d', false, { framesDecoded: 120, bytesReceived: 60000 });
-  assert.equal(swDav1d.category, 'software');
+  assert.equal(swDav1d.type, 'cpu');
+  assert.equal(swDav1d.badge, 'CPU');
   assert.equal(swDav1d.isSoftware, true);
-  assert.equal(swDav1d.label, 'Software (CPU)');
+  assert.equal(swDav1d.label, 'CPU');
 
   const inactive = analyzeDecoderImplementation('dav1d', false, { framesDecoded: 0, bytesReceived: 0 });
-  assert.equal(inactive.category, 'inactive');
+  assert.equal(inactive.type, 'idle');
+  assert.equal(inactive.label, 'aguardando movimento');
 });
 
 // ========================================================
@@ -240,10 +247,11 @@ test('4. Stream Outbound com AV1 e Aceleração de Hardware Confirmada', async (
   const stream = diag.outboundStreams[0];
   assert.equal(stream.codec, 'AV1', 'Deve normalizar AV01 para AV1');
   assert.equal(stream.isHardware, true);
-  assert.equal(stream.hwCategory, 'hardware');
+  assert.equal(stream.encoderInfo.type, 'gpu');
+  assert.equal(stream.encoderInfo.badge, 'GPU');
   assert.equal(stream.targetPeerName, 'Alice');
   assert.equal(stream.streamType, 'Tela / Desktop');
-  assert.match(stream.hwEvidence, /MediaFoundation/);
+  assert.match(stream.rawImplementation, /MediaFoundation/);
 });
 
 // ========================================================
@@ -291,8 +299,8 @@ test('5. Stream Outbound com Fallback de Software (libaom)', async () => {
   assert.equal(stream.codec, 'AV1');
   assert.equal(stream.isHardware, false);
   assert.equal(stream.isSoftware, true);
-  assert.equal(stream.hwCategory, 'software');
-  assert.match(stream.hwEvidence, /fallback ativo para biblioteca libaom/);
+  assert.equal(stream.encoderInfo.type, 'cpu');
+  assert.equal(stream.encoderInfo.badge, 'CPU');
 });
 
 // ========================================================
@@ -565,13 +573,11 @@ test('10. encoderImplementation ausente: Deve classificar como unknown sem alarm
   assert.equal(diag.outboundStreams.length, 1);
   const stream = diag.outboundStreams[0];
   assert.equal(stream.codec, 'H264');
-  assert.equal(stream.hwState, 'indeterminado', 'Deve estar no estado estrito indeterminado');
+  assert.equal(stream.encoderInfo.type, 'raw', 'Deve estar no tipo raw sem badge');
+  assert.equal(stream.encoderInfo.badge, null);
   assert.equal(stream.isHardware, false, 'Não deve declarar hardware sem prova');
   assert.equal(stream.isSoftware, false, 'NÃO deve declarar software/CPU por falta de informação!');
-  assert.equal(stream.isUnknown, true, 'Deve sinalizar isUnknown como true');
-  assert.equal(stream.hwCategory, 'inconclusive');
-  assert.equal(stream.hwBadgeClass, 'diag-badge-neutral', 'Badge deve ser neutro e não de aviso de CPU');
-  assert.equal(stream.hwLabel, 'Indeterminado');
+  assert.equal(stream.encoderInfo.badgeClass, 'diag-badge-neutral', 'Badge deve ser neutro e não de aviso de CPU');
 
   // Verifica que formattedCodec NÃO inclui 'Software ⚠️'
   assert.equal(reportedMetrics.codec, 'H264', 'Codec formatado não deve acusar Software CPU falsamente');
@@ -622,7 +628,7 @@ test('11. Isolamento Multi-Peer: Conexões independentes com codecs distintos n�
     }
   ]);
 
-  // Peer 3 (Carlos): H264 com encoderImplementation ausente (indeterminado)
+  // Peer 3 (Carlos): H264 com encoderImplementation ausente (raw sem badge)
   const pcCarlos = new MockPeerConnection();
   pcCarlos.setReports([
     { id: 'codec-carlos', type: 'codec', mimeType: 'video/H264' },
@@ -656,21 +662,24 @@ test('11. Isolamento Multi-Peer: Conexões independentes com codecs distintos n�
   const streamBob = diag.outboundStreams.find(s => s.targetPeerId === 'peer-2');
   const streamCarlos = diag.outboundStreams.find(s => s.targetPeerId === 'peer-3');
 
-  // Alice: Software confirmado
+  // Alice: CPU
   assert.equal(streamAlice.codec, 'AV1');
-  assert.equal(streamAlice.hwState, 'software_confirmed');
+  assert.equal(streamAlice.encoderInfo.type, 'cpu');
+  assert.equal(streamAlice.encoderInfo.badge, 'CPU');
   assert.equal(streamAlice.isSoftware, true);
   assert.equal(streamAlice.isHardware, false);
 
-  // Bob: Hardware confirmado
+  // Bob: GPU
   assert.equal(streamBob.codec, 'H264');
-  assert.equal(streamBob.hwState, 'hardware_confirmed');
+  assert.equal(streamBob.encoderInfo.type, 'gpu');
+  assert.equal(streamBob.encoderInfo.badge, 'GPU');
   assert.equal(streamBob.isHardware, true);
   assert.equal(streamBob.isSoftware, false);
 
-  // Carlos: Indeterminado
+  // Carlos: Raw sem badge
   assert.equal(streamCarlos.codec, 'H264');
-  assert.equal(streamCarlos.hwState, 'indeterminado');
+  assert.equal(streamCarlos.encoderInfo.type, 'raw');
+  assert.equal(streamCarlos.encoderInfo.badge, null);
   assert.equal(streamCarlos.isHardware, false);
   assert.equal(streamCarlos.isSoftware, false);
 
@@ -709,9 +718,9 @@ test('12. Entrada e saída de espectadores: Não altera diagnóstico dos peers e
   await qc.collectMetrics();
   let diag = qc.getDetailedDiagnostics();
   assert.equal(diag.outboundStreams.length, 1);
-  assert.equal(diag.outboundStreams[0].hwState, 'hardware_confirmed');
+  assert.equal(diag.outboundStreams[0].encoderInfo.type, 'gpu');
 
-  // 2. Bob (celular) entra na sala com encoderImplementation desconhecido (indeterminado)
+  // 2. Bob (celular) entra na sala com encoderImplementation desconhecido
   const pcBob = new MockPeerConnection();
   pcBob.setReports([
     { id: 'codec-bob', type: 'codec', mimeType: 'video/H264' },
@@ -734,14 +743,14 @@ test('12. Entrada e saída de espectadores: Não altera diagnóstico dos peers e
   diag = qc.getDetailedDiagnostics();
   assert.equal(diag.outboundStreams.length, 2);
 
-  // O diagnóstico de Alice DEVE PERMANECER INTACTO (hardware_confirmed)!
+  // O diagnóstico de Alice DEVE PERMANECER INTACTO (gpu)!
   const aliceAfterBob = diag.outboundStreams.find(s => s.targetPeerId === 'peer-1');
-  assert.equal(aliceAfterBob.hwState, 'hardware_confirmed', 'Entrada de Bob não deve alterar o diagnóstico de Alice!');
+  assert.equal(aliceAfterBob.encoderInfo.type, 'gpu', 'Entrada de Bob não deve alterar o diagnóstico de Alice!');
   assert.equal(aliceAfterBob.isHardware, true);
 
-  // Bob deve estar como indeterminado
+  // Bob deve estar como raw sem badge
   const bobStream = diag.outboundStreams.find(s => s.targetPeerId === 'peer-2');
-  assert.equal(bobStream.hwState, 'indeterminado');
+  assert.equal(bobStream.encoderInfo.type, 'raw');
   assert.equal(bobStream.isSoftware, false);
 
   // 3. Bob sai da sala
@@ -751,7 +760,7 @@ test('12. Entrada e saída de espectadores: Não altera diagnóstico dos peers e
 
   assert.equal(diag.outboundStreams.length, 1, 'Deve restar apenas o fluxo de Alice');
   assert.equal(diag.outboundStreams[0].targetPeerId, 'peer-1');
-  assert.equal(diag.outboundStreams[0].hwState, 'hardware_confirmed');
+  assert.equal(diag.outboundStreams[0].encoderInfo.type, 'gpu');
 
   // Histórico de deltas de Bob deve ter sido expurgado
   assert.equal(qc.streamStatsHistory.has('out-bob'), false, 'ID de Bob deve ser expurgado do histórico');
@@ -785,7 +794,8 @@ test('13. Estatísticas Incompletas: Tolera relatórios RTP com campos omitidos 
   const diag = qc.getDetailedDiagnostics();
   assert.equal(diag.outboundStreams.length, 1);
   const stream = diag.outboundStreams[0];
-  assert.equal(stream.hwState, 'inactive', 'Sem dados transmitidos, deve categorizar como inativo');
+  assert.equal(stream.encoderInfo.type, 'idle', 'Sem dados transmitidos, deve categorizar como aguardando movimento');
+  assert.equal(stream.encoderInfo.label, 'aguardando movimento');
   assert.equal(stream.isHardware, false);
   assert.equal(stream.isSoftware, false);
   assert.equal(stream.bitrateMbps, '0.00');

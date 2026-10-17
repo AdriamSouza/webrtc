@@ -27,15 +27,12 @@ const __dirname = path.dirname(__filename);
 // Destrava texturas D3D11 NV12 GpuMemoryBuffer no WebRTC e MediaFoundationVideoEncodeAccelerator na AMD RX 7600
 app.commandLine.appendSwitch('enable-features', [
   'MediaFoundationVideoEncode',
-  'MediaFoundationD3D11VideoCapture',
-  'WindowsGraphicsCapture',
-  'WebRtcUseGpuMemoryBufferVideoFrames'
+  'MediaFoundationD3D11VideoCapture'
 ].join(','));
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('force-high-performance-gpu');
-app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 
@@ -492,83 +489,38 @@ ipcMain.handle('desktop:get-version', () => {
   return app.getVersion();
 });
 
-// Coleta métricas de CPU e Memória por subprocesso do Electron via app.getAppMetrics()
-function collectProcessMetricsBreakdown() {
+// Coleta métricas de CPU e Memória totais do app via app.getAppMetrics()
+function collectProcessMetricsSummary() {
   let totalCpuPercent = 0;
   let totalMemoryKB = 0;
-  let browserCpuPercent = 0;
-  let gpuProcessCpuPercent = 0;
-  let rendererCpuPercent = 0;
-  let utilityCpuPercent = 0;
-  const processBreakdown = [];
 
   try {
     if (typeof app.getAppMetrics === 'function') {
       const metrics = app.getAppMetrics();
       for (const m of metrics) {
-        const cpu = m.cpu?.percentCPUUsage || 0;
-        const memKB = m.memory?.workingSetSize || 0;
-        totalCpuPercent += cpu;
-        totalMemoryKB += memKB;
-
-        let friendlyName = m.type;
-        if (m.type === 'Browser') {
-          friendlyName = 'Browser (Main)';
-          browserCpuPercent += cpu;
-        } else if (m.type === 'GPU') {
-          friendlyName = 'GPU Process';
-          gpuProcessCpuPercent += cpu;
-        } else if (m.type === 'Tab') {
-          friendlyName = 'Tab (Renderer)';
-          rendererCpuPercent += cpu;
-        } else if (m.type === 'Utility') {
-          friendlyName = 'Utility (Audio/Video)';
-          utilityCpuPercent += cpu;
-        } else {
-          utilityCpuPercent += cpu;
-        }
-
-        processBreakdown.push({
-          pid: m.pid,
-          type: m.type,
-          name: friendlyName,
-          cpuPercent: Number(cpu.toFixed(1)),
-          memoryMB: Math.round(memKB / 1024)
-        });
+        totalCpuPercent += (m.cpu?.percentCPUUsage || 0);
+        totalMemoryKB += (m.memory?.workingSetSize || 0);
       }
     }
   } catch (err) {
     console.warn('[Desktop Main] Erro ao consultar app.getAppMetrics():', err.message);
   }
 
-  if (processBreakdown.length === 0) {
-    const cpuInfo = process.getCPUUsage ? process.getCPUUsage() : null;
-    const cpuPct = cpuInfo?.percentCPUUsage || 0;
-    totalCpuPercent = cpuPct;
-    browserCpuPercent = cpuPct;
-    processBreakdown.push({
-      pid: process.pid,
-      type: 'Browser',
-      name: 'Browser (Main)',
-      cpuPercent: Number(cpuPct.toFixed(1)),
-      memoryMB: 0
-    });
+  if (totalCpuPercent === 0 && process.getCPUUsage) {
+    try {
+      totalCpuPercent = process.getCPUUsage()?.percentCPUUsage || 0;
+    } catch (_) {}
   }
 
   return {
     cpuUsagePercent: Number(totalCpuPercent.toFixed(1)),
-    browserCpuPercent: Number(browserCpuPercent.toFixed(1)),
-    gpuProcessCpuPercent: Number(gpuProcessCpuPercent.toFixed(1)),
-    rendererCpuPercent: Number(rendererCpuPercent.toFixed(1)),
-    utilityCpuPercent: Number(utilityCpuPercent.toFixed(1)),
-    memoryUsageMB: Math.round(totalMemoryKB / 1024),
-    processBreakdown
+    memoryUsageMB: Math.round(totalMemoryKB / 1024)
   };
 }
 
-// IPC: Obter uso real de CPU detalhado por subprocesso do Electron
+// IPC: Obter uso real de CPU e RAM do processo Electron
 ipcMain.handle('desktop:get-cpu-usage', () => {
-  return collectProcessMetricsBreakdown();
+  return collectProcessMetricsSummary();
 });
 
 // Cache em memória para diagnóstico estático de GPU (executa apenas 1 vez para não congelar o processo GPU)
@@ -581,54 +533,19 @@ async function getCachedGpuInfo() {
   if (cachedGpuInfoPromise) return cachedGpuInfoPromise;
   cachedGpuInfoPromise = (async () => {
     try {
-      cachedGpuInfo = await app.getGPUInfo('complete');
+      cachedGpuInfo = await app.getGPUInfo('basic');
     } catch (e) {
-      console.warn('[Desktop Main] Erro ao obter app.getGPUInfo("complete"), tentando fallback "basic":', e.message);
-      try {
-        cachedGpuInfo = await app.getGPUInfo('basic');
-      } catch (e2) {
-        cachedGpuInfo = { error: e2.message };
-      }
+      cachedGpuInfo = { error: e.message };
     }
     return cachedGpuInfo;
   })();
   return cachedGpuInfoPromise;
 }
 
-// IPC: Diagnóstico detalhado de aceleração por hardware GPU e recursos do sistema
+// IPC: Diagnóstico enxuto de GPU e recursos do sistema
 ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
-  let featureStatus = {};
-  try {
-    featureStatus = app.getGPUFeatureStatus();
-  } catch (e) {
-    featureStatus = { error: e.message };
-  }
-
-  // Utiliza GPUInfo em cache para evitar congelamento de 100~300ms a cada 1.5s
   const gpuInfo = await getCachedGpuInfo();
-
-  // Extrai listas reais de aceleração e workarounds do processo GPU do Chromium
-  const aux = (gpuInfo && typeof gpuInfo === 'object') ? (gpuInfo.auxAttributes || {}) : {};
-  const driverBugWorkarounds = (Array.isArray(gpuInfo?.driverBugWorkarounds) && gpuInfo.driverBugWorkarounds.length > 0)
-    ? gpuInfo.driverBugWorkarounds
-    : (Array.isArray(aux.driverBugWorkarounds) ? aux.driverBugWorkarounds : []);
-
-  const videoAccelerators = aux.videoAccelerators ||
-    aux.videoEncodeAcceleratorSupportedProfiles ||
-    gpuInfo?.videoAccelerators ||
-    gpuInfo?.videoEncodeAcceleratorSupportedProfiles ||
-    [];
-
-  const rawLogs = gpuInfo?.LogMessages || gpuInfo?.logMessages || aux.LogMessages || aux.logMessages || [];
-  const relevantGpuLogs = Array.isArray(rawLogs) ? rawLogs.filter(log => {
-    const text = (typeof log === 'string' ? log : (log?.message || log?.header || JSON.stringify(log))).toLowerCase();
-    return text.includes('video') || text.includes('encode') || text.includes('mediafoundation') ||
-           text.includes('d3d11') || text.includes('amf') || text.includes('vcn') ||
-           text.includes('h264') || text.includes('mft') || text.includes('accelerat') ||
-           text.includes('workaround') || text.includes('fallback');
-  }).map(l => (typeof l === 'string' ? l : `[${l.header || 'GPU'}] ${l.message || JSON.stringify(l)}`)) : [];
-
-  const metricsSummary = collectProcessMetricsBreakdown();
+  const metricsSummary = collectProcessMetricsSummary();
 
   let systemGpu = cachedSystemGpu;
   if (!systemGpu && process.platform === 'win32') {
@@ -660,126 +577,14 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
   }
 
   return {
-    featureStatus,
     gpuInfo,
     systemGpu,
-    videoAccelerators,
-    driverBugWorkarounds,
-    relevantGpuLogs,
     platform: process.platform,
     arch: process.arch,
     cpuUsagePercent: metricsSummary.cpuUsagePercent,
-    browserCpuPercent: metricsSummary.browserCpuPercent,
-    gpuProcessCpuPercent: metricsSummary.gpuProcessCpuPercent,
-    rendererCpuPercent: metricsSummary.rendererCpuPercent,
-    utilityCpuPercent: metricsSummary.utilityCpuPercent,
     memoryUsageMB: metricsSummary.memoryUsageMB,
-    processBreakdown: metricsSummary.processBreakdown,
     electronVersion: process.versions.electron,
     chromeVersion: process.versions.chrome
-  };
-});
-
-// IPC: Relatório completo de ambiente, versões, switches e GPU (somente coleta de dados)
-ipcMain.handle('desktop:env-report', async () => {
-  let gpuInfo = null;
-  try {
-    gpuInfo = await app.getGPUInfo('complete');
-  } catch (e) {
-    gpuInfo = await getCachedGpuInfo();
-  }
-
-  let gpuFeatureStatus = {};
-  try {
-    gpuFeatureStatus = app.getGPUFeatureStatus();
-  } catch (e) {
-    gpuFeatureStatus = { error: e.message };
-  }
-
-  const aux = (gpuInfo && typeof gpuInfo === 'object') ? (gpuInfo.auxAttributes || {}) : {};
-  const rawDevices = Array.isArray(gpuInfo?.gpuDevice) ? gpuInfo.gpuDevice : [];
-  const gpuDevices = rawDevices.map((dev, index) => ({
-    index,
-    role: dev.active ? 'active' : (index === 0 ? 'primary' : 'secondary'),
-    active: Boolean(dev.active),
-    vendorId: dev.vendorId ?? null,
-    deviceId: dev.deviceId ?? null,
-    subSysId: dev.subSysId ?? null,
-    revision: dev.revision ?? null,
-    driverVendor: dev.driverVendor ?? null,
-    driverVersion: dev.driverVersion ?? null,
-    driverDate: dev.driverDate ?? null,
-    deviceString: dev.deviceString || dev.description || null,
-    cudaComputeCapabilityMajor: dev.cudaComputeCapabilityMajor ?? null,
-    luid: dev.luid ?? null
-  }));
-
-  const videoEncodeAcceleratorSupportedProfile =
-    gpuInfo?.videoEncodeAcceleratorSupportedProfile ||
-    gpuInfo?.videoEncodeAcceleratorSupportedProfiles ||
-    aux?.videoEncodeAcceleratorSupportedProfile ||
-    aux?.videoEncodeAcceleratorSupportedProfiles ||
-    aux?.videoAccelerators ||
-    gpuInfo?.videoAccelerators ||
-    null;
-
-  const configuredSwitches = [
-    { name: 'enable-features', configuredValue: 'MediaFoundationVideoEncode,MediaFoundationD3D11VideoCapture,WindowsGraphicsCapture,WebRtcUseGpuMemoryBufferVideoFrames' },
-    { name: 'ignore-gpu-blocklist', configuredValue: null },
-    { name: 'enable-gpu-rasterization', configuredValue: null },
-    { name: 'enable-zero-copy', configuredValue: null },
-    { name: 'force-high-performance-gpu', configuredValue: null },
-    { name: 'enable-accelerated-video-decode', configuredValue: null },
-    { name: 'enable-gpu-memory-buffer-video-frames', configuredValue: null },
-    { name: 'enable-native-gpu-memory-buffers', configuredValue: null },
-    { name: 'disable-renderer-backgrounding', configuredValue: null },
-    { name: 'disable-background-timer-throttling', configuredValue: null },
-    { name: 'disable-backgrounding-occluded-windows', configuredValue: null },
-    { name: 'disable-features', configuredValue: 'CalculateNativeWinOcclusion,WidgetLayering,MediaFoundationD3D11VideoCaptureBlocklist' },
-    { name: 'ignore-certificate-errors', configuredValue: null },
-    { name: 'allow-insecure-localhost', configuredValue: null }
-  ];
-
-  const effectiveSwitches = configuredSwitches.map((sw) => {
-    let hasSwitch = false;
-    let effectiveValue = '';
-    try {
-      hasSwitch = app.commandLine.hasSwitch(sw.name);
-      effectiveValue = app.commandLine.getSwitchValue(sw.name);
-    } catch (_) {}
-    return {
-      name: sw.name,
-      configuredValue: sw.configuredValue,
-      hasSwitch,
-      effectiveValue: effectiveValue || null
-    };
-  });
-
-  const cpus = os.cpus() || [];
-
-  return {
-    versions: {
-      electron: process.versions.electron,
-      chrome: process.versions.chrome,
-      node: process.versions.node,
-      v8: process.versions.v8
-    },
-    gpuFeatureStatus,
-    gpuInfo: {
-      ...(gpuInfo && typeof gpuInfo === 'object' ? gpuInfo : {}),
-      devicesSummary: gpuDevices,
-      videoEncodeAcceleratorSupportedProfile
-    },
-    commandLine: {
-      enableFeatures: app.commandLine.getSwitchValue('enable-features') || null,
-      disableFeatures: app.commandLine.getSwitchValue('disable-features') || null,
-      effectiveSwitches,
-      argv: process.argv,
-      execArgv: process.execArgv
-    },
-    platform: process.platform,
-    osRelease: os.release(),
-    cpuModel: cpus[0]?.model || null
   };
 });
 

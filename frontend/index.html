@@ -738,22 +738,22 @@
               <button type="button" class="preset-card active" data-profile="ultra">
                 <div class="preset-name">Ultra</div>
                 <div class="preset-detail">60 FPS • até 8.0 Mbps</div>
-                <div class="preset-desc">Máxima fluidez para jogos e desktop em conexões rápidas</div>
+                <div class="preset-desc">Fluidez máxima para jogos e tela em rede rápida</div>
               </button>
               <button type="button" class="preset-card" data-profile="balanced">
                 <div class="preset-name">Equilibrado</div>
                 <div class="preset-detail">60 FPS • até 5.0 Mbps</div>
-                <div class="preset-desc">Ótimo balanço entre qualidade e estabilidade para jogar online</div>
+                <div class="preset-desc">Balanço ideal entre nitidez e estabilidade</div>
               </button>
               <button type="button" class="preset-card" data-profile="eco">
                 <div class="preset-name">Econômico</div>
                 <div class="preset-detail">30 FPS • até 2.0 Mbps</div>
-                <div class="preset-desc">Reduz consumo em redes instáveis ou com limite</div>
+                <div class="preset-desc">Menor uso de banda para conexões limitadas</div>
               </button>
               <button type="button" class="preset-card" data-profile="custom">
                 <div class="preset-name">Personalizado</div>
                 <div class="preset-detail">Ajuste Manual</div>
-                <div class="preset-desc">Defina bitrate, resolução e taxa de quadros livremente</div>
+                <div class="preset-desc">Controle manual de bitrate, resolução e FPS</div>
               </button>
             </div>
           </div>
@@ -762,17 +762,17 @@
             <div class="form-group">
               <label for="settingFpsSelect">Taxa de Quadros (FPS)</label>
               <select id="settingFpsSelect" class="form-select">
-                <option value="60" selected>60 FPS (Ultra Fluidez)</option>
-                <option value="30">30 FPS (Padrão)</option>
+                <option value="60" selected>60 FPS</option>
+                <option value="30">30 FPS</option>
               </select>
             </div>
 
             <div class="form-group">
               <label for="settingResSelect">Resolução da Transmissão</label>
               <select id="settingResSelect" class="form-select">
-                <option value="4k">4K Ultra HD (3840x2160) ⚡</option>
-                <option value="1440p">1440p / 2K Quad HD (2560x1440) ⚡</option>
-                <option value="native" selected>Nativa (Original da Tela)</option>
+                <option value="4k">4K (3840x2160)</option>
+                <option value="1440p">1440p (2560x1440)</option>
+                <option value="native" selected>Nativa da Tela</option>
                 <option value="1080p">1080p (Full HD)</option>
                 <option value="720p">720p (HD)</option>
                 <option value="480p">480p (SD)</option>
@@ -781,16 +781,16 @@
           </div>
 
           <div class="form-group">
-            <label for="settingContentHint">Modo de Otimização</label>
+            <label for="settingContentHint">Otimização de Conteúdo</label>
             <select id="settingContentHint" class="form-select">
-              <option value="motion" selected>Jogos & Vídeos (Fluidez)</option>
-              <option value="detail">Texto & Leitura (Nitidez)</option>
+              <option value="motion" selected>Movimento (Jogos e Vídeo)</option>
+              <option value="detail">Detalhe (Texto e Código)</option>
             </select>
           </div>
 
           <div class="settings-section">
             <div class="slider-header">
-              <label for="settingMaxBitrate">Bitrate Máximo de Vídeo</label>
+              <label for="settingMaxBitrate">Bitrate Máximo</label>
               <span id="maxBitrateValueBadge" class="value-badge">8.0 Mbps</span>
             </div>
             <input type="range" id="settingMaxBitrate" class="form-range" min="500000" max="25000000" step="250000" value="8000000">
@@ -805,7 +805,7 @@
 
           <div class="settings-section">
             <div class="slider-header">
-              <label for="settingMinBitrate">Bitrate Mínimo de Vídeo</label>
+              <label for="settingMinBitrate">Bitrate Mínimo</label>
               <span id="minBitrateValueBadge" class="value-badge">4.0 Mbps</span>
             </div>
             <input type="range" id="settingMinBitrate" class="form-range" min="200000" max="10000000" step="200000" value="4000000">
@@ -821,78 +821,61 @@
 
         <!-- ABA 2: CODECS DE VÍDEO -->
         <div id="settingsTabCodecs" class="settings-pane">
-          <div class="settings-info-box">
-            <svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <p>Selecione a preferência de codificador e codec. Codecs com aceleração por hardware (GPU) transmitem a 60 FPS com latência ultrabaixa e quase 0% de uso de CPU.</p>
+          <input type="hidden" id="settingPreferredCodec" value="auto">
+
+          <div class="settings-section">
+            <label class="settings-label">Preferência de Codec</label>
+            <div id="codecRadioList" class="codec-radio-list" role="radiogroup" aria-label="Preferência de Codec">
+              <label class="codec-radio-option" data-codec-option="auto">
+                <input type="radio" name="preferredCodecRadio" value="auto" checked>
+                <div class="codec-radio-body">
+                  <div class="codec-radio-title">Automático (recomendado)</div>
+                  <div class="codec-radio-desc">H.264 primeiro, depois VP9/AV1/VP8.</div>
+                </div>
+              </label>
+
+              <label class="codec-radio-option" data-codec-option="H264">
+                <input type="radio" name="preferredCodecRadio" value="H264">
+                <div class="codec-radio-body">
+                  <div class="codec-radio-title">H.264 <span class="codec-unavail-tag hidden" data-codec-unavail="H264">indisponível neste app</span></div>
+                  <div class="codec-radio-desc">Mais compatível. 1080p60 funciona; pode usar CPU (OpenH264).</div>
+                </div>
+              </label>
+
+              <label class="codec-radio-option" data-codec-option="AV1">
+                <input type="radio" name="preferredCodecRadio" value="AV1">
+                <div class="codec-radio-body">
+                  <div class="codec-radio-title">AV1 <span class="codec-unavail-tag hidden" data-codec-unavail="AV1">indisponível neste app</span></div>
+                  <div class="codec-radio-desc">Melhor qualidade por bitrate. Tenta GPU; pode cair em CPU. Exige que o espectador decodifique AV1.</div>
+                </div>
+              </label>
+
+              <label class="codec-radio-option" data-codec-option="VP9">
+                <input type="radio" name="preferredCodecRadio" value="VP9">
+                <div class="codec-radio-body">
+                  <div class="codec-radio-title">VP9 <span class="codec-unavail-tag hidden" data-codec-unavail="VP9">indisponível neste app</span></div>
+                  <div class="codec-radio-desc">Boa qualidade; costuma usar CPU.</div>
+                </div>
+              </label>
+
+              <label class="codec-radio-option" data-codec-option="VP8">
+                <input type="radio" name="preferredCodecRadio" value="VP8">
+                <div class="codec-radio-body">
+                  <div class="codec-radio-title">VP8 <span class="codec-unavail-tag hidden" data-codec-unavail="VP8">indisponível neste app</span></div>
+                  <div class="codec-radio-desc">Compatibilidade máxima; qualidade menor.</div>
+                </div>
+              </label>
+            </div>
+
+            <div id="codecActiveStatusLine" class="codec-live-status">Em uso agora: —</div>
+            <div id="codecAv1CpuNotice" class="codec-cpu-notice hidden">AV1 em CPU pode pesar; considere H.264.</div>
           </div>
 
-          <div class="form-group">
-            <label for="settingEncoderPreference">Modo de Aceleração (Hardware / Software)</label>
-            <select id="settingEncoderPreference" class="form-select">
-              <option value="auto" selected>Automático (Recomendado — Melhor equilíbrio GPU/CPU)</option>
-              <option value="gpu">GPU (Aceleração por Hardware — Prioriza NVENC / AMF / QuickSync) ⚡</option>
-              <option value="cpu">CPU (Modo Software — Processador / libaom / libvpx) ⚠️</option>
-            </select>
-            <span class="form-hint" id="encoderPrefHint" style="display:block; margin-top:6px; font-size:0.75rem; color:#94a3b8;">
-              No modo Automático ou GPU, codecs com aceleração nativa por hardware (DirectX 11 / MediaFoundation) são priorizados para garantir 60 FPS com estabilidade total.
-            </span>
-          </div>
-
-          <div class="form-group">
-            <label for="settingPreferredCodec">Codec Preferencial</label>
-            <select id="settingPreferredCodec" class="form-select">
-              <option value="auto">Automático (Otimizado para o Hardware Atual) ⚡</option>
-              <option value="H264">H.264 (NVIDIA / AMD / Intel — GPU Hardware) ⚡</option>
-              <option value="AV1">AV1 (Ultra Eficiente — Software libaom / CPU) 🚀</option>
-              <option value="VP9">VP9 (Google HD)</option>
-              <option value="VP8">VP8 (Básico)</option>
-            </select>
-          </div>
-
-          <div class="form-group" style="margin-top: 10px;">
-            <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+          <div class="settings-section codec-advanced-option">
+            <label class="checkbox-label">
               <input type="checkbox" id="settingPrioritizeH264High50">
               <span>Priorizar H.264 High 5.0 (640032) para teste</span>
             </label>
-            <span class="form-hint" style="display:block; margin-top:4px; font-size:0.75rem; color:#94a3b8;">
-              Quando ativa, coloca no topo de <code>setCodecPreferences</code> a entrada H.264 <code>profile-level-id=640032</code> (<code>packetization-mode=1</code>), seguida de <code>42e01f</code> e <code>4d001f</code>.
-            </span>
-          </div>
-
-          <div class="settings-section">
-            <label class="settings-label">Aceleração de Hardware Detectada nesta Máquina</label>
-            <div id="codecCapabilitiesList" class="codecs-list">
-              <div class="codec-item" id="codecCardH264">
-                <div class="codec-header">
-                  <span class="codec-name">H.264 / AVC (NVENC / AMF / QuickSync)</span>
-                  <span class="badge badge-success" id="badgeH264Status">GPU ⚡</span>
-                </div>
-                <div class="codec-desc" id="descH264Status">Aceleração nativa por hardware em placas NVIDIA, AMD e Intel. Latência ultrabaixa para jogos a 60 FPS.</div>
-              </div>
-              <div class="codec-item" id="codecCardAV1">
-                <div class="codec-header">
-                  <span class="codec-name">AV1 (Next-Gen Ultra Compacto)</span>
-                  <span class="badge" id="badgeAv1Status">Software CPU ⚠️</span>
-                </div>
-                <div class="codec-desc" id="descAv1Status">Compressão de última geração via libaom multi-threaded. No WebRTC Chromium atual, opera via software por CPU.</div>
-              </div>
-              <div class="codec-item" id="codecCardVP9">
-                <div class="codec-header">
-                  <span class="codec-name">VP9 (Google HD)</span>
-                  <span class="badge badge-success" id="badgeVp9Status">HD</span>
-                </div>
-                <div class="codec-desc">Excelente fidelidade de cores e transições de cena dinâmicas com ampla compatibilidade de navegadores.</div>
-              </div>
-              <div class="codec-item" id="codecCardVP8">
-                <div class="codec-header">
-                  <span class="codec-name">VP8 (Legado)</span>
-                  <span class="badge badge-secondary" id="badgeVp8Status">Básico</span>
-                </div>
-                <div class="codec-desc">Padrão histórico WebRTC, excelente para máquinas e notebooks sem placa de vídeo dedicada.</div>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -1169,7 +1152,7 @@
     </div>
   </div>
 
-  <!-- Modal de Diagnóstico Técnico e Telemetria WebRTC / GPU -->
+  <!-- Modal de Diagnóstico Simples -->
   <div id="diagnosticsModal" class="modal-backdrop hidden" aria-hidden="true">
     <div class="modal-card modal-diagnostics">
       <div class="modal-header">
@@ -1179,193 +1162,96 @@
             <path d="M12 20V4"/>
             <path d="M6 20v-6"/>
           </svg>
-          <h3>Diagnóstico Unificado & Telemetria GPU</h3>
+          <h3>Diagnóstico</h3>
         </div>
         <button id="btnCloseDiagnostics" class="btn-icon-close" title="Fechar">&times;</button>
       </div>
 
       <div class="diagnostics-modal-body">
-        <!-- SEÇÃO 1: STATUS DA GPU & HARDWARE -->
+        <!-- 1. GPU e sistema -->
         <div class="diag-section">
           <div class="diag-section-header">
-            <h4>Seção 1: Status da GPU & Hardware</h4>
-            <span id="diagGpuStatusBadge" class="badge">Detectando...</span>
+            <h4>GPU e sistema</h4>
           </div>
-          <div class="diag-grid" id="diagSystemGrid">
-            <div class="diag-card">
-              <span class="diag-label">GPU Primária:</span>
-              <strong class="diag-val" id="diagGpuRenderer">Carregando...</strong>
+          <div class="diag-system-list" id="diagSystemGrid">
+            <div class="diag-system-row">
+              <span class="diag-row-label">GPU</span>
+              <span class="diag-row-value" id="diagGpuRenderer">—</span>
             </div>
-            <div class="diag-card">
-              <span class="diag-label">Driver / Vendor:</span>
-              <strong class="diag-val" id="diagGpuDriver">Carregando...</strong>
+            <div class="diag-system-row">
+              <span class="diag-row-label">Driver</span>
+              <span class="diag-row-value" id="diagGpuDriver">—</span>
             </div>
-            <div class="diag-card">
-              <span class="diag-label">Decodificação GPU:</span>
-              <strong class="diag-val" id="diagGpuDecode">Carregando...</strong>
+            <div class="diag-system-row">
+              <span class="diag-row-label">CPU do app</span>
+              <span class="diag-row-value" id="diagCpuUsage">—</span>
             </div>
-            <div class="diag-card">
-              <span class="diag-label">Codificação GPU:</span>
-              <strong class="diag-val" id="diagGpuEncode">Carregando...</strong>
-            </div>
-            <div class="diag-card">
-              <span class="diag-label">Uso de CPU App (Total):</span>
-              <strong class="diag-val" id="diagCpuUsage">---</strong>
-            </div>
-            <div class="diag-card">
-              <span class="diag-label">Memória RAM App:</span>
-              <strong class="diag-val" id="diagMemoryUsage">---</strong>
-            </div>
-          </div>
-          <!-- Detalhamento de CPU por Subprocesso (app.getAppMetrics) -->
-          <div style="margin-top: 10px; padding: 10px 12px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 6px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-              <span class="diag-label" style="font-size: 0.72rem; color: #94a3b8; font-weight: 600;">Consumo de CPU por Subprocesso (Electron app.getAppMetrics):</span>
-              <span id="diagSubprocessSourceBadge" style="font-size: 0.68rem; color: #64748b;">Tempo Real</span>
-            </div>
-            <div class="diag-grid" id="diagSubprocessCpuGrid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
-              <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">Browser (Main):</span>
-                <strong class="diag-val" id="diagCpuBrowser" style="font-size: 0.8rem; color: #e2e8f0;">---</strong>
-              </div>
-              <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">GPU Process:</span>
-                <strong class="diag-val" id="diagCpuGpu" style="font-size: 0.8rem; color: #38bdf8;">---</strong>
-              </div>
-              <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">Tab (Renderer):</span>
-                <strong class="diag-val" id="diagCpuRenderer" style="font-size: 0.8rem; color: #fbbf24;">---</strong>
-              </div>
-              <div class="diag-card" style="padding: 6px 8px;">
-                <span class="diag-label" style="font-size: 0.68rem;">Utility (Audio/Video):</span>
-                <strong class="diag-val" id="diagCpuUtility" style="font-size: 0.8rem; color: #a78bfa;">---</strong>
-              </div>
+            <div class="diag-system-row">
+              <span class="diag-row-label">RAM do app</span>
+              <span class="diag-row-value" id="diagMemoryUsage">—</span>
             </div>
           </div>
         </div>
 
-        <!-- SEÇÃO 2: SONDAGEM DE CODECS (mediaCapabilities) -->
+        <!-- 2. Transmissões de saída -->
         <div class="diag-section">
           <div class="diag-section-header">
-            <h4>Seção 2: Sondagem de Codecs (mediaCapabilities & Perfis MFT)</h4>
-            <span class="diag-sublabel">Confirmação de powerEfficient: true em 1080p @ 60 FPS</span>
-          </div>
-          <div class="diag-grid">
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Sondagem de Codecs (mediaCapabilities powerEfficient + WebCodecs isConfigSupported — 1080p @ 60 FPS):</span>
-              <div class="diag-val" id="diagMediaCapabilitiesProbe" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 240px; overflow-y: auto; color: #cbd5e1;">Sondando capacidades de aceleração por hardware...</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Codecs WebRTC RTCRtpSender (H.264 SDP FMTP & Níveis):</span>
-              <div class="diag-val" id="diagRtcSenderProfiles" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #a5f3fc;">Consultando...</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Perfis de Hardware Video Encode Registrados no Boot (Chromium):</span>
-              <div class="diag-val" id="diagGpuEncProfiles" style="font-size: 0.75rem; white-space: pre-wrap; max-height: 100px; overflow-y: auto; color: #38bdf8;">Consultando...</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Workarounds de Driver Chromium (driverBugWorkarounds):</span>
-              <div class="diag-val" id="diagGpuWorkarounds" style="font-size: 0.75rem; white-space: pre-wrap;">Consultando...</div>
-            </div>
-            <div class="diag-card" style="grid-column: 1 / -1;">
-              <span class="diag-label">Logs do Processo GPU (MediaFoundation / D3D11 / AMF / VCN):</span>
-              <div class="diag-val" id="diagGpuLogs" style="font-size: 0.72rem; white-space: pre-wrap; max-height: 100px; overflow-y: auto; color: #cbd5e1;">Nenhuma mensagem registrada.</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- SEÇÃO 3: TRANSMISSÕES DE SAÍDA (OUTBOUND ENCODERS) -->
-        <div class="diag-section">
-          <div class="diag-section-header">
-            <h4>Seção 3: Transmissões de Saída (Outbound Encoders)</h4>
-            <span class="diag-sublabel">Codec, implementação real (MediaFoundationVideoEncodeAccelerator), avgEncodeTimeMs e bitrate</span>
-          </div>
-          <div id="hardwareFallbackAlert" class="alert-banner alert-banner-danger hidden" style="margin: 8px 0 12px 0; padding: 10px 14px; border-radius: 6px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; font-size: 0.8rem;">
-            <div style="font-weight: 600; margin-bottom: 3px;">⚠️ ALERTA CRÍTICO: Fallback de Codificação para CPU Detectado</div>
-            <div id="hardwareFallbackAlertText">A aceleração por hardware GPU falhou e o vídeo está sendo codificado por software no processador.</div>
+            <h4>Transmissões de saída</h4>
           </div>
           <div class="diag-table-container">
             <table class="diag-table">
               <thead>
                 <tr>
-                  <th>Destinatário & Estado</th>
-                  <th>Stream / Codec</th>
-                  <th>Implementação (Encoder)</th>
-                  <th>Solicitado (Requested)</th>
-                  <th>Aplicado (RTCRtpSender)</th>
-                  <th>Observado Real (getStats)</th>
-                  <th>Encode Real / Limitação</th>
+                  <th>Espectador</th>
+                  <th>Codec</th>
+                  <th>Encoder em uso</th>
+                  <th>Resolução @ fps</th>
+                  <th>Bitrate</th>
+                  <th>Limitação</th>
                 </tr>
               </thead>
               <tbody id="diagOutboundTableBody">
                 <tr>
-                  <td colspan="7" class="diag-empty">Nenhum fluxo de vídeo sendo transmitido no momento.</td>
+                  <td colspan="6" class="diag-empty">Nenhuma transmissão de saída ativa.</td>
                 </tr>
               </tbody>
             </table>
           </div>
+        </div>
 
-          <div class="diag-section-header" style="margin-top: 14px;">
-            <h4>Transmissões Recebidas (Inbound Decoders)</h4>
-            <span class="diag-sublabel">Métricas reais via RTCPeerConnection.getStats()</span>
+        <!-- 3. Transmissões de entrada -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Transmissões de entrada</h4>
           </div>
           <div class="diag-table-container">
             <table class="diag-table">
               <thead>
                 <tr>
                   <th>Remetente</th>
-                  <th>Stream</th>
                   <th>Codec</th>
-                  <th>Implementação (Decoder)</th>
-                  <th>Resolução / FPS</th>
+                  <th>Decoder GPU/CPU</th>
+                  <th>Resolução @ fps</th>
                   <th>Bitrate</th>
-                  <th>Perda / Jitter</th>
+                  <th>Perda</th>
                 </tr>
               </thead>
               <tbody id="diagInboundTableBody">
                 <tr>
-                  <td colspan="7" class="diag-empty">Nenhum fluxo de vídeo remoto recebido no momento.</td>
+                  <td colspan="6" class="diag-empty">Nenhuma transmissão de entrada ativa.</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
-
-        <!-- SEÇÃO 4: TESTE WEBCODECS & CHROME://GPU -->
-        <div class="diag-section">
-          <div class="diag-section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-            <div>
-              <h4>Seção 4: Teste WebCodecs &amp; chrome://gpu</h4>
-              <span class="diag-sublabel">VideoEncoder (candidatos progressivos Level 4.2/4.0) + MediaStreamTrackProcessor</span>
-            </div>
-            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-              <button type="button" id="btnTestGpuWebCodecs" class="btn btn-primary btn-sm" style="font-weight: 600; padding: 6px 12px;">
-                ⚡ Testar Motor WebCodecs GPU
-              </button>
-              <button type="button" id="btnCopyEnvReport" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 6px 12px;">
-                📋 Copiar relatório de ambiente
-              </button>
-              <button type="button" id="btnOpenChromeGpu" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 6px 12px;">
-                🔍 Abrir chrome://gpu
-              </button>
-            </div>
-          </div>
-          <div id="diagWebCodecsResultPanel" style="margin-top: 8px; padding: 10px 12px; background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; font-size: 0.75rem; color: #cbd5e1;">
-            <div id="diagWebCodecsProbeList" style="margin-bottom: 6px;">
-              Clique em <strong>"⚡ Testar Motor WebCodecs GPU"</strong> para validar cada candidato no <code>VideoEncoder</code> e, se houver captura de tela ativa, medir o desempenho real por candidato (ou use <strong>"📋 Copiar relatório de ambiente"</strong> / <strong>"🔍 Abrir chrome://gpu"</strong> para inspecionar o processo GPU).
-            </div>
-            <div id="diagWebCodecsBenchmarkBox" class="hidden" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);"></div>
-            <div id="diagRtpSenderH264Box" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);"></div>
-            <div id="diagEnvReportMatrixBox" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);"></div>
-          </div>
-        </div>
       </div>
 
+      <!-- 4. Rodapé -->
       <div class="modal-footer diag-footer">
-        <span class="diag-live-pill"><span class="status-dot"></span> Atualização em tempo real (1.5s)</span>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <button type="button" id="btnToggleFloatingHud" class="btn btn-secondary btn-sm" title="Exibir ou ocultar o HUD flutuante compacto sobre o vídeo">Alternar HUD na Tela</button>
-          <button type="button" id="btnCloseDiagnosticsFooter" class="btn btn-secondary">Fechar</button>
+        <button type="button" id="btnOpenChromeGpu" class="diag-footer-link" title="Inspecionar processo GPU do Chromium">Abrir chrome://gpu</button>
+        <div class="diag-footer-actions">
+          <button type="button" id="btnToggleFloatingHud" class="btn btn-secondary btn-sm" title="Exibir ou ocultar o HUD compacto sobre o vídeo">Alternar HUD</button>
+          <button type="button" id="btnCloseDiagnosticsFooter" class="btn btn-secondary btn-sm">Fechar</button>
         </div>
       </div>
     </div>

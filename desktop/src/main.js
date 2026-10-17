@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, desktopCapturer, shell, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import http from 'node:http';
 import https from 'node:https';
 import { spawn, exec, execSync, execFile, execFileSync } from 'node:child_process';
@@ -668,6 +669,111 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
     processBreakdown: metricsSummary.processBreakdown,
     electronVersion: process.versions.electron,
     chromeVersion: process.versions.chrome
+  };
+});
+
+// IPC: Relatório completo de ambiente, versões, switches e GPU (somente coleta de dados)
+ipcMain.handle('desktop:env-report', async () => {
+  let gpuInfo = null;
+  try {
+    gpuInfo = await app.getGPUInfo('complete');
+  } catch (e) {
+    gpuInfo = await getCachedGpuInfo();
+  }
+
+  let gpuFeatureStatus = {};
+  try {
+    gpuFeatureStatus = app.getGPUFeatureStatus();
+  } catch (e) {
+    gpuFeatureStatus = { error: e.message };
+  }
+
+  const aux = (gpuInfo && typeof gpuInfo === 'object') ? (gpuInfo.auxAttributes || {}) : {};
+  const rawDevices = Array.isArray(gpuInfo?.gpuDevice) ? gpuInfo.gpuDevice : [];
+  const gpuDevices = rawDevices.map((dev, index) => ({
+    index,
+    role: dev.active ? 'active' : (index === 0 ? 'primary' : 'secondary'),
+    active: Boolean(dev.active),
+    vendorId: dev.vendorId ?? null,
+    deviceId: dev.deviceId ?? null,
+    subSysId: dev.subSysId ?? null,
+    revision: dev.revision ?? null,
+    driverVendor: dev.driverVendor ?? null,
+    driverVersion: dev.driverVersion ?? null,
+    driverDate: dev.driverDate ?? null,
+    deviceString: dev.deviceString || dev.description || null,
+    cudaComputeCapabilityMajor: dev.cudaComputeCapabilityMajor ?? null,
+    luid: dev.luid ?? null
+  }));
+
+  const videoEncodeAcceleratorSupportedProfile =
+    gpuInfo?.videoEncodeAcceleratorSupportedProfile ||
+    gpuInfo?.videoEncodeAcceleratorSupportedProfiles ||
+    aux?.videoEncodeAcceleratorSupportedProfile ||
+    aux?.videoEncodeAcceleratorSupportedProfiles ||
+    aux?.videoAccelerators ||
+    gpuInfo?.videoAccelerators ||
+    null;
+
+  const configuredSwitches = [
+    { name: 'enable-features', configuredValue: 'MediaFoundationVideoEncode,MediaFoundationD3D11VideoCapture,WindowsGraphicsCapture,WebRtcUseGpuMemoryBufferVideoFrames' },
+    { name: 'ignore-gpu-blocklist', configuredValue: null },
+    { name: 'enable-gpu-rasterization', configuredValue: null },
+    { name: 'enable-zero-copy', configuredValue: null },
+    { name: 'force-high-performance-gpu', configuredValue: null },
+    { name: 'enable-accelerated-video-encode', configuredValue: null },
+    { name: 'enable-accelerated-video-decode', configuredValue: null },
+    { name: 'enable-gpu-memory-buffer-video-frames', configuredValue: null },
+    { name: 'enable-native-gpu-memory-buffers', configuredValue: null },
+    { name: 'enable-webrtc-hw-h264-encoding', configuredValue: null },
+    { name: 'disable-renderer-backgrounding', configuredValue: null },
+    { name: 'disable-background-timer-throttling', configuredValue: null },
+    { name: 'disable-backgrounding-occluded-windows', configuredValue: null },
+    { name: 'disable-features', configuredValue: 'CalculateNativeWinOcclusion,WidgetLayering,MediaFoundationD3D11VideoCaptureBlocklist' },
+    { name: 'ignore-certificate-errors', configuredValue: null },
+    { name: 'allow-insecure-localhost', configuredValue: null }
+  ];
+
+  const effectiveSwitches = configuredSwitches.map((sw) => {
+    let hasSwitch = false;
+    let effectiveValue = '';
+    try {
+      hasSwitch = app.commandLine.hasSwitch(sw.name);
+      effectiveValue = app.commandLine.getSwitchValue(sw.name);
+    } catch (_) {}
+    return {
+      name: sw.name,
+      configuredValue: sw.configuredValue,
+      hasSwitch,
+      effectiveValue: effectiveValue || null
+    };
+  });
+
+  const cpus = os.cpus() || [];
+
+  return {
+    versions: {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      v8: process.versions.v8
+    },
+    gpuFeatureStatus,
+    gpuInfo: {
+      ...(gpuInfo && typeof gpuInfo === 'object' ? gpuInfo : {}),
+      devicesSummary: gpuDevices,
+      videoEncodeAcceleratorSupportedProfile
+    },
+    commandLine: {
+      enableFeatures: app.commandLine.getSwitchValue('enable-features') || null,
+      disableFeatures: app.commandLine.getSwitchValue('disable-features') || null,
+      effectiveSwitches,
+      argv: process.argv,
+      execArgv: process.execArgv
+    },
+    platform: process.platform,
+    osRelease: os.release(),
+    cpuModel: cpus[0]?.model || null
   };
 });
 

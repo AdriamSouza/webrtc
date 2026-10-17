@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('desktopAPI', {
 
   // Diagnóstico de aceleração por hardware GPU e recursos do sistema
   getGpuDiagnostics: () => ipcRenderer.invoke('desktop:get-gpu-diagnostics'),
+  getEnvReport: () => ipcRenderer.invoke('desktop:env-report'),
   getCpuUsage: () => ipcRenderer.invoke('desktop:get-cpu-usage'),
   openChromeGpu: () => ipcRenderer.invoke('desktop:open-chrome-gpu'),
 

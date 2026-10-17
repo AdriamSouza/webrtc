@@ -2535,12 +2535,190 @@ async function handleTestGpuWebCodecs() {
   }
 }
 
+async function probeEnvReportWebCodecsMatrix() {
+  const codecs = ['avc1.42e02a', 'avc1.4d002a', 'avc1.64002a'];
+  const framerates = [30, 60];
+  const avcVariants = [
+    { key: 'sem annexb', avc: undefined },
+    { key: 'com annexb', avc: { format: 'annexb' } }
+  ];
+
+  const matrix = [];
+  const hasVideoEncoder = typeof globalThis.VideoEncoder !== 'undefined' &&
+                          typeof globalThis.VideoEncoder.isConfigSupported === 'function';
+
+  for (const codec of codecs) {
+    for (const framerate of framerates) {
+      for (const variant of avcVariants) {
+        const config = {
+          codec,
+          width: 1920,
+          height: 1080,
+          bitrate: 8_000_000,
+          framerate,
+          hardwareAcceleration: 'prefer-hardware',
+          latencyMode: 'realtime'
+        };
+        if (variant.avc) {
+          config.avc = variant.avc;
+        }
+
+        let supported = false;
+        let resolvedConfig = null;
+        let error = null;
+
+        if (!hasVideoEncoder) {
+          error = 'VideoEncoder.isConfigSupported indisponível';
+        } else {
+          try {
+            const res = await globalThis.VideoEncoder.isConfigSupported(config);
+            supported = Boolean(res?.supported);
+            resolvedConfig = res?.config || null;
+          } catch (err) {
+            supported = false;
+            error = err?.message || String(err);
+          }
+        }
+
+        matrix.push({
+          codec,
+          framerate,
+          formato: variant.key,
+          width: 1920,
+          height: 1080,
+          bitrate: 8_000_000,
+          hardwareAcceleration: 'prefer-hardware',
+          latencyMode: 'realtime',
+          avc: variant.avc || null,
+          supported,
+          resolvedConfig,
+          error
+        });
+      }
+    }
+  }
+
+  return matrix;
+}
+
+function renderEnvReportMatrixTable(matrix = [], statusBannerHtml = '') {
+  const matrixBoxEl = document.getElementById('diagEnvReportMatrixBox');
+  if (!matrixBoxEl) return;
+
+  const rowsHtml = matrix.map((item) => {
+    const supBadge = item.supported
+      ? '<span class="diag-badge-hw" style="font-size: 0.68rem; padding: 1px 6px;">true ✅</span>'
+      : `<span class="diag-badge-sw" style="font-size: 0.68rem; padding: 1px 6px;">false ❌${item.error ? ' (' + escapeHtml(item.error) + ')' : ''}</span>`;
+    return `
+      <tr>
+        <td style="font-family: monospace; font-weight: 600; color: #f8fafc;">${escapeHtml(item.codec)}</td>
+        <td style="font-family: monospace;">${item.framerate} fps</td>
+        <td style="font-family: monospace;">${escapeHtml(item.formato)}</td>
+        <td>${supBadge}</td>
+      </tr>
+    `;
+  }).join('');
+
+  matrixBoxEl.classList.remove('hidden');
+  matrixBoxEl.innerHTML = `
+    ${statusBannerHtml}
+    <div style="margin-bottom: 6px; font-weight: 600; color: #e2e8f0; font-size: 0.74rem;">
+      Matriz VideoEncoder.isConfigSupported (1920x1080 • 8 Mbps • realtime • prefer-hardware):
+    </div>
+    <div class="diag-table-container">
+      <table class="diag-table" style="font-size: 0.72rem;">
+        <thead>
+          <tr>
+            <th>Codec</th>
+            <th>FPS</th>
+            <th>Formato AVC</th>
+            <th>Supported</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function handleCopyEnvReport() {
+  const btn = document.getElementById('btnCopyEnvReport');
+  const origText = btn ? btn.textContent : '📋 Copiar relatório de ambiente';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Coletando relatório...';
+  }
+
+  try {
+    let envData = {};
+    if (window.desktopAPI && typeof window.desktopAPI.getEnvReport === 'function') {
+      envData = await window.desktopAPI.getEnvReport();
+    } else {
+      envData = {
+        note: 'Coletado no navegador (window.desktopAPI.getEnvReport indisponível fora do Electron)'
+      };
+    }
+
+    const matrix = await probeEnvReportWebCodecsMatrix();
+    const fullReport = {
+      collectedAt: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      ...envData,
+      videoEncoderIsConfigSupportedMatrix: matrix
+    };
+
+    const jsonString = JSON.stringify(fullReport, null, 2);
+    let copiedOk = false;
+    try {
+      await navigator.clipboard.writeText(jsonString);
+      copiedOk = true;
+    } catch (_) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = jsonString;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        copiedOk = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {}
+    }
+
+    const banner = copiedOk
+      ? '<div style="margin-bottom: 8px; padding: 6px 10px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; color: #34d399; font-weight: 600; font-size: 0.73rem;">✅ Relatório completo de ambiente (JSON) copiado para a área de transferência!</div>'
+      : '<div style="margin-bottom: 8px; padding: 6px 10px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 4px; color: #fbbf24; font-weight: 600; font-size: 0.73rem;">⚠️ Matriz gerada (veja o console para o JSON completo caso a área de transferência esteja bloqueada).</div>';
+
+    console.log('[EnvReport JSON]', fullReport);
+    renderEnvReportMatrixTable(matrix, banner);
+
+    if (btn) {
+      btn.textContent = copiedOk ? '✅ Relatório copiado!' : '⚠️ Ver Console';
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }, 2500);
+    }
+  } catch (err) {
+    console.error('[Diagnostics] Erro ao gerar relatório de ambiente:', err);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+}
+
 async function openDiagnosticsModal() {
   const modal = document.getElementById('diagnosticsModal');
   if (!modal) return;
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
   await renderDiagnosticsData();
+  probeEnvReportWebCodecsMatrix()
+    .then((matrix) => renderEnvReportMatrixTable(matrix))
+    .catch((err) => console.warn('[Diagnostics] Erro ao renderizar matriz inicial WebCodecs:', err));
   if (!diagnosticsInterval) {
     diagnosticsInterval = setInterval(() => {
       renderDiagnosticsData().catch(e => console.warn('[Diagnostics] Erro na atualização periódica:', e));
@@ -2923,6 +3101,7 @@ function setupEventListeners() {
   const btnCloseDiagnostics = document.getElementById('btnCloseDiagnostics');
   const btnCloseDiagnosticsFooter = document.getElementById('btnCloseDiagnosticsFooter');
   const btnTestGpuWebCodecs = document.getElementById('btnTestGpuWebCodecs');
+  const btnCopyEnvReport = document.getElementById('btnCopyEnvReport');
   const btnOpenChromeGpu = document.getElementById('btnOpenChromeGpu');
   const btnToggleFloatingHud = document.getElementById('btnToggleFloatingHud');
 
@@ -2943,6 +3122,9 @@ function setupEventListeners() {
   }
   if (btnTestGpuWebCodecs) {
     btnTestGpuWebCodecs.addEventListener('click', handleTestGpuWebCodecs);
+  }
+  if (btnCopyEnvReport) {
+    btnCopyEnvReport.addEventListener('click', handleCopyEnvReport);
   }
   if (btnOpenChromeGpu) {
     if (window.desktopAPI && typeof window.desktopAPI.openChromeGpu === 'function') {

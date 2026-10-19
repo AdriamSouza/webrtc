@@ -506,18 +506,36 @@ function isAmdGpuPresent() {
 function findGstreamerBin() {
   const candidates = [
     process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
-    'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin',
+    path.join(process.resourcesPath || '', 'gstreamer', 'bin'),
     'C:\\gstreamer\\1.0\\msvc_x86_64\\bin',
-    path.join(process.resourcesPath || '', 'gstreamer', 'bin')
+    'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin'
   ];
   for (const c of candidates) {
     if (c && fs.existsSync(path.join(c, 'gstreamer-1.0-0.dll'))) return c;
   }
   const pathDirs = (process.env.PATH || '').split(path.delimiter);
   for (const p of pathDirs) {
-    if (fs.existsSync(path.join(p, 'gstreamer-1.0-0.dll'))) return p;
+    if (p && fs.existsSync(path.join(p, 'gstreamer-1.0-0.dll'))) return p;
   }
   return null;
+}
+
+function verifyGstreamerVersion(binDir) {
+  if (!binDir) return false;
+  try {
+    const gstLaunch = path.join(binDir, 'gst-launch-1.0.exe');
+    if (fs.existsSync(gstLaunch)) {
+      const out = execSync(`"${gstLaunch}" --version`, {
+        timeout: 3000,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+      return /version\s+1\.26\./i.test(out);
+    }
+    return fs.existsSync(path.join(binDir, 'gstreamer-1.0-0.dll'));
+  } catch (_) {
+    return false;
+  }
 }
 
 function findScreenWorkerRunner() {
@@ -535,7 +553,8 @@ function findScreenWorkerRunner() {
 
 ipcMain.handle('desktop:is-gpu-worker-supported', async () => {
   const isWin = process.platform === 'win32';
-  const hasGst = Boolean(findGstreamerBin());
+  const gstBin = findGstreamerBin();
+  const hasGst = Boolean(gstBin && verifyGstreamerVersion(gstBin));
   const hasAmd = isWin && isAmdGpuPresent();
   const runnerPath = findScreenWorkerRunner();
   return {
@@ -546,7 +565,7 @@ ipcMain.handle('desktop:is-gpu-worker-supported', async () => {
     hasRunner: Boolean(runnerPath),
     reason: !isWin ? 'Requer sistema operacional Windows' :
             !hasAmd ? 'Requer GPU AMD Radeon compatível com AMF' :
-            !hasGst ? 'Binários GStreamer MSVC x64 não encontrados' :
+            !hasGst ? 'GStreamer 1.26 não encontrado' :
             !runnerPath ? 'Worker runner não encontrado' : 'Compatível'
   };
 });

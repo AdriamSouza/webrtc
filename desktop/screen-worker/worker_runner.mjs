@@ -69,9 +69,9 @@ if (!detectAmdGpu()) {
 function findGstBinDir() {
   const candidates = [
     process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
-    'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin',
+    path.resolve(__dirname, '../../resources/gstreamer/bin'),
     'C:\\gstreamer\\1.0\\msvc_x86_64\\bin',
-    path.resolve(__dirname, '../../resources/gstreamer/bin')
+    'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin'
   ];
 
   for (const c of candidates) {
@@ -83,7 +83,7 @@ function findGstBinDir() {
   // Verifica no PATH existente
   const pathDirs = (process.env.PATH || '').split(path.delimiter);
   for (const p of pathDirs) {
-    if (fs.existsSync(path.join(p, 'gstreamer-1.0-0.dll'))) {
+    if (p && fs.existsSync(path.join(p, 'gstreamer-1.0-0.dll'))) {
       return p;
     }
   }
@@ -93,12 +93,12 @@ function findGstBinDir() {
 
 const gstBinDir = findGstBinDir();
 if (!gstBinDir) {
-  console.error('[WorkerRunner] Diretório binário do GStreamer MSVC x64 não encontrado.');
+  console.error('[WorkerRunner] GStreamer 1.26 não encontrado no sistema.');
   if (process.send) {
     process.send({
       type: 'error',
       code: 'GSTREAMER_NOT_FOUND',
-      message: 'Binários do GStreamer MSVC x64 não localizados no sistema.'
+      message: 'GStreamer 1.26 não encontrado no sistema.'
     });
   }
   process.exit(3);

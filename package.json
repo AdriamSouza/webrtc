@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node backend/src/server.js",
-    "test": "node --test test/telemetry.test.mjs && node --test test/updater_and_versioning.test.mjs && node --test test/hardware_encoder_and_streaming.test.mjs && node --test test/adaptive_stream_manager.test.mjs && node test/benchmark_multipeer_encoding.mjs && node backend/test_rate_limiter.mjs && node backend/test_multipeer.mjs && node --test test/screen_worker_signaling.test.mjs",
+    "test": "node --test test/telemetry.test.mjs && node --test test/updater_and_versioning.test.mjs && node --test test/hardware_encoder_and_streaming.test.mjs && node --test test/adaptive_stream_manager.test.mjs && node test/benchmark_multipeer_encoding.mjs && node backend/test_rate_limiter.mjs && node backend/test_multipeer.mjs && node --test test/screen_worker_signaling.test.mjs && node --test test/adaptive_ladder.test.mjs && node --test test/disabled_fallback_guarantee.test.mjs",
     "build": "npm --prefix backend install",
     "backend": "node backend/src/server.js",
     "desktop": "npm --prefix desktop start",

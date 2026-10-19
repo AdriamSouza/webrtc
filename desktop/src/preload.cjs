@@ -57,6 +57,17 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   getCpuUsage: () => ipcRenderer.invoke('desktop:get-cpu-usage'),
   openChromeGpu: () => ipcRenderer.invoke('desktop:open-chrome-gpu'),
 
+  // Worker Nativo de Captura + Encode por GPU (AMD AMF)
+  isGpuWorkerSupported: () => ipcRenderer.invoke('desktop:is-gpu-worker-supported'),
+  startScreenWorker: (opts) => ipcRenderer.invoke('desktop:start-screen-worker', opts),
+  stopScreenWorker: () => ipcRenderer.invoke('desktop:stop-screen-worker'),
+  getScreenWorkerStatus: () => ipcRenderer.invoke('desktop:get-screen-worker-status'),
+  onScreenWorkerError: (callback) => {
+    const listener = (event, err) => callback(err);
+    ipcRenderer.on('desktop:screen-worker-error', listener);
+    return () => ipcRenderer.removeListener('desktop:screen-worker-error', listener);
+  },
+
   // Preferências persistentes do usuário e dados de sessão
   getPreferences: () => ipcRenderer.invoke('desktop:get-preferences'),
   savePreferences: (prefs) => ipcRenderer.invoke('desktop:save-preferences', prefs)

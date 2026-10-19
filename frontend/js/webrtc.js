@@ -53,8 +53,25 @@ export class WebRTCManager {
     this.targetMaxBitrate = 8000000; // 8 Mbps padrão (Ultra 60 FPS)
     this.targetMaxFps = 60; // 60 FPS padrão
     this.iceDisconnectTimers = new Map(); // Map<targetUserId, timerId>
+    this.workerPeers = new Map(); // Map<workerId, { parentUserId, workerId }>
+    this.hostToWorkerMap = new Map(); // Map<parentUserId, workerId>
     this.roomState = null;
     this.qualityController = null;
+  }
+
+  registerWorkerPeer(workerId, parentUserId) {
+    this.workerPeers.set(workerId, { parentUserId, workerId });
+    this.hostToWorkerMap.set(parentUserId, workerId);
+    console.log(`[WebRTC] Worker registrado: ${workerId} -> Host: ${parentUserId}`);
+  }
+
+  unregisterWorkerPeer(workerId) {
+    const entry = this.workerPeers.get(workerId);
+    if (entry) {
+      this.hostToWorkerMap.delete(entry.parentUserId);
+      this.workerPeers.delete(workerId);
+      console.log(`[WebRTC] Worker removido: ${workerId}`);
+    }
   }
 
   setIceServers(servers) {
@@ -873,6 +890,28 @@ export class WebRTCManager {
    * Tela e Câmera NUNCA sejam confundidas como a mesma transmissão.
    */
   getRemoteVideoTrack(targetUserId, type = 'screen') {
+    // Se há um screen-worker ativo para este host, prioriza o track nativo de GPU do worker
+    if (type === 'screen' && this.hostToWorkerMap.has(targetUserId)) {
+      const workerId = this.hostToWorkerMap.get(targetUserId);
+      const workerPc = this.peers.get(workerId);
+      if (workerPc) {
+        const workerReceiver = workerPc.getReceivers().find(r => r.track && r.track.kind === 'video');
+        if (workerReceiver && workerReceiver.track && workerReceiver.track.readyState === 'live') {
+          return workerReceiver.track;
+        }
+      }
+    }
+
+    if (this.workerPeers.has(targetUserId)) {
+      const pcWorker = this.peers.get(targetUserId);
+      if (pcWorker) {
+        const r = pcWorker.getReceivers().find(rc => rc.track && rc.track.kind === 'video');
+        if (r && r.track && r.track.readyState === 'live') {
+          return r.track;
+        }
+      }
+    }
+
     const pc = this.peers.get(targetUserId);
     if (!pc) return null;
 

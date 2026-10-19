@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Screen Worker Prototype — Receptor WebRTC</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    h2 {
+      margin: 0 0 12px 0;
+      font-size: 1.25rem;
+      color: #38bdf8;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .video-wrap {
+      position: relative;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      border: 1px solid #334155;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .metrics-panel {
+      background: #1e293b;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      background: #0f172a;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+    }
+    .metric-label {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .metric-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-top: 4px;
+      font-family: monospace;
+    }
+    .metric-value.good { color: #4ade80; }
+    .metric-value.warn { color: #facc15; }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: #334155;
+      color: #94a3b8;
+    }
+    .status-badge.connected {
+      background: rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .anim-canvas {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 240px;
+      height: 160px;
+      background: #000;
+      border: 2px solid #38bdf8;
+      border-radius: 6px;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h2>Protótipo Nativo de Captura & Encode AMD AMF via WebRTC</h2>
+      <span id="connectionStatus" class="status-badge">Conectando WebSocket...</span>
+    </div>
+
+    <div class="video-wrap">
+      <video id="remoteVideo" autoplay playsinline muted></video>
+    </div>
+
+    <div class="metrics-panel">
+      <div class="metric-card">
+        <div class="metric-label">FPS Recebido</div>
+        <div id="valFps" class="metric-value">--</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Bitrate Recebido</div>
+        <div id="valBitrate" class="metric-value">--</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Resolução</div>
+        <div id="valResolution" class="metric-value">--</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Decoder Hardware / Software</div>
+        <div id="valDecoder" class="metric-value" style="font-size: 1rem; word-break: break-all;">--</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Perda de Pacotes</div>
+        <div id="valPacketLoss" class="metric-value">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Jitter</div>
+        <div id="valJitter" class="metric-value">-- ms</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Canvas de animação para garantir movimento na tela para teste contínuo a 60 FPS -->
+  <canvas id="animCanvas" class="anim-canvas" width="480" height="320" style="width: 480px; height: 320px;"></canvas>
+
+  <script>
+    // Gerador de movimento constante na tela a 60 FPS
+    const canvas = document.getElementById('animCanvas');
+    const ctx = canvas.getContext('2d');
+    let x = 40, y = 40, vx = 8, vy = 6;
+    let hue = 0;
+    function renderAnimation() {
+      hue = (hue + 2) % 360;
+      ctx.fillStyle = `hsl(${hue}, 40%, 15%)`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = `hsl(${hue}, 90%, 60%)`;
+      ctx.beginPath();
+      ctx.arc(x, y, 28, 0, Math.PI * 2);
+      ctx.fill();
+
+      x += vx; y += vy;
+      if (x <= 28 || x >= canvas.width - 28) vx = -vx;
+      if (y <= 28 || y >= canvas.height - 28) vy = -vy;
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 20px monospace';
+      ctx.fillText(`60 FPS ANIM: ${Date.now()}`, 20, 40);
+    }
+    setInterval(renderAnimation, 16);
+    function animLoop() {
+      renderAnimation();
+      requestAnimationFrame(animLoop);
+    }
+    requestAnimationFrame(animLoop);
+
+    // Conexão WebRTC e WebSocket
+    const statusEl = document.getElementById('connectionStatus');
+    const videoEl = document.getElementById('remoteVideo');
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+
+    let pc = null;
+    let prevFrames = 0;
+    let prevBytes = 0;
+    let prevTime = performance.now();
+    let pendingRemoteIce = [];
+
+    function sendLog(text) {
+      console.log(text);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'browserLog', text }));
+      }
+    }
+
+    ws.onopen = () => {
+      statusEl.textContent = 'Aguardando Offer do GStreamer...';
+      sendLog('[Browser] WebSocket conectado ao servidor de teste.');
+    };
+
+    ws.onmessage = async (evt) => {
+      const msg = JSON.parse(evt.data);
+
+      if (msg.type === 'offer') {
+        sendLog(`[Browser] Offer recebido (${msg.sdp.length} bytes). Configurando RTCPeerConnection...`);
+        statusEl.textContent = 'Offer recebido, conectando WebRTC...';
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        pc.oniceconnectionstatechange = () => {
+          sendLog(`[Browser ICE] iceConnectionState: ${pc.iceConnectionState}`);
+        };
+
+        pc.onconnectionstatechange = () => {
+          sendLog(`[Browser Peer] connectionState: ${pc.connectionState}`);
+        };
+
+        pc.ontrack = (event) => {
+          sendLog(`[Browser Media] ontrack recebido! Kind: ${event.track.kind}, ID: ${event.track.id}`);
+          videoEl.srcObject = event.streams[0] || new MediaStream([event.track]);
+          videoEl.play().catch(e => sendLog(`[Browser Video Error]: ${e.message}`));
+          statusEl.textContent = 'Vídeo Conectado';
+          statusEl.className = 'status-badge connected';
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            sendLog(`[Browser Candidate]: ${event.candidate.candidate}`);
+            ws.send(JSON.stringify({
+              type: 'ice',
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+              candidate: event.candidate.candidate
+            }));
+          } else {
+            sendLog('[Browser Candidate]: Fim da coleta ICE local (null)');
+          }
+        };
+
+        try {
+          // Ajusta profile-level-id para Constrained Baseline (42e01f) exigido pelo Chromium
+          const adaptedSdp = msg.sdp.replace(/profile-level-id=42[0-9a-fA-F]{4}/g, 'profile-level-id=42e01f');
+          sendLog(`[Browser] SDP adaptado para 42e01f? ${adaptedSdp.includes('profile-level-id=42e01f')}`);
+
+          await pc.setRemoteDescription(new RTCSessionDescription({
+            type: 'offer',
+            sdp: adaptedSdp
+          }));
+
+          // Adiciona candidatos ICE remotos pendentes
+          for (const c of pendingRemoteIce) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              sendLog(`[Browser ICE Error]: ${err.message}`);
+            }
+          }
+          pendingRemoteIce = [];
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          sendLog('[Browser] Answer local criado e enviado.');
+          ws.send(JSON.stringify({
+            type: 'answer',
+            sdp: answer.sdp
+          }));
+
+          startStatsCollection();
+        } catch (err) {
+          sendLog(`[Browser Error]: Falha na negociação WebRTC: ${err.message}`);
+        }
+      } else if (msg.type === 'ice') {
+        if (pc && pc.remoteDescription) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate({
+              candidate: msg.candidate,
+              sdpMLineIndex: msg.sdpMLineIndex
+            }));
+          } catch (err) {
+            sendLog(`[Browser ICE Error]: ${err.message}`);
+          }
+        } else {
+          pendingRemoteIce.push({
+            candidate: msg.candidate,
+            sdpMLineIndex: msg.sdpMLineIndex
+          });
+        }
+      }
+    };
+
+    function startStatsCollection() {
+      setInterval(async () => {
+        if (!pc) return;
+        const stats = await pc.getStats();
+        let inbound = null;
+
+        stats.forEach(report => {
+          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            inbound = report;
+          }
+        });
+
+        if (!inbound) {
+          sendLog(`[Browser Stats]: Inbound RTP video ainda não disponível (ICE: ${pc.iceConnectionState}, Peer: ${pc.connectionState})`);
+          return;
+        }
+
+        const now = performance.now();
+        const timeDiff = (now - prevTime) / 1000;
+
+        const framesDiff = (inbound.framesDecoded || 0) - prevFrames;
+        const bytesDiff = (inbound.bytesReceived || 0) - prevBytes;
+
+        const fps = timeDiff > 0 ? Math.round(framesDiff / timeDiff) : 0;
+        const bitrateMbps = timeDiff > 0 ? ((bytesDiff * 8) / (timeDiff * 1000000)).toFixed(2) : '0.00';
+
+        prevFrames = inbound.framesDecoded || 0;
+        prevBytes = inbound.bytesReceived || 0;
+        prevTime = now;
+
+        const width = inbound.frameWidth || videoEl.videoWidth || 0;
+        const height = inbound.frameHeight || videoEl.videoHeight || 0;
+        const decoder = inbound.decoderImplementation || 'Desconhecido';
+        const packetLoss = inbound.packetsLost || 0;
+        const jitter = inbound.jitter ? (inbound.jitter * 1000).toFixed(1) : '0';
+
+        document.getElementById('valFps').textContent = `${fps} fps`;
+        document.getElementById('valFps').className = `metric-value ${fps >= 55 ? 'good' : 'warn'}`;
+        document.getElementById('valBitrate').textContent = `${bitrateMbps} Mbps`;
+        document.getElementById('valResolution').textContent = `${width}x${height}`;
+        document.getElementById('valDecoder').textContent = decoder;
+        document.getElementById('valPacketLoss').textContent = packetLoss;
+        document.getElementById('valJitter').textContent = `${jitter} ms`;
+
+        // Envia para o servidor para log e cálculo de benchmark
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'metrics',
+            fps,
+            bitrateMbps: parseFloat(bitrateMbps),
+            width,
+            height,
+            decoder,
+            packetLoss,
+            jitter: parseFloat(jitter)
+          }));
+        }
+      }, 1000);
+    }
+  </script>
+</body>
+</html>

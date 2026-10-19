@@ -725,6 +725,14 @@
           <span>Atualizações</span>
           <span id="updateAvailableBadge" class="tab-badge-counter hidden">Novo</span>
         </button>
+        <button type="button" class="settings-tab-btn" data-tab="advanced" id="btnSettingsTabAdvanced">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/>
+            <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/>
+            <path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+          </svg>
+          <span>Avançado</span>
+        </button>
       </div>
 
       <!-- Conteúdo das Abas -->
@@ -1128,6 +1136,56 @@
           </div>
         </div>
 
+        <!-- ABA 5: AVANÇADO -->
+        <div id="settingsTabAdvanced" class="settings-pane">
+          <div class="audio-source-card">
+            <div class="audio-source-header">
+              <div class="audio-source-info">
+                <div class="audio-source-title">
+                  <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                    <line x1="6" y1="6" x2="6.01" y2="6"/>
+                    <line x1="6" y1="18" x2="6.01" y2="18"/>
+                  </svg>
+                  <span>Transmissão de tela por GPU (worker nativo)</span>
+                </div>
+                <span class="audio-source-help" id="gpuWorkerHelpText">Captura nativa D3D11/WGC e codificação H.264 por hardware na GPU (AMD Radeon AMF) em processo isolado. Recurso experimental desligado por padrão.</span>
+              </div>
+              <label class="toggle-switch" id="toggleGpuWorkerLabel" title="Ativar ou desativar transmissão de tela por GPU">
+                <input type="checkbox" id="settingUseGpuScreenWorker">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Parâmetros da Escada Adaptativa (L0-L3) -->
+          <div class="settings-section" style="margin-top: 18px;">
+            <label class="settings-label">Parâmetros da Escada Adaptativa (L0–L3)</label>
+            <div class="settings-help-text" style="margin-bottom: 12px; color: #a1a1aa; font-size: 0.82rem;">
+              A escada seleciona a qualidade em tempo real com base no foco da janela e nas métricas de rede de cada espectador:
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
+                <span style="font-size: 0.78rem; color: #71717a; display: block;">L0 (Focado / Ultra)</span>
+                <strong style="font-size: 0.88rem; color: #f4f4f5;">1080p60 • 10 Mbps</strong>
+              </div>
+              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
+                <span style="font-size: 0.78rem; color: #71717a; display: block;">L1 (Equilibrado)</span>
+                <strong style="font-size: 0.88rem; color: #f4f4f5;">720p60 • 5 Mbps</strong>
+              </div>
+              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
+                <span style="font-size: 0.78rem; color: #71717a; display: block;">L2 (Segundo Plano)</span>
+                <strong style="font-size: 0.88rem; color: #f4f4f5;">720p30 • 3 Mbps</strong>
+              </div>
+              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
+                <span style="font-size: 0.78rem; color: #71717a; display: block;">L3 (Inativo / Baixa Banda)</span>
+                <strong style="font-size: 0.88rem; color: #f4f4f5;">480p30 • 1.5 Mbps</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <div class="settings-modal-footer">
@@ -1239,6 +1297,34 @@
               <tbody id="diagInboundTableBody">
                 <tr>
                   <td colspan="6" class="diag-empty">Nenhuma transmissão de entrada ativa.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 4. Espectadores e Qualidade Adaptativa (Screen Worker GPU / WebRTC) -->
+        <div class="diag-section">
+          <div class="diag-section-header">
+            <h4>Espectadores e Qualidade Adaptativa</h4>
+          </div>
+          <div class="diag-table-container">
+            <table class="diag-table">
+              <thead>
+                <tr>
+                  <th>Espectador</th>
+                  <th>Modo</th>
+                  <th>Nível Atual</th>
+                  <th>Bitrate</th>
+                  <th>FPS</th>
+                  <th>Perda</th>
+                  <th>Último Motivo</th>
+                  <th>GPU Encode</th>
+                </tr>
+              </thead>
+              <tbody id="diagViewersAdaptiveTableBody">
+                <tr>
+                  <td colspan="8" class="diag-empty">Nenhum espectador conectado no momento.</td>
                 </tr>
               </tbody>
             </table>

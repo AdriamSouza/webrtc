@@ -51,7 +51,7 @@ console.log('[Build Desktop] Frontend sincronizado com sucesso.');
 
 // 4. Empacota aplicativo desktop para Windows x64
 console.log('[Build Desktop] Iniciando empacotamento com Electron Packager...');
-const packCmd = 'npx --yes @electron/packager desktop Hyperstream --platform=win32 --arch=x64 --out=desktop/dist --overwrite --asar.unpack-dir="bin"';
+const packCmd = 'npx --yes @electron/packager desktop Hyperstream --platform=win32 --arch=x64 --out=desktop/dist --overwrite --asar.unpack-dir="{bin,screen-worker}"';
 execSync(packCmd, { cwd: rootDir, stdio: 'inherit' });
 
 const packagedDir = path.join(rootDir, 'desktop', 'dist', 'Hyperstream-win32-x64');

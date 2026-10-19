@@ -484,6 +484,172 @@ ipcMain.handle('desktop:open-chrome-gpu', async () => {
   }
 });
 
+// ========================================================
+// GERENCIADOR DE SCREEN WORKER NATIVO (GPU AMD AMF)
+// ========================================================
+let activeScreenWorkerProcess = null;
+
+function isAmdGpuPresent() {
+  if (process.platform !== 'win32') return false;
+  try {
+    const stdout = execSync('powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"', {
+      timeout: 3000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    return /amd|radeon/i.test(stdout);
+  } catch (_) {
+    return false;
+  }
+}
+
+function findGstreamerBin() {
+  const candidates = [
+    process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
+    'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin',
+    'C:\\gstreamer\\1.0\\msvc_x86_64\\bin',
+    path.join(process.resourcesPath || '', 'gstreamer', 'bin')
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(path.join(c, 'gstreamer-1.0-0.dll'))) return c;
+  }
+  const pathDirs = (process.env.PATH || '').split(path.delimiter);
+  for (const p of pathDirs) {
+    if (fs.existsSync(path.join(p, 'gstreamer-1.0-0.dll'))) return p;
+  }
+  return null;
+}
+
+function findScreenWorkerRunner() {
+  const candidates = [
+    path.resolve(__dirname, '../screen-worker/worker_runner.mjs'),
+    path.resolve(__dirname, 'screen-worker/worker_runner.mjs'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'desktop', 'screen-worker', 'worker_runner.mjs'),
+    path.join(process.resourcesPath || '', 'screen-worker', 'worker_runner.mjs')
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+ipcMain.handle('desktop:is-gpu-worker-supported', async () => {
+  const isWin = process.platform === 'win32';
+  const hasGst = Boolean(findGstreamerBin());
+  const hasAmd = isWin && isAmdGpuPresent();
+  const runnerPath = findScreenWorkerRunner();
+  return {
+    supported: isWin && hasGst && hasAmd && Boolean(runnerPath),
+    isWindows: isWin,
+    hasGstreamer: hasGst,
+    hasAmdGpu: hasAmd,
+    hasRunner: Boolean(runnerPath),
+    reason: !isWin ? 'Requer sistema operacional Windows' :
+            !hasAmd ? 'Requer GPU AMD Radeon compatível com AMF' :
+            !hasGst ? 'Binários GStreamer MSVC x64 não encontrados' :
+            !runnerPath ? 'Worker runner não encontrado' : 'Compatível'
+  };
+});
+
+ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
+  try {
+    if (activeScreenWorkerProcess && !activeScreenWorkerProcess.killed) {
+      console.log('[Desktop Main] Worker já em execução. PID:', activeScreenWorkerProcess.pid);
+      return { success: true, pid: activeScreenWorkerProcess.pid, alreadyRunning: true };
+    }
+
+    const { roomId, hostId, workerToken, serverUrl, sourceId } = opts;
+    if (!roomId || !hostId || !workerToken) {
+      throw new Error('Parâmetros obrigatórios ausentes para iniciar screen-worker.');
+    }
+
+    const runner = findScreenWorkerRunner();
+    if (!runner) {
+      throw new Error('Script worker_runner.mjs não localizado.');
+    }
+
+    const gstBin = findGstreamerBin();
+    const env = {
+      ...process.env,
+      PATH: gstBin ? `${gstBin}${path.delimiter}${process.env.PATH || ''}` : process.env.PATH
+    };
+
+    const targetServerUrl = serverUrl || (await getInitialUrl());
+    const runnerArgs = [
+      runner,
+      '--serverUrl', targetServerUrl,
+      '--roomId', roomId,
+      '--hostId', hostId,
+      '--workerToken', workerToken
+    ];
+    if (sourceId) {
+      runnerArgs.push('--sourceId', sourceId);
+    }
+
+    console.log('[Desktop Main] Lançando Screen Worker subprocesso:', process.execPath, runnerArgs);
+
+    const child = spawn(process.execPath, runnerArgs, {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+      windowsHide: true
+    });
+
+    activeScreenWorkerProcess = child;
+
+    child.on('message', (msg) => {
+      console.log('[Desktop Main] Mensagem recebida do worker via IPC:', msg);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('desktop:screen-worker-status', msg);
+      }
+    });
+
+    child.stdout.on('data', (d) => {
+      console.log(`[WorkerRunner Stdout] ${d.toString().trim()}`);
+    });
+
+    child.stderr.on('data', (d) => {
+      console.warn(`[WorkerRunner Stderr] ${d.toString().trim()}`);
+    });
+
+    child.on('exit', (code, signal) => {
+      console.log(`[Desktop Main] Worker subprocesso encerrou. Código: ${code}, Sinal: ${signal}`);
+      if (activeScreenWorkerProcess === child) {
+        activeScreenWorkerProcess = null;
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('desktop:screen-worker-error', {
+          code,
+          signal,
+          message: `Worker encerrou com código ${code}`
+        });
+      }
+    });
+
+    return { success: true, pid: child.pid };
+  } catch (err) {
+    console.error('[Desktop Main] Erro ao iniciar screen-worker:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('desktop:stop-screen-worker', async () => {
+  if (activeScreenWorkerProcess && !activeScreenWorkerProcess.killed) {
+    console.log('[Desktop Main] Encerrando screen-worker. PID:', activeScreenWorkerProcess.pid);
+    try {
+      activeScreenWorkerProcess.kill();
+    } catch (_) {}
+    activeScreenWorkerProcess = null;
+  }
+  return { success: true };
+});
+
+ipcMain.handle('desktop:get-screen-worker-status', () => {
+  return {
+    running: Boolean(activeScreenWorkerProcess && !activeScreenWorkerProcess.killed),
+    pid: activeScreenWorkerProcess?.pid || null
+  };
+});
+
 // IPC: Obter versão instalada do aplicativo Desktop
 ipcMain.handle('desktop:get-version', () => {
   return app.getVersion();
@@ -1449,6 +1615,10 @@ app.on('before-quit', () => {
     localFrontendServer = null;
   }
   stopAllActiveLoopbacks();
+  if (activeScreenWorkerProcess && !activeScreenWorkerProcess.killed) {
+    try { activeScreenWorkerProcess.kill(); } catch (_) {}
+    activeScreenWorkerProcess = null;
+  }
 });
 
 app.on('window-all-closed', () => {

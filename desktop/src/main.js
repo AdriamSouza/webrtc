@@ -401,20 +401,32 @@ ipcMain.handle('desktop:set-selected-source', async (event, sourceId) => {
   return true;
 });
 
-// IPC: Obter / Definir URL do servidor
-ipcMain.handle('desktop:get-server-url', async () => {
+async function getSignalingServerUrl() {
   const saved = loadSavedServerUrl();
   if (saved) return saved;
+
+  // 1. Se o backend local de desenvolvimento estiver ativo na porta 3000, conecta a ele
+  const isLocalBackendRunning = await checkUrlReachable('http://localhost:3000/api/health', 200);
+  if (isLocalBackendRunning) return 'http://localhost:3000';
+
+  // 2. Se a janela carregou de uma URL remota explícita (diferente do servidor estático embutido 127.0.0.1)
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
       const currentUrl = mainWindow.webContents.getURL();
-      if (currentUrl && (currentUrl.startsWith('http://') || currentUrl.startsWith('https://'))) {
+      if (currentUrl && !currentUrl.includes('127.0.0.1') && !currentUrl.includes('localhost') && (currentUrl.startsWith('http://') || currentUrl.startsWith('https://'))) {
         const u = new URL(currentUrl);
         return u.origin;
       }
     } catch (_) {}
   }
-  return await getInitialUrl();
+
+  // 3. Fallback padrão: nuvem Render
+  return RENDER_DEFAULT_URL;
+}
+
+// IPC: Obter / Definir URL do servidor
+ipcMain.handle('desktop:get-server-url', () => {
+  return getSignalingServerUrl();
 });
 
 ipcMain.handle('desktop:set-server-url', async (event, newUrl) => {
@@ -607,7 +619,7 @@ ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
       PATH: gstBin ? `${gstBin}${path.delimiter}${process.env.PATH || ''}` : process.env.PATH
     };
 
-    const targetServerUrl = serverUrl || (await getInitialUrl());
+    const targetServerUrl = (serverUrl && !serverUrl.includes('127.0.0.1')) ? serverUrl : (await getSignalingServerUrl());
     const runnerArgs = [
       runner,
       '--serverUrl', targetServerUrl,

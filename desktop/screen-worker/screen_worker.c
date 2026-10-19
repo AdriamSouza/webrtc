@@ -481,7 +481,7 @@ int main(int argc, char *argv[]) {
         "video/x-raw(memory:D3D11Memory),framerate=60/1 ! "
         "d3d11convert ! "
         "video/x-raw(memory:D3D11Memory),format=NV12,width=1920,height=1080,framerate=60/1 ! "
-        "amfh264enc name=enc usage=low-latency rate-control=cbr bitrate=10000 max-bitrate=10000 gop-size=120 b-frames=0 preset=speed ! "
+        "amfh264enc name=enc usage=ultra-low-latency rate-control=cbr bitrate=10000 max-bitrate=10000 gop-size=60 b-frames=0 preset=speed min-force-key-unit-interval=500000000 ! "
         "video/x-h264,profile=constrained-baseline ! "
         "h264parse config-interval=-1 ! "
         "rtph264pay config-interval=-1 aggregate-mode=zero-latency pt=96 ! "
@@ -490,7 +490,7 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < MAX_PEER_SLOTS; i++) {
         offset += snprintf(pipe_desc + offset, sizeof(pipe_desc) - offset,
-            "t. ! queue leaky=downstream max-size-buffers=3 ! "
+            "t. ! queue leaky=downstream max-size-buffers=0 max-size-time=200000000 max-size-bytes=0 ! "
             "application/x-rtp,media=video,encoding-name=H264,payload=96 ! "
             "webrtcbin name=wb%d bundle-policy=max-bundle stun-server=stun://stun.l.google.com:19302 ",
             i

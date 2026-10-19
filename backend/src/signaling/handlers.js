@@ -7,6 +7,65 @@ import { MessageTypes, createMessage } from './messages.js';
 
 export function handleJoinRoom(user, message, roomManager, config) {
   const { roomId, data } = message;
+
+  // Entrada de processo separado nativo Screen Worker com GPU
+  if (data?.role === 'screen-worker') {
+    const hostId = data?.hostId;
+    const workerToken = data?.workerToken;
+
+    try {
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        throw new Error(`Sala ${roomId} não encontrada.`);
+      }
+      if (!hostId || !workerToken) {
+        throw new Error('hostId e workerToken são obrigatórios para autenticação do worker.');
+      }
+      if (!room.getUser(hostId)) {
+        throw new Error(`Host ${hostId} não está presente na sala.`);
+      }
+      if (!room.validateAndConsumeWorkerToken(hostId, workerToken)) {
+        throw new Error('workerToken inválido, expirado ou já utilizado.');
+      }
+
+      user.name = `screen-worker-${hostId.substring(0, 5)}`;
+      user.role = 'screen-worker';
+      user.hostId = hostId;
+      room.addWorker(user, hostId);
+      console.log(`[Signaling] Screen-Worker ${user.id} autenticado com sucesso para o Host ${hostId} na sala ${room.id}`);
+
+      // Responde ao worker confirmando entrada
+      user.send(
+        createMessage(MessageTypes.ROOM_JOINED, room.id, 'server', user.id, {
+          roomId: room.id,
+          role: 'screen-worker',
+          hostId,
+          userId: user.id,
+          iceServers: config.iceServers,
+          users: room.getAllUsers().filter(u => u.id !== hostId).map(u => u.toJSON())
+        })
+      );
+
+      // Notifica os espectadores da sala que o stream de tela do host virá por este worker
+      room.broadcast(
+        createMessage(MessageTypes.WORKER_JOINED, room.id, user.id, null, {
+          workerId: user.id,
+          hostId,
+          role: 'screen-worker'
+        })
+      );
+      return;
+    } catch (err) {
+      user.send(
+        createMessage(MessageTypes.ERROR, roomId, 'server', user.id, {
+          code: 'WORKER_AUTH_ERROR',
+          message: err.message
+        })
+      );
+      return;
+    }
+  }
+
   const username = data?.username?.trim();
   if (username) {
     user.name = username;
@@ -368,11 +427,91 @@ export function handleChatMessage(user, message, roomManager) {
   );
 }
 
+export function handleRequestWorkerToken(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    user.send(createMessage(MessageTypes.ERROR, roomId, 'server', user.id, {
+      code: 'ROOM_NOT_FOUND',
+      message: 'Sala não encontrada para geração de token de worker'
+    }));
+    return;
+  }
+
+  const token = room.createWorkerToken(user.id);
+  console.log(`[Signaling] Token de screen-worker emitido para o Host ${user.name} (${user.id}) na sala ${room.id}`);
+
+  user.send(
+    createMessage(MessageTypes.WORKER_TOKEN_ISSUED, room.id, 'server', user.id, {
+      roomId: room.id,
+      hostId: user.id,
+      workerToken: token
+    })
+  );
+}
+
+export function handleGpuStreamReady(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  const targetId = message.to || message.data?.workerId || message.data?.hostId;
+  console.log(`[Signaling] GPU_STREAM_READY de ${user.name} (${user.id}) -> ${targetId || 'broadcast'}`);
+
+  if (targetId) {
+    room.sendTo(targetId, createMessage(MessageTypes.GPU_STREAM_READY, roomId, user.id, targetId, message.data || {}));
+  } else {
+    room.broadcast(createMessage(MessageTypes.GPU_STREAM_READY, roomId, user.id, null, message.data || {}), user.id);
+  }
+}
+
+export function handleQualityReport(user, message, roomManager) {
+  const roomId = message.roomId || user.roomId;
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  const targetId = message.to || message.data?.workerId;
+  if (targetId) {
+    room.sendTo(targetId, createMessage(MessageTypes.QUALITY_REPORT, roomId, user.id, targetId, message.data || {}));
+  }
+}
+
 export function handleDisconnect(user, roomManager) {
   console.log(`[Signaling] Conexão encerrada: ${user.name} (${user.id})`);
 
+  // Se o desconectado era um screen-worker
+  if (user.role === 'screen-worker') {
+    const room = roomManager.getRoom(user.roomId);
+    if (room) {
+      room.removeWorker(user.id);
+      room.broadcast(
+        createMessage(MessageTypes.WORKER_LEFT, room.id, user.id, null, {
+          workerId: user.id,
+          hostId: user.hostId
+        })
+      );
+    }
+    return;
+  }
+
   const room = roomManager.getRoom(user.roomId);
   if (room) {
+    // Se o usuário possuía workers nativos associados, remove e notifica
+    const hostWorkers = room.getWorkersByHost(user.id);
+    hostWorkers.forEach(w => {
+      room.removeWorker(w.id);
+      w.send(createMessage(MessageTypes.ERROR, room.id, 'server', w.id, {
+        code: 'HOST_DISCONNECTED',
+        message: 'O Host desta transmissão foi desconectado.'
+      }));
+      room.broadcast(
+        createMessage(MessageTypes.WORKER_LEFT, room.id, w.id, null, {
+          workerId: w.id,
+          hostId: user.id
+        })
+      );
+    });
+
     const removedStreams = room.unpublishStream(user.id);
     removedStreams.forEach(streamInfo => {
       room.broadcast(

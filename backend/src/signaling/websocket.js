@@ -18,7 +18,10 @@ import {
   handleDisconnect,
   handleStreamList,
   handleSubscribeStream,
-  handleUnsubscribeStream
+  handleUnsubscribeStream,
+  handleRequestWorkerToken,
+  handleGpuStreamReady,
+  handleQualityReport
 } from './handlers.js';
 
 /**
@@ -146,6 +149,18 @@ export function setupWebSocketServer(httpServer) {
 
           case MessageTypes.UNSUBSCRIBE_STREAM:
             handleUnsubscribeStream(user, message, roomManager);
+            break;
+
+          case MessageTypes.REQUEST_WORKER_TOKEN:
+            handleRequestWorkerToken(user, message, roomManager);
+            break;
+
+          case MessageTypes.GPU_STREAM_READY:
+            handleGpuStreamReady(user, message, roomManager);
+            break;
+
+          case MessageTypes.QUALITY_REPORT:
+            handleQualityReport(user, message, roomManager);
             break;
 
           case MessageTypes.PING:

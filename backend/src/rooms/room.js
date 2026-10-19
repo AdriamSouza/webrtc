@@ -10,6 +10,8 @@ export class Room {
     this.hostToken = metadata.hostToken || null;
     this.password = metadata.password ? String(metadata.password).trim() : null;
     this.users = new Map(); // Map<userId, User>
+    this.workers = new Map(); // Map<workerId, { user, hostId }>
+    this.workerTokens = new Map(); // Map<token, { hostId, createdAt, used }>
     this.streams = new Map(); // Map<streamId, StreamInfo> (Catálogo efêmero de transmissões)
     this.status = 'idle'; // 'idle' | 'streaming' | 'closed'
     this.metadata = metadata;
@@ -182,11 +184,61 @@ export class Room {
     }
   }
 
+  createWorkerToken(hostId) {
+    const token = `wt_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+    this.workerTokens.set(token, { hostId, createdAt: Date.now(), used: false });
+    return token;
+  }
+
+  validateAndConsumeWorkerToken(hostId, candidateToken) {
+    if (!candidateToken || !this.workerTokens.has(candidateToken)) return false;
+    const entry = this.workerTokens.get(candidateToken);
+    if (entry.hostId !== hostId || entry.used) return false;
+    if (Date.now() - entry.createdAt > 60000) {
+      this.workerTokens.delete(candidateToken);
+      return false;
+    }
+    entry.used = true;
+    return true;
+  }
+
+  addWorker(user, hostId) {
+    user.roomId = this.id;
+    user.role = 'screen-worker';
+    user.hostId = hostId;
+    this.workers.set(user.id, { user, hostId });
+    this.lastActiveAt = new Date();
+    return user;
+  }
+
+  removeWorker(workerId) {
+    const entry = this.workers.get(workerId);
+    if (!entry) return null;
+    this.workers.delete(workerId);
+    entry.user.roomId = null;
+    this.lastActiveAt = new Date();
+    return entry.user;
+  }
+
+  getWorker(workerId) {
+    return this.workers.get(workerId)?.user || null;
+  }
+
+  getWorkersByHost(hostId) {
+    const list = [];
+    for (const entry of this.workers.values()) {
+      if (entry.hostId === hostId) {
+        list.push(entry.user);
+      }
+    }
+    return list;
+  }
+
   /**
-   * Envia mensagem direcionada a um usuário específico da sala
+   * Envia mensagem direcionada a um usuário ou worker específico da sala
    */
   sendTo(targetUserId, messageObject) {
-    const target = this.users.get(targetUserId);
+    const target = this.users.get(targetUserId) || this.workers.get(targetUserId)?.user;
     if (target) {
       target.send(messageObject);
       return true;

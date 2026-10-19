@@ -590,6 +590,7 @@ ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
     const gstBin = findGstreamerBin();
     const env = {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       PATH: gstBin ? `${gstBin}${path.delimiter}${process.env.PATH || ''}` : process.env.PATH
     };
 
@@ -614,11 +615,18 @@ ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
     });
 
     activeScreenWorkerProcess = child;
+    let lastWorkerStderr = '';
 
     child.on('message', (msg) => {
       console.log('[Desktop Main] Mensagem recebida do worker via IPC:', msg);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('desktop:screen-worker-status', msg);
+        if (msg && msg.type === 'error') {
+          mainWindow.webContents.send('desktop:screen-worker-error', {
+            code: msg.code,
+            message: msg.message || 'Erro no processo do worker'
+          });
+        }
       }
     });
 
@@ -627,7 +635,9 @@ ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
     });
 
     child.stderr.on('data', (d) => {
-      console.warn(`[WorkerRunner Stderr] ${d.toString().trim()}`);
+      const text = d.toString().trim();
+      lastWorkerStderr = text;
+      console.warn(`[WorkerRunner Stderr] ${text}`);
     });
 
     child.on('exit', (code, signal) => {
@@ -636,10 +646,14 @@ ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
         activeScreenWorkerProcess = null;
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
+        const errorMsg = lastWorkerStderr
+          ? `worker encerrou com código ${code} + stderr: ${lastWorkerStderr}`
+          : `worker encerrou com código ${code}`;
         mainWindow.webContents.send('desktop:screen-worker-error', {
           code,
           signal,
-          message: `Worker encerrou com código ${code}`
+          stderr: lastWorkerStderr,
+          message: errorMsg
         });
       }
     });

@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld('desktopAPI', {
     ipcRenderer.on('desktop:screen-worker-error', listener);
     return () => ipcRenderer.removeListener('desktop:screen-worker-error', listener);
   },
+  onScreenWorkerStatus: (callback) => {
+    const listener = (event, status) => callback(status);
+    ipcRenderer.on('desktop:screen-worker-status', listener);
+    return () => ipcRenderer.removeListener('desktop:screen-worker-status', listener);
+  },
 
   // Preferências persistentes do usuário e dados de sessão
   getPreferences: () => ipcRenderer.invoke('desktop:get-preferences'),

@@ -151,13 +151,20 @@ let activeWorkerPeerId = null;
 const viewersWithWorkerStream = new Set();
 let lastAdaptiveDiagnostics = null;
 let workerQualityInterval = null;
+let lastScreenWorkerFailureReason = 'Toggle desligado';
 
 function startNativeGpuScreenWorker(sourceId = null) {
-  if (!roomState.myUserId || !roomState.currentRoomId) return;
-  console.log('[App] Solicitando token de screen-worker ao backend...');
+  const currentRoom = roomState.roomId;
+  if (!roomState.myUserId || !currentRoom) {
+    lastScreenWorkerFailureReason = 'Host não está em uma sala ativa';
+    console.warn(`[ScreenWorker] Recusa: ${lastScreenWorkerFailureReason} (userId=${roomState.myUserId}, roomId=${currentRoom})`);
+    return;
+  }
+  console.log(`[ScreenWorker] Solicitando token de screen-worker ao backend para a sala ${currentRoom}...`);
+  lastScreenWorkerFailureReason = 'Aguardando emissão de token pelo backend';
   signaling.send('REQUEST_WORKER_TOKEN', {
     hostId: roomState.myUserId,
-    roomId: roomState.currentRoomId
+    roomId: currentRoom
   });
 }
 
@@ -171,6 +178,7 @@ function stopNativeGpuScreenWorker() {
   if (window.desktopAPI && typeof window.desktopAPI.stopScreenWorker === 'function') {
     window.desktopAPI.stopScreenWorker().catch(() => {});
   }
+  console.log('[ScreenWorker] Worker nativo de GPU finalizado.');
 }
 
 function startWorkerQualityReporting() {
@@ -2153,13 +2161,13 @@ async function renderDiagnosticsData() {
             <td style="font-family: monospace;">${escapeHtml(item.bitrateKbps ? `${(item.bitrateKbps / 1000).toFixed(1)} Mbps` : '—')}</td>
             <td style="font-family: monospace;">${escapeHtml(item.fps ? `${item.fps} FPS` : '60 FPS')}</td>
             <td style="font-family: monospace;">${escapeHtml(item.lossPercent || '0.0%')}</td>
-            <td><span style="font-size: 0.8rem; color: #a1a1aa;">${escapeHtml(item.lastReason || 'Normal')}</span></td>
+            <td><span style="font-size: 0.8rem; color: #a1a1aa;">${escapeHtml(item.lastReason || (isWorker ? 'Normal' : lastScreenWorkerFailureReason))}</span></td>
             <td><span class="badge ${item.gpuEncodeStatus === 'medido' ? 'badge-primary' : 'badge-neutral'}">${escapeHtml(item.gpuEncodeStatus || 'não medido')}</span></td>
           </tr>
         `;
       }).join('');
     } else if (participantsList.length === 0) {
-      viewersAdaptiveTbody.innerHTML = '<tr><td colspan="8" class="diag-empty">Nenhum espectador conectado no momento.</td></tr>';
+      viewersAdaptiveTbody.innerHTML = `<tr><td colspan="8" class="diag-empty">Nenhum espectador conectado no momento. (Status do Screen Worker: <strong>${escapeHtml(lastScreenWorkerFailureReason)}</strong>)</td></tr>`;
     } else {
       viewersAdaptiveTbody.innerHTML = participantsList.map(p => {
         const isWorker = isWorkerActive && (viewersWithWorkerStream.has(p.id) || webrtc.hostToWorkerMap.size > 0);
@@ -2169,7 +2177,7 @@ async function renderDiagnosticsData() {
         const bitrate = isWorker ? '10.0 Mbps' : '8.0 Mbps';
         const fps = '60 FPS';
         const loss = '0.0%';
-        const reason = isWorker ? 'Transmissão direta AMF ativa' : 'Caminho WebRTC padrão';
+        const reason = isWorker ? 'Transmissão direta AMF ativa' : lastScreenWorkerFailureReason;
 
         return `
           <tr>
@@ -3128,7 +3136,14 @@ async function handleToggleScreenShare() {
 
       // Se a opção de Worker Nativo por GPU estiver ligada nas configurações (DESLIGADA por padrão)
       const useGpuWorker = localStorage.getItem('hyperstream_use_gpu_screen_worker') === 'true';
-      if (useGpuWorker && window.desktopAPI && typeof window.desktopAPI.startScreenWorker === 'function') {
+      if (!window.desktopAPI) {
+        lastScreenWorkerFailureReason = 'Disponível apenas no Desktop Windows';
+        console.log(`[ScreenWorker] Recusa: ${lastScreenWorkerFailureReason}. Utilizando WebRTC padrão.`);
+      } else if (!useGpuWorker) {
+        lastScreenWorkerFailureReason = 'Toggle desligado';
+        console.log(`[ScreenWorker] Recusa: ${lastScreenWorkerFailureReason} nas Configurações > Avançado. Utilizando WebRTC padrão.`);
+      } else if (typeof window.desktopAPI.startScreenWorker === 'function') {
+        console.log('[ScreenWorker] Toggle ativado. Solicitando token de worker para a sala...');
         startNativeGpuScreenWorker(result?.source?.id);
       }
 
@@ -3552,35 +3567,49 @@ function setupSignalingEvents() {
   // EVENTOS DO SCREEN WORKER NATIVO (GPU AMD AMF)
   // ========================================================
   signaling.on('WORKER_TOKEN_ISSUED', async (msg) => {
-    const { token, hostId } = msg.data || {};
+    const token = msg.data?.workerToken || msg.data?.token;
+    const hostId = msg.data?.hostId;
     if (hostId === roomState.myUserId && token) {
-      console.log('[App] Token de screen-worker recebido! Lançando subprocesso nativo...');
+      console.log('[ScreenWorker] Token recebido do backend! Lançando subprocesso nativo...');
+      lastScreenWorkerFailureReason = 'Iniciando subprocesso nativo';
       try {
         const sUrl = (window.desktopAPI && typeof window.desktopAPI.getServerUrl === 'function')
           ? await window.desktopAPI.getServerUrl()
           : null;
-        await window.desktopAPI.startScreenWorker({
-          roomId: roomState.currentRoomId || roomState.roomId,
+        const res = await window.desktopAPI.startScreenWorker({
+          roomId: roomState.roomId,
           hostId: roomState.myUserId,
           workerToken: token,
           serverUrl: sUrl
         });
-        appendSystemChat('Transmissão de tela acelerada por GPU (AMD AMF) inicializada.');
+        if (!res || !res.success) {
+          lastScreenWorkerFailureReason = res?.error || 'Falha ao iniciar processo do worker';
+          console.error(`[ScreenWorker] Falha ao iniciar worker: ${lastScreenWorkerFailureReason}`);
+          appendSystemChat(`Aviso [ScreenWorker]: ${lastScreenWorkerFailureReason}. Mantendo WebRTC padrão.`);
+        } else {
+          lastScreenWorkerFailureReason = 'Worker iniciado, conectando à sala';
+          appendSystemChat('Transmissão de tela acelerada por GPU (AMD AMF) inicializada.');
+        }
       } catch (err) {
-        console.warn('[App] Falha ao iniciar worker nativo:', err);
-        appendSystemChat('Aviso: Falha ao iniciar worker nativo GPU. Mantendo WebRTC padrão.');
+        lastScreenWorkerFailureReason = err.message || 'Falha inesperada ao iniciar worker';
+        console.error(`[ScreenWorker] Falha ao iniciar worker nativo: ${lastScreenWorkerFailureReason}`);
+        appendSystemChat(`Aviso [ScreenWorker]: ${lastScreenWorkerFailureReason}. Mantendo WebRTC padrão.`);
       }
+    } else {
+      lastScreenWorkerFailureReason = 'Token recusado pelo backend ou inválido';
+      console.error(`[ScreenWorker] Falha: ${lastScreenWorkerFailureReason} (hostId=${hostId}, meuId=${roomState.myUserId})`);
     }
   });
 
   signaling.on('WORKER_JOINED', (msg) => {
     const { workerId, hostId } = msg.data || {};
-    console.log(`[App] Screen Worker ${workerId} ingressou na sala para o Host ${hostId}`);
+    console.log(`[ScreenWorker] Worker ${workerId} ingressou na sala para o Host ${hostId}`);
     if (webrtc) {
       webrtc.registerWorkerPeer(workerId, hostId);
     }
     if (hostId === roomState.myUserId) {
       activeWorkerPeerId = workerId;
+      lastScreenWorkerFailureReason = 'Worker conectado à sala';
     } else {
       startWorkerQualityReporting();
     }
@@ -3588,13 +3617,14 @@ function setupSignalingEvents() {
 
   signaling.on('WORKER_LEFT', (msg) => {
     const { workerId } = msg.data || {};
-    console.log(`[App] Screen Worker ${workerId} encerrou conexão`);
+    console.log(`[ScreenWorker] Worker ${workerId} encerrou conexão`);
     if (webrtc) {
       webrtc.unregisterWorkerPeer(workerId);
     }
     if (activeWorkerPeerId === workerId) {
       activeWorkerPeerId = null;
       viewersWithWorkerStream.clear();
+      lastScreenWorkerFailureReason = 'Worker encerrou conexão com a sala';
       // Host reativa WebRTC comum imediatamente para todos os espectadores sem tela preta
       if (media && media.hasActiveScreenStream()) {
         const otherIds = roomState.getOtherParticipantIds();
@@ -3609,11 +3639,12 @@ function setupSignalingEvents() {
   signaling.on('GPU_STREAM_READY', (msg) => {
     const { hostId, workerId } = msg.data || {};
     const viewerId = msg.from;
-    console.log(`[App] GPU_STREAM_READY recebido de ${viewerId} para o host ${hostId}`);
+    console.log(`[ScreenWorker] GPU_STREAM_READY recebido de ${viewerId} para o host ${hostId}`);
     if (hostId === roomState.myUserId && viewerId) {
       viewersWithWorkerStream.add(viewerId);
+      lastScreenWorkerFailureReason = 'Transmissão direta AMF ativa';
       webrtc.unsubscribePeerFromStream(viewerId, 'screen').catch(() => {});
-      console.log(`[App] WebRTC screen pausado para ${viewerId} (transição suave concluída).`);
+      console.log(`[ScreenWorker] WebRTC screen pausado para ${viewerId} (transição suave concluída).`);
     }
   });
 
@@ -3626,11 +3657,26 @@ function setupSignalingEvents() {
 
   if (window.desktopAPI && typeof window.desktopAPI.onScreenWorkerError === 'function') {
     window.desktopAPI.onScreenWorkerError((err) => {
-      console.warn('[App] Erro reportado pelo Screen Worker:', err);
-      appendSystemChat('Aviso: Worker nativo de GPU encerrou. Retornando para transmissão padrão WebRTC.');
+      const reason = err?.message || (err?.code ? `worker encerrou com código ${err.code}${err.stderr ? ` + stderr: ${err.stderr}` : ''}` : 'Erro reportado pelo Screen Worker');
+      lastScreenWorkerFailureReason = reason;
+      console.error(`[ScreenWorker] Falha: ${reason}`);
+      appendSystemChat(`Aviso [ScreenWorker]: ${reason}. Retornando para transmissão padrão WebRTC.`);
       if (media && media.hasActiveScreenStream()) {
         const otherIds = roomState.getOtherParticipantIds();
         webrtc.syncLocalMedia(media, otherIds).catch(() => {});
+      }
+    });
+  }
+
+  if (window.desktopAPI && typeof window.desktopAPI.onScreenWorkerStatus === 'function') {
+    window.desktopAPI.onScreenWorkerStatus((status) => {
+      if (status.type === 'ready') {
+        lastScreenWorkerFailureReason = 'Worker GPU pronto e codificando';
+        console.log(`[ScreenWorker] Status: ${lastScreenWorkerFailureReason}`);
+      } else if (status.type === 'error') {
+        const reason = status.message || status.code || 'Erro no worker';
+        lastScreenWorkerFailureReason = reason;
+        console.error(`[ScreenWorker] Falha: ${reason}`);
       }
     });
   }
@@ -3834,6 +3880,10 @@ function setupSignalingEvents() {
       console.warn(`[Signaling Error] [${errorCode || 'UNKNOWN'}]: ${errorMsg}`);
       if (errorCode === 'RATE_LIMIT_EXCEEDED') {
         appendSystemChat('⚠️ Alto volume de mensagens de sinalização detectado. Suavizado automaticamente.');
+      } else if (errorCode === 'WORKER_AUTH_ERROR' || errorMsg.toLowerCase().includes('worker')) {
+        lastScreenWorkerFailureReason = `Token recusado: ${errorMsg}`;
+        console.error(`[ScreenWorker] Falha de sinalização: ${lastScreenWorkerFailureReason}`);
+        appendSystemChat(`⚠️ Aviso [ScreenWorker]: ${errorMsg}`);
       } else {
         appendSystemChat(`⚠️ Aviso do Servidor: ${errorMsg}`);
       }
@@ -4963,23 +5013,29 @@ function setupSettingsModal() {
   if (settingUseGpuScreenWorker) {
     const savedWorkerPref = localStorage.getItem('hyperstream_use_gpu_screen_worker') === 'true';
     settingUseGpuScreenWorker.checked = savedWorkerPref;
+    lastScreenWorkerFailureReason = savedWorkerPref ? 'Toggle ativado' : 'Toggle desligado';
 
     if (window.desktopAPI && typeof window.desktopAPI.isGpuWorkerSupported === 'function') {
       window.desktopAPI.isGpuWorkerSupported().then(res => {
         if (!res.supported) {
           settingUseGpuScreenWorker.checked = false;
           settingUseGpuScreenWorker.disabled = true;
+          lastScreenWorkerFailureReason = res.reason;
+          console.warn(`[ScreenWorker] Recusa de hardware/ambiente: ${res.reason}`);
           if (gpuWorkerHelpText) {
             gpuWorkerHelpText.innerHTML = `<span style="color: #ef4444;">⚠️ Indisponível neste dispositivo: ${escapeHtml(res.reason)}.</span>`;
           }
         }
-      }).catch(() => {
+      }).catch((err) => {
         settingUseGpuScreenWorker.checked = false;
         settingUseGpuScreenWorker.disabled = true;
+        lastScreenWorkerFailureReason = 'Falha ao verificar suporte';
+        console.warn(`[ScreenWorker] Recusa: ${lastScreenWorkerFailureReason}`, err);
       });
     } else {
       settingUseGpuScreenWorker.checked = false;
       settingUseGpuScreenWorker.disabled = true;
+      lastScreenWorkerFailureReason = 'Disponível apenas no Desktop Windows';
       if (gpuWorkerHelpText) {
         gpuWorkerHelpText.innerHTML = `<span style="color: #71717a;">Disponível exclusivamente no app Desktop Hyperstream para Windows com GPU AMD Radeon.</span>`;
       }
@@ -4988,6 +5044,8 @@ function setupSettingsModal() {
     settingUseGpuScreenWorker.addEventListener('change', () => {
       const isEnabled = settingUseGpuScreenWorker.checked;
       localStorage.setItem('hyperstream_use_gpu_screen_worker', isEnabled ? 'true' : 'false');
+      lastScreenWorkerFailureReason = isEnabled ? 'Toggle ativado' : 'Toggle desligado';
+      console.log(`[ScreenWorker] Configuração alterada pelo usuário: ${lastScreenWorkerFailureReason}`);
       if (window.desktopAPI && typeof window.desktopAPI.savePreferences === 'function') {
         window.desktopAPI.savePreferences({ useGpuScreenWorker: isEnabled });
       }

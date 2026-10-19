@@ -107,12 +107,23 @@ if (!gstBinDir) {
 // 4. Localização do executável screen_worker.exe
 const workerExeCandidates = [
   path.join(__dirname, 'screen_worker.exe'),
-  path.join(__dirname, 'prototype', 'gst_worker.exe')
+  path.join(__dirname, 'prototype', 'gst_worker.exe'),
+  path.join(process.resourcesPath || '', 'app.asar.unpacked', 'desktop', 'screen-worker', 'screen_worker.exe'),
+  path.join(process.resourcesPath || '', 'screen-worker', 'screen_worker.exe'),
+  path.join(path.dirname(process.execPath), 'resources', 'app.asar.unpacked', 'desktop', 'screen-worker', 'screen_worker.exe'),
+  path.join(path.dirname(process.execPath), 'resources', 'screen-worker.exe')
 ];
-const workerExe = workerExeCandidates.find(p => fs.existsSync(p));
+const workerExe = workerExeCandidates.find(p => p && fs.existsSync(p));
 
 if (!workerExe) {
   console.error('[WorkerRunner] Executável screen_worker.exe não encontrado.');
+  if (process.send) {
+    process.send({
+      type: 'error',
+      code: 'WORKER_EXE_NOT_FOUND',
+      message: 'Executável screen_worker.exe não encontrado nos caminhos verificados.'
+    });
+  }
   process.exit(4);
 }
 
@@ -225,6 +236,8 @@ async function connectSignaling() {
     console.log('[WorkerRunner] WebSocket conectado com sucesso! Autenticando com role=screen-worker...');
     sendSignaling('JOIN_ROOM', {
       role: 'screen-worker',
+      hostId,
+      workerToken,
       parentUserId: hostId,
       token: workerToken
     });

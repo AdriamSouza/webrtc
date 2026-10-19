@@ -10,8 +10,8 @@ export function handleJoinRoom(user, message, roomManager, config) {
 
   // Entrada de processo separado nativo Screen Worker com GPU
   if (data?.role === 'screen-worker') {
-    const hostId = data?.hostId;
-    const workerToken = data?.workerToken;
+    const hostId = data?.hostId || data?.parentUserId;
+    const workerToken = data?.workerToken || data?.token;
 
     try {
       const room = roomManager.getRoom(roomId);

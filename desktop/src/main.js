@@ -402,10 +402,19 @@ ipcMain.handle('desktop:set-selected-source', async (event, sourceId) => {
 });
 
 // IPC: Obter / Definir URL do servidor
-ipcMain.handle('desktop:get-server-url', () => {
+ipcMain.handle('desktop:get-server-url', async () => {
   const saved = loadSavedServerUrl();
   if (saved) return saved;
-  return RENDER_DEFAULT_URL;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      const currentUrl = mainWindow.webContents.getURL();
+      if (currentUrl && (currentUrl.startsWith('http://') || currentUrl.startsWith('https://'))) {
+        const u = new URL(currentUrl);
+        return u.origin;
+      }
+    } catch (_) {}
+  }
+  return await getInitialUrl();
 });
 
 ipcMain.handle('desktop:set-server-url', async (event, newUrl) => {
@@ -505,8 +514,11 @@ function isAmdGpuPresent() {
 
 function findGstreamerBin() {
   const candidates = [
-    process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
     path.join(process.resourcesPath || '', 'gstreamer', 'bin'),
+    path.join(path.dirname(process.execPath), 'resources', 'gstreamer', 'bin'),
+    path.resolve(__dirname, '../../resources/gstreamer/bin'),
+    path.resolve(__dirname, '../resources/gstreamer/bin'),
+    process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
     'C:\\gstreamer\\1.0\\msvc_x86_64\\bin',
     'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin'
   ];
@@ -540,9 +552,10 @@ function verifyGstreamerVersion(binDir) {
 
 function findScreenWorkerRunner() {
   const candidates = [
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'screen-worker', 'worker_runner.mjs'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'desktop', 'screen-worker', 'worker_runner.mjs'),
     path.resolve(__dirname, '../screen-worker/worker_runner.mjs'),
     path.resolve(__dirname, 'screen-worker/worker_runner.mjs'),
-    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'desktop', 'screen-worker', 'worker_runner.mjs'),
     path.join(process.resourcesPath || '', 'screen-worker', 'worker_runner.mjs')
   ];
   for (const c of candidates) {

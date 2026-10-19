@@ -49,6 +49,13 @@ if (fs.existsSync(desktopFrontendDst)) {
 fs.cpSync(frontendSrc, desktopFrontendDst, { recursive: true });
 console.log('[Build Desktop] Frontend sincronizado com sucesso.');
 
+// 3.5. Garante bundle mínimo de GStreamer e licenças em desktop/resources/gstreamer
+const gstResourceDir = path.join(rootDir, 'desktop', 'resources', 'gstreamer');
+if (!fs.existsSync(path.join(gstResourceDir, 'bin', 'gstreamer-1.0-0.dll'))) {
+  console.log('[Build Desktop] Configurando bundle mínimo do GStreamer...');
+  execSync('node scripts/setup_gstreamer_bundle.mjs', { cwd: rootDir, stdio: 'inherit' });
+}
+
 // 4. Empacota aplicativo desktop para Windows x64
 console.log('[Build Desktop] Iniciando empacotamento com Electron Packager...');
 const packCmd = 'npx --yes @electron/packager desktop Hyperstream --platform=win32 --arch=x64 --out=desktop/dist --overwrite --asar.unpack-dir="{bin,screen-worker}"';
@@ -58,6 +65,11 @@ const packagedDir = path.join(rootDir, 'desktop', 'dist', 'Hyperstream-win32-x64
 if (!fs.existsSync(packagedDir)) {
   throw new Error(`Diretório de build ${packagedDir} não foi criado.`);
 }
+
+// 4.1. Embutir GStreamer mínimo em resources/gstreamer do aplicativo empacotado
+const packagedGstDest = path.join(packagedDir, 'resources', 'gstreamer');
+console.log(`[Build Desktop] Embutindo runtime GStreamer mínimo em ${packagedGstDest}...`);
+fs.cpSync(gstResourceDir, packagedGstDest, { recursive: true });
 console.log(`[Build Desktop] Empacotamento concluído em ${packagedDir}`);
 
 // 5. Gera arquivo compactado Hyperstream-Windows-x64.zip para distribuição

@@ -152,6 +152,42 @@ const viewersWithWorkerStream = new Set();
 let lastAdaptiveDiagnostics = null;
 let workerQualityInterval = null;
 let lastScreenWorkerFailureReason = 'Toggle desligado';
+window.getLastScreenWorkerReason = () => lastScreenWorkerFailureReason;
+const viewerFailureReasons = new Map();
+const viewerReadyTimers = new Map();
+
+function scheduleViewerReadyTimeout(viewerId) {
+  if (viewerReadyTimers.has(viewerId)) return;
+  const timer = setTimeout(() => {
+    viewerReadyTimers.delete(viewerId);
+    if (!viewersWithWorkerStream.has(viewerId) && (activeWorkerPeerId || (webrtc && webrtc.workerPeers.size > 0))) {
+      const pName = roomState.participants.get(viewerId)?.name || viewerId;
+      const reason = 'espectador não confirmou READY em 5 s';
+      viewerFailureReasons.set(viewerId, reason);
+      console.warn(`[ScreenWorker] Aviso: espectador ${pName} (${viewerId}) não confirmou READY em 5 s. Mantendo transmissão WebRTC padrão para este espectador.`);
+      const diagModal = document.getElementById('diagnosticsModal');
+      if (diagModal && !diagModal.classList.contains('hidden')) {
+        renderDiagnosticsData().catch(() => {});
+      }
+    }
+  }, 5000);
+  viewerReadyTimers.set(viewerId, timer);
+}
+
+function clearViewerReadyTimeout(viewerId) {
+  if (viewerReadyTimers.has(viewerId)) {
+    clearTimeout(viewerReadyTimers.get(viewerId));
+    viewerReadyTimers.delete(viewerId);
+  }
+}
+
+function clearAllViewerReadyTimeouts() {
+  for (const timer of viewerReadyTimers.values()) {
+    clearTimeout(timer);
+  }
+  viewerReadyTimers.clear();
+  viewerFailureReasons.clear();
+}
 
 function startNativeGpuScreenWorker(sourceId = null) {
   const currentRoom = roomState.roomId;
@@ -169,6 +205,7 @@ function startNativeGpuScreenWorker(sourceId = null) {
 }
 
 function stopNativeGpuScreenWorker() {
+  clearAllViewerReadyTimeouts();
   viewersWithWorkerStream.clear();
   activeWorkerPeerId = null;
   if (workerQualityInterval) {
@@ -2161,7 +2198,7 @@ async function renderDiagnosticsData() {
             <td style="font-family: monospace;">${escapeHtml(item.bitrateKbps ? `${(item.bitrateKbps / 1000).toFixed(1)} Mbps` : '—')}</td>
             <td style="font-family: monospace;">${escapeHtml(item.fps ? `${item.fps} FPS` : '60 FPS')}</td>
             <td style="font-family: monospace;">${escapeHtml(item.lossPercent || '0.0%')}</td>
-            <td><span style="font-size: 0.8rem; color: #a1a1aa;">${escapeHtml(item.lastReason || (isWorker ? 'Normal' : lastScreenWorkerFailureReason))}</span></td>
+            <td><span style="font-size: 0.8rem; color: #a1a1aa;">${escapeHtml(item.lastReason || (isWorker ? 'Normal' : (viewerFailureReasons.get(item.viewerId) || lastScreenWorkerFailureReason)))}</span></td>
             <td><span class="badge ${item.gpuEncodeStatus === 'medido' ? 'badge-primary' : 'badge-neutral'}">${escapeHtml(item.gpuEncodeStatus || 'não medido')}</span></td>
           </tr>
         `;
@@ -2177,7 +2214,7 @@ async function renderDiagnosticsData() {
         const bitrate = isWorker ? '10.0 Mbps' : '8.0 Mbps';
         const fps = '60 FPS';
         const loss = '0.0%';
-        const reason = isWorker ? 'Transmissão direta AMF ativa' : lastScreenWorkerFailureReason;
+        const reason = isWorker ? 'Transmissão direta AMF ativa' : (viewerFailureReasons.get(p.id) || lastScreenWorkerFailureReason);
 
         return `
           <tr>
@@ -3511,12 +3548,17 @@ function setupSignalingEvents() {
     // Conecta imediatamente com o novo participante para estabelecer a malha P2P
     // Assim os participantes já ficam em chamada e qualquer transmissão iniciada depois conecta na hora
     console.log(`[App] Novo participante detectado (${user.id}). Conectando malha P2P de chamada...`);
+    if (activeWorkerPeerId && user.id !== roomState.myUserId) {
+      scheduleViewerReadyTimeout(user.id);
+    }
     await webrtc.syncPeerTracks(user.id, media);
     await webrtc.createOfferForPeer(user.id);
   });
 
   signaling.on('USER_LEFT', (msg) => {
     const { userId, username } = msg.data;
+    clearViewerReadyTimeout(userId);
+    viewerFailureReasons.delete(userId);
     if (qualityController) {
       qualityController.removePeer(userId);
     }
@@ -3610,6 +3652,12 @@ function setupSignalingEvents() {
     if (hostId === roomState.myUserId) {
       activeWorkerPeerId = workerId;
       lastScreenWorkerFailureReason = 'Worker conectado à sala';
+      // Inicia verificação de 5 s de confirmação de READY para os espectadores existentes
+      for (const p of roomState.participants.values()) {
+        if (p.id !== roomState.myUserId) {
+          scheduleViewerReadyTimeout(p.id);
+        }
+      }
     } else {
       startWorkerQualityReporting();
     }
@@ -3622,6 +3670,7 @@ function setupSignalingEvents() {
       webrtc.unregisterWorkerPeer(workerId);
     }
     if (activeWorkerPeerId === workerId) {
+      clearAllViewerReadyTimeouts();
       activeWorkerPeerId = null;
       viewersWithWorkerStream.clear();
       lastScreenWorkerFailureReason = 'Worker encerrou conexão com a sala';
@@ -3641,10 +3690,16 @@ function setupSignalingEvents() {
     const viewerId = msg.from;
     console.log(`[ScreenWorker] GPU_STREAM_READY recebido de ${viewerId} para o host ${hostId}`);
     if (hostId === roomState.myUserId && viewerId) {
+      clearViewerReadyTimeout(viewerId);
+      viewerFailureReasons.delete(viewerId);
       viewersWithWorkerStream.add(viewerId);
       lastScreenWorkerFailureReason = 'Transmissão direta AMF ativa';
       webrtc.unsubscribePeerFromStream(viewerId, 'screen').catch(() => {});
       console.log(`[ScreenWorker] WebRTC screen pausado para ${viewerId} (transição suave concluída).`);
+      const diagModal = document.getElementById('diagnosticsModal');
+      if (diagModal && !diagModal.classList.contains('hidden')) {
+        renderDiagnosticsData().catch(() => {});
+      }
     }
   });
 

@@ -68,8 +68,11 @@ if (!detectAmdGpu()) {
 // 3. Localização do GStreamer binário
 function findGstBinDir() {
   const candidates = [
-    process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
+    path.join(process.resourcesPath || '', 'gstreamer', 'bin'),
+    path.join(path.dirname(process.execPath), 'resources', 'gstreamer', 'bin'),
     path.resolve(__dirname, '../../resources/gstreamer/bin'),
+    path.resolve(__dirname, '../resources/gstreamer/bin'),
+    process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64 ? path.join(process.env.GSTREAMER_1_0_ROOT_MSVC_X86_64, 'bin') : null,
     'C:\\gstreamer\\1.0\\msvc_x86_64\\bin',
     'C:\\Users\\adria\\.gemini\\antigravity-cli\\brain\\3614c794-5a00-4664-8dc2-10ac09b4c53a\\scratch\\gst-1.26.11\\PFiles64\\gstreamer\\1.0\\msvc_x86_64\\bin'
   ];
@@ -108,8 +111,10 @@ if (!gstBinDir) {
 const workerExeCandidates = [
   path.join(__dirname, 'screen_worker.exe'),
   path.join(__dirname, 'prototype', 'gst_worker.exe'),
+  path.join(process.resourcesPath || '', 'app.asar.unpacked', 'screen-worker', 'screen_worker.exe'),
   path.join(process.resourcesPath || '', 'app.asar.unpacked', 'desktop', 'screen-worker', 'screen_worker.exe'),
   path.join(process.resourcesPath || '', 'screen-worker', 'screen_worker.exe'),
+  path.join(path.dirname(process.execPath), 'resources', 'app.asar.unpacked', 'screen-worker', 'screen_worker.exe'),
   path.join(path.dirname(process.execPath), 'resources', 'app.asar.unpacked', 'desktop', 'screen-worker', 'screen_worker.exe'),
   path.join(path.dirname(process.execPath), 'resources', 'screen-worker.exe')
 ];
@@ -154,9 +159,12 @@ const ladder = new AdaptiveLadder({
 });
 
 // 6. Lançamento do processo nativo screen_worker.exe
+const gstPluginsDir = path.resolve(gstBinDir, '../lib/gstreamer-1.0');
 const childEnv = {
   ...process.env,
-  PATH: `${gstBinDir}${path.delimiter}${process.env.PATH || ''}`
+  PATH: `${gstBinDir}${path.delimiter}${process.env.PATH || ''}`,
+  GST_PLUGIN_SYSTEM_PATH: gstPluginsDir,
+  GST_PLUGIN_PATH: gstPluginsDir
 };
 
 const workerProcess = spawn(workerExe, [], {

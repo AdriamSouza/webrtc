@@ -253,6 +253,12 @@ async function connectSignaling() {
     wsHeartbeat = setInterval(() => {
       sendSignaling('PING', {});
     }, 15000);
+
+    if (typeof ws.on === 'function') {
+      ws.on('ping', () => {
+        try { ws.pong(); } catch (_) {}
+      });
+    }
   };
 
   ws.onmessage = (event) => {
@@ -326,6 +332,10 @@ function handleIncomingSignaling(msg) {
   switch (type) {
     case 'ROOM_JOINED':
       console.log('[WorkerRunner] Confirmado ingresso na sala como screen-worker!');
+      break;
+
+    case 'PONG':
+      // Confirmação de heartbeat recebida do servidor
       break;
 
     case 'USER_JOINED':

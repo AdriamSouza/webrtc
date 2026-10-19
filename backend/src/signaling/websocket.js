@@ -33,15 +33,21 @@ export function setupWebSocketServer(httpServer) {
   console.log('[WebSocket] Servidor de sinalização WebSocket inicializado na rota /ws');
 
   // Heartbeat para detectar conexões inativas ou travadas
+  const heartbeatIntervalMs = config.websocket?.heartbeatIntervalMs || 30000;
   const heartbeatInterval = setInterval(() => {
     wss.clients.forEach(ws => {
       if (ws.isAlive === false) {
+        console.warn(`[WebSocket] Encerrando socket inativo por falta de resposta: ${ws.clientIp || 'desconhecido'}`);
         return ws.terminate();
       }
       ws.isAlive = false;
-      ws.ping();
+      try {
+        ws.ping();
+      } catch (err) {
+        ws.terminate();
+      }
     });
-  }, 30000);
+  }, heartbeatIntervalMs);
 
   // Limpeza de salas inativas em background
   const cleanupInterval = setInterval(() => {
@@ -55,8 +61,17 @@ export function setupWebSocketServer(httpServer) {
 
   wss.on('connection', (ws, req) => {
     ws.isAlive = true;
+    ws.clientIp = req.socket?.remoteAddress;
+
     ws.on('pong', () => {
       ws.isAlive = true;
+    });
+
+    ws.on('ping', () => {
+      ws.isAlive = true;
+      try {
+        ws.pong();
+      } catch (_) {}
     });
 
     const userId = uuidv4();
@@ -64,6 +79,8 @@ export function setupWebSocketServer(httpServer) {
     console.log(`[WebSocket] Novo cliente conectado: ${userId} (${req.socket.remoteAddress})`);
 
     ws.on('message', (raw) => {
+      // Qualquer mensagem recebida do cliente comprova que a conexão está ativa e viva
+      ws.isAlive = true;
       // 1. Rate Limiting / Anti-Flood (Token Bucket com tolerância a rajadas de negociação ICE)
       if (!user.checkRateLimit(config.rateLimit.maxMessagesPerSecond, config.rateLimit.burstCapacity || 160)) {
         const now = Date.now();
@@ -164,11 +181,12 @@ export function setupWebSocketServer(httpServer) {
             break;
 
           case MessageTypes.PING:
+            ws.isAlive = true;
             user.send(createMessage(MessageTypes.PONG, null, 'server', user.id, {}));
             break;
 
           case MessageTypes.PONG:
-            // Keepalive acknowledgment
+            ws.isAlive = true;
             break;
 
           default:

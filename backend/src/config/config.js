@@ -95,6 +95,11 @@ export const config = {
     inactivityTimeoutMs: 15 * 60 * 1000 // Remove salas sem participantes há 15 min
   },
 
+  // Gerenciamento de Conexões WebSocket e Heartbeat
+  websocket: {
+    heartbeatIntervalMs: process.env.WS_HEARTBEAT_INTERVAL_MS ? parseInt(process.env.WS_HEARTBEAT_INTERVAL_MS, 10) : 30000
+  },
+
   // Infraestrutura STUN / TURN fornecida aos clientes WebRTC
   iceServers: buildIceServers()
 };

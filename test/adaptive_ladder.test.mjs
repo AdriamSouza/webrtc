@@ -1,102 +1,141 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptiveLadder, QUALITY_LADDER } from '../desktop/screen-worker/adaptive_ladder.mjs';
+import { AdaptiveLadder, QUALITY_LADDER, LADDER_ORDER } from '../desktop/screen-worker/adaptive_ladder.mjs';
 
-test('Screen Worker — Lógica de Decisão da Escada Adaptativa (L0–L3)', async (t) => {
-  await t.test('1. Espectador focado inicia em L0 (1080p60, 10 Mbps)', () => {
-    const ladder = new AdaptiveLadder();
+test('Screen Worker — Lógica de Decisão da Escada Adaptativa Gradual e Suavizada', async (t) => {
+  await t.test('1. Espectador focado inicia no nível padrão (1080p60 / L0, 10 Mbps)', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60' });
     const v = ladder.initViewer('viewer-1');
-    assert.equal(v.currentLevel, 'L0');
-    assert.equal(ladder.getGlobalEffectiveLevel(), 'L0');
+    assert.equal(v.currentLevel, '1080p60');
+    assert.equal(ladder.getGlobalEffectiveLevel(), '1080p60');
     assert.equal(ladder.getGlobalEffectiveBitrateKbps(), 10000);
   });
 
-  await t.test('2. Aba em segundo plano reduz nível para L2 (720p30, 3 Mbps)', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('2. Aba em segundo plano reduz nível para 720p30 (L2, 3 Mbps)', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60' });
     ladder.initViewer('viewer-1');
     const level = ladder.processReport('viewer-1', {
       isFocused: false,
       state: 'background'
     });
-    assert.equal(level, 'L2');
+    assert.equal(level, '720p30');
     assert.match(ladder.getViewerState('viewer-1').lastReason, /segundo plano/i);
     assert.equal(ladder.getGlobalEffectiveBitrateKbps(), 3000);
   });
 
-  await t.test('3. Espectador inativo desce para L3 (480p30, 1.5 Mbps)', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('3. Espectador inativo desce para 480p30 (L3, 1.5 Mbps)', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60' });
     ladder.initViewer('viewer-1');
     const level = ladder.processReport('viewer-1', {
       state: 'inactive'
     });
-    assert.equal(level, 'L3');
+    assert.equal(level, '480p30');
     assert.match(ladder.getViewerState('viewer-1').lastReason, /inativo/i);
     assert.equal(ladder.getGlobalEffectiveBitrateKbps(), 1500);
   });
 
-  await t.test('4. Perda de pacotes > 2% desce 1 nível (L0 -> L1)', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('4. Imunidade a pico isolado: perda alta de 1 segundo NÃO derruba a qualidade', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60' });
     ladder.initViewer('viewer-1');
+    // Pico isolado extremo de 8.0% em uma única amostra
     const level = ladder.processReport('viewer-1', {
       isFocused: true,
-      lossPercent: 2.5
+      lossPercent: 8.0,
+      jitterMs: 120
     });
-    assert.equal(level, 'L1');
-    assert.match(ladder.getViewerState('viewer-1').lastReason, /Perda de pacotes/i);
+    // Deve continuar em 1080p60 graças à filtragem EWMA
+    assert.equal(level, '1080p60');
+    assert.equal(ladder.getViewerState('viewer-1').currentBitrateStep, 0, 'Passo de bitrate deve permanecer em 100%');
   });
 
-  await t.test('5. Jitter alto (> 50ms) desce 1 nível', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('5. Perda sustentada (>2.5% por 4s) reduz gradualmente o bitrate antes do nível', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60', minDwellSeconds: 0 });
     ladder.initViewer('viewer-1');
-    const level = ladder.processReport('viewer-1', {
-      isFocused: true,
-      lossPercent: 0,
-      jitterMs: 75
-    });
-    assert.equal(level, 'L1');
-    assert.match(ladder.getViewerState('viewer-1').lastReason, /Jitter/i);
+
+    // 4 segundos consecutivos de perda sustentada a 4.5%
+    for (let s = 1; s <= 3; s++) {
+      ladder._currentSecond = s;
+      ladder.processReport('viewer-1', { isFocused: true, lossPercent: 4.5, jitterMs: 20 });
+    }
+    // Nos primeiros 3s ainda acumula EWMA e janela sustentada
+    assert.equal(ladder.getViewerState('viewer-1').currentLevel, '1080p60');
+
+    // No 4º segundo sustentado, ativa primeiro passo de descida fina (100% -> 80%)
+    ladder._currentSecond = 4;
+    ladder.processReport('viewer-1', { isFocused: true, lossPercent: 4.5, jitterMs: 20 });
+    assert.equal(ladder.getViewerState('viewer-1').currentBitrateStep, 1, 'Primeiro passo deve ser redução para 80% do bitrate');
+    assert.equal(ladder.getGlobalEffectiveBitrateKbps(), 8000);
   });
 
-  await t.test('6. Banda insuficiente por 3 segundos consecutivos desce 1 nível', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('6. Jitter alto sustentado (>55ms por 4s) aciona degrau adaptativo', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60', minDwellSeconds: 0 });
     ladder.initViewer('viewer-1');
-    // L0 requer 10000 kbps. Reportamos 4000 kbps (4 Mbps)
-    ladder.processReport('viewer-1', { isFocused: true, lossPercent: 0, estimatedBps: 4000000 });
-    assert.equal(ladder.getViewerState('viewer-1').currentLevel, 'L0'); // 1s
-    ladder.processReport('viewer-1', { isFocused: true, lossPercent: 0, estimatedBps: 4000000 });
-    assert.equal(ladder.getViewerState('viewer-1').currentLevel, 'L0'); // 2s
-    ladder.processReport('viewer-1', { isFocused: true, lossPercent: 0, estimatedBps: 4000000 });
-    assert.equal(ladder.getViewerState('viewer-1').currentLevel, 'L1'); // 3s dispara descida
-    assert.match(ladder.getViewerState('viewer-1').lastReason, /Banda estimada insuficiente/i);
+
+    for (let s = 1; s <= 4; s++) {
+      ladder._currentSecond = s;
+      ladder.processReport('viewer-1', { isFocused: true, lossPercent: 0, jitterMs: 80 });
+    }
+    assert.equal(ladder.getViewerState('viewer-1').currentBitrateStep, 1);
+    assert.match(ladder.getViewerState('viewer-1').lastReason, /Jitter sustentado/i);
   });
 
-  await t.test('7. 15 segundos estáveis sobem 1 nível com histerese (L1 -> L0)', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('7. Proteção contra tela estática: baixo bitrate com zero perda NÃO reduz qualidade', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60' });
     ladder.initViewer('viewer-1');
-    ladder.setLevel('viewer-1', 'L1', 'Teste');
+
+    for (let s = 1; s <= 10; s++) {
+      ladder._currentSecond = s;
+      ladder.processReport('viewer-1', {
+        isFocused: true,
+        lossPercent: 0.0,
+        jitterMs: 5,
+        estimatedBps: 800000, // tela estática consome pouco tráfego
+        isStatic: true
+      });
+    }
+    // Permanece intacto em 1080p60 sem quedas indevidas
+    assert.equal(ladder.getViewerState('viewer-1').currentLevel, '1080p60');
+    assert.equal(ladder.getViewerState('viewer-1').currentBitrateStep, 0);
+  });
+
+  await t.test('8. 15 segundos estáveis recuperam o nível com histerese (1080p30 -> 1080p60)', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60', minDwellSeconds: 0 });
+    ladder.initViewer('viewer-1');
+    ladder.setLevel('viewer-1', '1080p30', 'Teste manual', 0);
 
     for (let s = 1; s <= 14; s++) {
+      ladder._currentSecond = s;
       ladder.processReport('viewer-1', { isFocused: true, lossPercent: 0.1, jitterMs: 10, estimatedBps: 15000000 });
-      assert.equal(ladder.getViewerState('viewer-1').currentLevel, 'L1');
+      assert.equal(ladder.getViewerState('viewer-1').currentLevel, '1080p30');
     }
-    // No 15º segundo: sobe para L0
+    // No 15º segundo: sobe para 1080p60
+    ladder._currentSecond = 15;
     ladder.processReport('viewer-1', { isFocused: true, lossPercent: 0.1, jitterMs: 10, estimatedBps: 15000000 });
-    assert.equal(ladder.getViewerState('viewer-1').currentLevel, 'L0');
-    assert.match(ladder.getViewerState('viewer-1').lastReason, /15s estáveis/i);
+    assert.equal(ladder.getViewerState('viewer-1').currentLevel, '1080p60');
+    assert.match(ladder.getViewerState('viewer-1').lastReason, /Rede estável por 15s/i);
   });
 
-  await t.test('8. Multi-viewer: menor nível comum (lowest-common-denominator) para o encoder global', () => {
-    const ladder = new AdaptiveLadder();
+  await t.test('9. Multi-viewer: menor nível comum (lowest-common-denominator) para o encoder global', () => {
+    const ladder = new AdaptiveLadder({ defaultLevel: '1080p60' });
     ladder.initViewer('viewer-A');
     ladder.initViewer('viewer-B');
-    ladder.setLevel('viewer-A', 'L0', 'Excelente rede');
-    ladder.setLevel('viewer-B', 'L2', 'Rede 4G instável');
+    ladder.setLevel('viewer-A', '1080p60', 'Excelente rede', 0);
+    ladder.setLevel('viewer-B', '720p30', 'Rede 4G instável', 0);
 
-    assert.equal(ladder.getGlobalEffectiveLevel(), 'L2');
+    assert.equal(ladder.getGlobalEffectiveLevel(), '720p30');
     assert.equal(ladder.getGlobalEffectiveBitrateKbps(), 3000);
 
     const table = ladder.getDiagnosticsTable();
     assert.equal(table.length, 2);
     assert.equal(table[0].gpuEncodeStatus, 'medido');
+  });
+
+  await t.test('10. Aliases legados L0–L3 mantêm total retrocompatibilidade', () => {
+    assert.ok(QUALITY_LADDER['L0']);
+    assert.ok(QUALITY_LADDER['L1']);
+    assert.ok(QUALITY_LADDER['L2']);
+    assert.ok(QUALITY_LADDER['L3']);
+    assert.equal(QUALITY_LADDER['L0'].fps, 60);
+    assert.equal(QUALITY_LADDER['L3'].fps, 30);
   });
 });

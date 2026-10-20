@@ -191,18 +191,30 @@ export class Room {
   }
 
   validateAndConsumeWorkerToken(hostId, candidateToken) {
-    if (!candidateToken || !this.workerTokens.has(candidateToken)) return false;
-    const entry = this.workerTokens.get(candidateToken);
-    if (entry.hostId !== hostId || entry.used) return false;
-    if (Date.now() - entry.createdAt > 60000) {
-      this.workerTokens.delete(candidateToken);
-      return false;
+    if (!candidateToken) return false;
+    const now = Date.now();
+    // Purga tokens expirados
+    for (const [tok, data] of this.workerTokens.entries()) {
+      if (now - data.createdAt > 60000 || data.used) {
+        this.workerTokens.delete(tok);
+      }
     }
-    entry.used = true;
+    if (!this.workerTokens.has(candidateToken)) return false;
+    const entry = this.workerTokens.get(candidateToken);
+    this.workerTokens.delete(candidateToken);
+    if (entry.hostId !== hostId || entry.used) return false;
+    if (now - entry.createdAt > 60000) return false;
     return true;
   }
 
   addWorker(user, hostId) {
+    // Se já houver um worker anterior registrado para este mesmo hostId, substitui de forma limpa
+    for (const [wId, wEntry] of this.workers.entries()) {
+      if (wEntry.hostId === hostId) {
+        this.workers.delete(wId);
+        try { wEntry.user.roomId = null; } catch (_) {}
+      }
+    }
     user.roomId = this.id;
     user.role = 'screen-worker';
     user.hostId = hostId;

@@ -31,6 +31,35 @@ const hostId = getArg('--hostId');
 const workerToken = getArg('--workerToken');
 const sourceId = getArg('--sourceId', null);
 
+const requestedCodec = (getArg('--codec', 'h264') || 'h264').toLowerCase();
+const usageProfile = getArg('--usageProfile', 'low-latency');
+const maxResolution = getArg('--maxResolution', '1080p');
+const maxFps = parseInt(getArg('--maxFps', '60'), 10) || 60;
+const adaptationProfile = getArg('--adaptationProfile', 'conservative');
+const targetBitrateKbps = parseInt(getArg('--targetBitrate', '10000'), 10) || 10000;
+const adapterLuid = getArg('--adapterLuid', null);
+
+let targetWidth = 1920;
+let targetHeight = 1080;
+if (maxResolution === '1440p') {
+  targetWidth = 2560;
+  targetHeight = 1440;
+} else if (maxResolution === '720p') {
+  targetWidth = 1280;
+  targetHeight = 720;
+} else if (maxResolution === '480p') {
+  targetWidth = 854;
+  targetHeight = 480;
+}
+
+let monitorIndex = -1;
+if (sourceId) {
+  const m = String(sourceId).match(/screen:(\d+)/i);
+  if (m) {
+    monitorIndex = parseInt(m[1], 10);
+  }
+}
+
 if (!roomId || !hostId || !workerToken) {
   console.error('[WorkerRunner] Parâmetros obrigatórios ausentes: --roomId, --hostId, --workerToken');
   process.exit(1);
@@ -137,6 +166,7 @@ console.log(`[WorkerRunner] GStreamer bin path: ${gstBinDir}`);
 
 // 5. Instanciação da Escada Adaptativa (L0–L3)
 const ladder = new AdaptiveLadder({
+  profile: adaptationProfile,
   onLevelChange: (viewerId, newLevel, reason, oldLevel) => {
     console.log(`[WorkerRunner] Nível alterado para ${viewerId}: ${oldLevel} -> ${newLevel} (${reason})`);
     
@@ -152,6 +182,10 @@ const ladder = new AdaptiveLadder({
       viewerId,
       level: newLevel,
       bitrateKbps: effectiveBitrate,
+      codec: requestedCodec.toUpperCase(),
+      resolution: `${targetWidth}x${targetHeight}`,
+      capturedResolution: `${targetWidth}x${targetHeight}`,
+      encodedResolution: `${targetWidth}x${targetHeight}`,
       reason,
       diagnostics: ladder.getDiagnosticsTable()
     });
@@ -167,7 +201,25 @@ const childEnv = {
   GST_PLUGIN_PATH: gstPluginsDir
 };
 
-const workerProcess = spawn(workerExe, [], {
+const nativeArgs = [
+  '--parent-pid', String(process.pid),
+  '--codec', requestedCodec,
+  '--usage-profile', usageProfile,
+  '--width', String(targetWidth),
+  '--height', String(targetHeight),
+  '--fps', String(maxFps),
+  '--bitrate', String(targetBitrateKbps)
+];
+if (monitorIndex >= 0) {
+  nativeArgs.push('--monitor-index', String(monitorIndex));
+}
+if (adapterLuid) {
+  nativeArgs.push('--adapter-luid', String(adapterLuid));
+}
+
+console.log('[WorkerRunner] Argumentos para screen_worker.exe:', nativeArgs.join(' '));
+
+const workerProcess = spawn(workerExe, nativeArgs, {
   env: childEnv,
   stdio: ['pipe', 'pipe', 'inherit'],
   windowsHide: true
@@ -341,7 +393,14 @@ function handleIncomingSignaling(msg) {
     case 'USER_JOINED':
       // Se um novo participante entrar, inicializa na escada e gera oferta SDP
       if (from && from !== workerUserId && from !== hostId) {
-        console.log(`[WorkerRunner] Novo participante na sala (${from}). Iniciando oferta WebRTC do worker...`);
+        // Validação de codec suportado pelo espectador (Etapa 3 - AV1 por espectador)
+        const viewerCodecs = (data?.user?.mediaState?.supportedCodecs || []).map(c => String(c).toUpperCase());
+        if (requestedCodec === 'av1' && viewerCodecs.length > 0 && !viewerCodecs.includes('AV1')) {
+          console.log(`[WorkerRunner] Espectador ${from} não suporta AV1 (codecs: ${viewerCodecs.join(', ')}). Mantendo fallback WebRTC H.264 para este espectador.`);
+          break;
+        }
+
+        console.log(`[WorkerRunner] Novo participante na sala (${from}). Iniciando oferta WebRTC do worker (${requestedCodec.toUpperCase()})...`);
         ladder.initViewer(from);
         if (isWorkerReady) {
           sendToWorkerNative({ type: 'createOffer', peerId: from });

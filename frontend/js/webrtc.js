@@ -1318,5 +1318,6 @@ export class WebRTCManager {
     this.peerMediaMap.clear();
     this.remoteStreamByTrackId.clear();
     this.tileStreams.clear();
+    this.workerPeers.clear();
   }
 }

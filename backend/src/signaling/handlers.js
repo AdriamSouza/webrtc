@@ -75,6 +75,10 @@ export function handleJoinRoom(user, message, roomManager, config) {
   const password = data?.password ? String(data.password).trim() : null;
   const hostToken = data?.hostToken ? String(data.hostToken).trim() : null;
 
+  if (Array.isArray(data?.supportedCodecs)) {
+    user.mediaState = { ...(user.mediaState || {}), supportedCodecs: data.supportedCodecs };
+  }
+
   try {
     const { room, isHost, hostToken: roomHostToken, hasPassword } = roomManager.joinRoom(
       roomId,

@@ -1138,6 +1138,7 @@
 
         <!-- ABA 5: AVANÇADO -->
         <div id="settingsTabAdvanced" class="settings-pane">
+          <!-- Seção Principal: Aceleração por GPU (worker nativo) -->
           <div class="audio-source-card">
             <div class="audio-source-header">
               <div class="audio-source-info">
@@ -1148,39 +1149,123 @@
                     <line x1="6" y1="6" x2="6.01" y2="6"/>
                     <line x1="6" y1="18" x2="6.01" y2="18"/>
                   </svg>
-                  <span>Transmissão de tela por GPU (worker nativo)</span>
+                  <span>Aceleração por GPU (worker nativo)</span>
+                  <span id="gpuWorkerStatusBadge" class="badge badge-cpu">Verificando...</span>
                 </div>
-                <span class="audio-source-help" id="gpuWorkerHelpText">Captura nativa D3D11/WGC e codificação H.264 por hardware na GPU (AMD Radeon AMF) em processo isolado. Recurso experimental desligado por padrão.</span>
+                <span class="audio-source-help" id="gpuWorkerHelpText">Captura direta D3D11/WGC e codificação por hardware na GPU (AMD Radeon AMF) em processo isolado de alta performance. O caminho WebRTC do navegador permanece como fallback seguro contínuo.</span>
               </div>
-              <label class="toggle-switch" id="toggleGpuWorkerLabel" title="Ativar ou desativar transmissão de tela por GPU">
+              <label class="toggle-switch" id="toggleGpuWorkerLabel" title="Ativar ou desativar transmissão de tela acelerada por GPU">
                 <input type="checkbox" id="settingUseGpuScreenWorker">
                 <span class="toggle-slider"></span>
               </label>
             </div>
           </div>
 
-          <!-- Parâmetros da Escada Adaptativa (L0-L3) -->
-          <div class="settings-section" style="margin-top: 18px;">
-            <label class="settings-label">Parâmetros da Escada Adaptativa (L0–L3)</label>
-            <div class="settings-help-text" style="margin-bottom: 12px; color: #a1a1aa; font-size: 0.82rem;">
-              A escada seleciona a qualidade em tempo real com base no foco da janela e nas métricas de rede de cada espectador:
+          <!-- Grade de Controles Avançados do Worker GPU -->
+          <div id="gpuWorkerControlsContainer" class="settings-section" style="margin-top: 16px;">
+            <div class="settings-grid-2col">
+              <div class="form-group">
+                <label for="settingGpuCodec">Codec do Worker</label>
+                <select id="settingGpuCodec" class="form-select">
+                  <option value="h264" selected>H.264 (AVC) • Padrão Universal</option>
+                  <option value="av1" id="optGpuCodecAv1">AV1 (Next-Gen • Requer GPU AMD RDNA 3+)</option>
+                </select>
+                <span class="settings-field-note" id="gpuCodecNote">H.264 é compatível com todos os navegadores. AV1 é servido apenas a espectadores compatíveis; decodificação em software pode sobrecarregar CPUs fracas.</span>
+              </div>
+
+              <div class="form-group">
+                <label for="settingGpuUsageProfile">Perfil de Uso do Encoder AMF</label>
+                <select id="settingGpuUsageProfile" class="form-select">
+                  <option value="low-latency" selected>Baixa Latência (Ultra-low latency, CBR, preset speed)</option>
+                  <option value="balanced">Equilibrado (Low latency, CBR, preset balanced)</option>
+                  <option value="quality">Qualidade (Transcoding, CBR, preset quality)</option>
+                </select>
+                <span class="settings-field-note" id="gpuUsageNote">Propriedades AMF aplicadas: usage=ultra-low-latency, rate-control=cbr, b-frames=0.</span>
+              </div>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
-              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
-                <span style="font-size: 0.78rem; color: #71717a; display: block;">L0 (Focado / Ultra)</span>
-                <strong style="font-size: 0.88rem; color: #f4f4f5;">1080p60 • 10 Mbps</strong>
+
+            <div class="settings-grid-2col" style="margin-top: 12px;">
+              <div class="form-group">
+                <label for="settingGpuMaxResolution">Resolução Máxima</label>
+                <select id="settingGpuMaxResolution" class="form-select">
+                  <option value="1440p">1440p (Quad HD • 2560x1440)</option>
+                  <option value="1080p" selected>1080p (Full HD • 1920x1080)</option>
+                  <option value="720p">720p (HD • 1280x720)</option>
+                  <option value="480p">480p (SD • 854x480)</option>
+                </select>
+                <span class="settings-field-note">1440p é transmitido se suportado pela GPU e monitor. Monitores menores mantêm resolução nativa sem upscaling artificial.</span>
               </div>
-              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
-                <span style="font-size: 0.78rem; color: #71717a; display: block;">L1 (Equilibrado)</span>
-                <strong style="font-size: 0.88rem; color: #f4f4f5;">720p60 • 5 Mbps</strong>
+
+              <div class="form-group">
+                <label for="settingGpuMaxFps">Taxa de Quadros Máxima</label>
+                <select id="settingGpuMaxFps" class="form-select">
+                  <option value="60" selected>60 FPS (Fluidez Máxima)</option>
+                  <option value="30">30 FPS (Econômico)</option>
+                </select>
+                <span class="settings-field-note">Quadros por segundo alvo da captura Direct3D 11.</span>
               </div>
-              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
-                <span style="font-size: 0.78rem; color: #71717a; display: block;">L2 (Segundo Plano)</span>
-                <strong style="font-size: 0.88rem; color: #f4f4f5;">720p30 • 3 Mbps</strong>
+            </div>
+
+            <div class="settings-grid-2col" style="margin-top: 12px;">
+              <div class="form-group">
+                <label for="settingGpuAdaptationProfile">Agressividade da Adaptação</label>
+                <select id="settingGpuAdaptationProfile" class="form-select">
+                  <option value="conservative" selected>Conservadora (Padrão • Suave, 4 amostras, dwell 6s)</option>
+                  <option value="balanced">Equilibrada (Moderada • 3 amostras, dwell 4s)</option>
+                  <option value="reactive">Reativa (Rápida • 2 amostras, dwell 2s)</option>
+                </select>
+                <span class="settings-field-note">Reduz bitrate em passos graduais (100% ➔ 80% ➔ 65%) antes de alterar FPS ou resolução. Telas estáticas são preservadas.</span>
               </div>
-              <div style="background: #18181b; padding: 10px; border-radius: 6px; border: 1px solid #27272a;">
-                <span style="font-size: 0.78rem; color: #71717a; display: block;">L3 (Inativo / Baixa Banda)</span>
-                <strong style="font-size: 0.88rem; color: #f4f4f5;">480p30 • 1.5 Mbps</strong>
+
+              <div class="form-group">
+                <label for="settingGpuAdapter">Placa de Vídeo (GPU)</label>
+                <select id="settingGpuAdapter" class="form-select">
+                  <option value="0">Padrão do Sistema / Automática</option>
+                </select>
+                <span class="settings-field-note" id="gpuAdapterStatusText">Consultando GPUs disponíveis...</span>
+              </div>
+            </div>
+
+            <!-- Tabela de Bitrate por Nível e Botão Restaurar Padrões -->
+            <div class="settings-section" style="margin-top: 16px; background: #18181b; padding: 12px; border-radius: 6px; border: 1px solid #27272a;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <label class="settings-label" style="margin: 0;">Escada de Bitrate por Degrau (kbps)</label>
+                <button type="button" id="btnRestoreLadderDefaults" class="btn btn-secondary btn-sm" style="font-size: 0.76rem; padding: 3px 8px;">Restaurar Padrão</button>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
+                <div style="background: #09090b; padding: 8px; border-radius: 4px; border: 1px solid #27272a;">
+                  <span style="font-size: 0.72rem; color: #a1a1aa; display: block;">1440p60</span>
+                  <div style="font-size: 0.82rem; color: #f4f4f5; font-weight: 500;">Alvo: 16 Mbps</div>
+                  <span style="font-size: 0.7rem; color: #71717a;">Mín 8 / Máx 20 Mbps</span>
+                </div>
+                <div style="background: #09090b; padding: 8px; border-radius: 4px; border: 1px solid #27272a;">
+                  <span style="font-size: 0.72rem; color: #a1a1aa; display: block;">1080p60</span>
+                  <div style="font-size: 0.82rem; color: #f4f4f5; font-weight: 500;">Alvo: 10 Mbps</div>
+                  <span style="font-size: 0.7rem; color: #71717a;">Mín 5 / Máx 12 Mbps</span>
+                </div>
+                <div style="background: #09090b; padding: 8px; border-radius: 4px; border: 1px solid #27272a;">
+                  <span style="font-size: 0.72rem; color: #a1a1aa; display: block;">1080p30</span>
+                  <div style="font-size: 0.82rem; color: #f4f4f5; font-weight: 500;">Alvo: 6 Mbps</div>
+                  <span style="font-size: 0.7rem; color: #71717a;">Mín 3.5 / Máx 8 Mbps</span>
+                </div>
+                <div style="background: #09090b; padding: 8px; border-radius: 4px; border: 1px solid #27272a;">
+                  <span style="font-size: 0.72rem; color: #a1a1aa; display: block;">720p60</span>
+                  <div style="font-size: 0.82rem; color: #f4f4f5; font-weight: 500;">Alvo: 5 Mbps</div>
+                  <span style="font-size: 0.7rem; color: #71717a;">Mín 2.5 / Máx 6 Mbps</span>
+                </div>
+                <div style="background: #09090b; padding: 8px; border-radius: 4px; border: 1px solid #27272a;">
+                  <span style="font-size: 0.72rem; color: #a1a1aa; display: block;">720p30</span>
+                  <div style="font-size: 0.82rem; color: #f4f4f5; font-weight: 500;">Alvo: 3 Mbps</div>
+                  <span style="font-size: 0.7rem; color: #71717a;">Mín 1.5 / Máx 4 Mbps</span>
+                </div>
+                <div style="background: #09090b; padding: 8px; border-radius: 4px; border: 1px solid #27272a;">
+                  <span style="font-size: 0.72rem; color: #a1a1aa; display: block;">480p30</span>
+                  <div style="font-size: 0.82rem; color: #f4f4f5; font-weight: 500;">Alvo: 1.5 Mbps</div>
+                  <span style="font-size: 0.7rem; color: #71717a;">Mín 0.8 / Máx 2 Mbps</span>
+                </div>
+              </div>
+              <div style="margin-top: 8px; font-size: 0.74rem; color: #71717a;">
+                Configurações persistidas no perfil local. As alterações de parâmetros entram em vigor na próxima transmissão.
               </div>
             </div>
           </div>
@@ -1314,7 +1399,9 @@
                 <tr>
                   <th>Espectador</th>
                   <th>Modo</th>
+                  <th>Codec</th>
                   <th>Nível Atual</th>
+                  <th>Resolução (Capt ➔ Cod ➔ Rec)</th>
                   <th>Bitrate</th>
                   <th>FPS</th>
                   <th>Perda</th>
@@ -1324,7 +1411,7 @@
               </thead>
               <tbody id="diagViewersAdaptiveTableBody">
                 <tr>
-                  <td colspan="8" class="diag-empty">Nenhum espectador conectado no momento.</td>
+                  <td colspan="10" class="diag-empty">Nenhum espectador conectado no momento.</td>
                 </tr>
               </tbody>
             </table>

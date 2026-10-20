@@ -4580,7 +4580,7 @@ body.dark-theme {
    MODAL DE DIAGNÓSTICO SIMPLES
    ========================================================================== */
 .modal-diagnostics {
-  max-width: 760px;
+  max-width: 980px;
   width: 94vw;
   max-height: 86vh;
   background: var(--bg-card);
@@ -4681,14 +4681,15 @@ body.dark-theme {
 
 .diag-table-container {
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: auto;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
 }
 
 .diag-table {
   width: 100%;
-  table-layout: fixed;
+  table-layout: auto;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.78rem;
   text-align: left;
@@ -4700,8 +4701,6 @@ body.dark-theme {
   font-weight: 600;
   padding: 7px 8px;
   border-bottom: 1px solid var(--border-color);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -4710,7 +4709,7 @@ body.dark-theme {
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   vertical-align: middle;
-  word-break: break-word;
+  white-space: nowrap;
 }
 
 .diag-table tr:last-child td {
@@ -4721,6 +4720,18 @@ body.dark-theme {
   text-align: center;
   color: var(--text-muted);
   padding: 14px !important;
+}
+
+.badge-gpu {
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #10b981 !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+.badge-cpu {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #f59e0b !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
 }
 
 .diag-encoder-raw {

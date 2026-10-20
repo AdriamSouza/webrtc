@@ -598,11 +598,28 @@ ipcMain.handle('desktop:is-gpu-worker-supported', async () => {
 ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
   try {
     if (activeScreenWorkerProcess && !activeScreenWorkerProcess.killed) {
-      console.log('[Desktop Main] Worker já em execução. PID:', activeScreenWorkerProcess.pid);
-      return { success: true, pid: activeScreenWorkerProcess.pid, alreadyRunning: true };
+      console.log('[Desktop Main] Encerrando worker anterior antes de iniciar novo ciclo. PID:', activeScreenWorkerProcess.pid);
+      try {
+        activeScreenWorkerProcess.kill();
+      } catch (_) {}
+      activeScreenWorkerProcess = null;
+      await new Promise(r => setTimeout(r, 150));
     }
 
-    const { roomId, hostId, workerToken, serverUrl, sourceId } = opts;
+    const {
+      roomId,
+      hostId,
+      workerToken,
+      serverUrl,
+      sourceId,
+      codec,
+      usageProfile,
+      maxResolution,
+      maxFps,
+      adaptationProfile,
+      targetBitrate,
+      adapterLuid
+    } = opts;
     if (!roomId || !hostId || !workerToken) {
       throw new Error('Parâmetros obrigatórios ausentes para iniciar screen-worker.');
     }
@@ -629,6 +646,27 @@ ipcMain.handle('desktop:start-screen-worker', async (event, opts = {}) => {
     ];
     if (sourceId) {
       runnerArgs.push('--sourceId', sourceId);
+    }
+    if (codec) {
+      runnerArgs.push('--codec', codec);
+    }
+    if (usageProfile) {
+      runnerArgs.push('--usageProfile', usageProfile);
+    }
+    if (maxResolution) {
+      runnerArgs.push('--maxResolution', maxResolution);
+    }
+    if (maxFps) {
+      runnerArgs.push('--maxFps', String(maxFps));
+    }
+    if (adaptationProfile) {
+      runnerArgs.push('--adaptationProfile', adaptationProfile);
+    }
+    if (targetBitrate) {
+      runnerArgs.push('--targetBitrate', String(targetBitrate));
+    }
+    if (adapterLuid) {
+      runnerArgs.push('--adapterLuid', String(adapterLuid));
     }
 
     console.log('[Desktop Main] Lançando Screen Worker subprocesso:', process.execPath, runnerArgs);
@@ -800,9 +838,39 @@ ipcMain.handle('desktop:get-gpu-diagnostics', async () => {
     cachedSystemGpu = systemGpu;
   }
 
+  const availableGpus = [];
+  if (Array.isArray(gpuInfo?.gpuDevice)) {
+    for (let i = 0; i < gpuInfo.gpuDevice.length; i++) {
+      const dev = gpuInfo.gpuDevice[i];
+      if (dev && dev.deviceString) {
+        availableGpus.push({
+          index: i,
+          name: dev.deviceString,
+          driverVersion: dev.driverVersion || 'Nativo',
+          vendorId: dev.vendorId,
+          deviceId: dev.deviceId,
+          isAmd: /amd|radeon/i.test(dev.deviceString),
+          active: dev.active !== false
+        });
+      }
+    }
+  }
+  if (availableGpus.length === 0 && systemGpu) {
+    availableGpus.push({
+      index: 0,
+      name: systemGpu.name,
+      driverVersion: systemGpu.driverVersion,
+      vendorId: systemGpu.vendorId,
+      deviceId: systemGpu.deviceId,
+      isAmd: /amd|radeon/i.test(systemGpu.name),
+      active: true
+    });
+  }
+
   return {
     gpuInfo,
     systemGpu,
+    availableGpus,
     platform: process.platform,
     arch: process.arch,
     cpuUsagePercent: metricsSummary.cpuUsagePercent,

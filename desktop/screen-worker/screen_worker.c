@@ -152,6 +152,21 @@ static void release_slot_by_peer(const char *peer_id) {
     LeaveCriticalSection(&cs_slots);
 }
 
+static DWORD parent_pid = 0;
+
+static DWORD WINAPI ParentWatchdogThread(LPVOID lpParam) {
+    if (parent_pid == 0) return 0;
+    HANDLE hParent = OpenProcess(SYNCHRONIZE, FALSE, parent_pid);
+    if (!hParent) {
+        ExitProcess(0);
+        return 0;
+    }
+    WaitForSingleObject(hParent, INFINITE);
+    CloseHandle(hParent);
+    ExitProcess(0);
+    return 0;
+}
+
 static void on_offer_created(GstPromise *promise, gpointer user_data) {
     PeerSlot *slot = (PeerSlot*)user_data;
     if (!slot || !slot->webrtc) return;
@@ -173,14 +188,18 @@ static void on_offer_created(GstPromise *promise, gpointer user_data) {
 
     gchar *text = fn_gst_sdp_message_as_text(offer->sdp);
     if (text) {
-        // Rewrite profile-level-id to 42e01f (Constrained Baseline) for Chromium HW decode compatibility
+        // Rewrite profile-level-id to 42e033 (Constrained Baseline Level 5.1) for Chromium HW decode compatibility up to 1440p60
         char *p = strstr(text, "profile-level-id=42042a");
         if (p) {
-            memcpy(p + 17, "42e01f", 6);
+            memcpy(p + 17, "42e033", 6);
         }
         char *p2 = strstr(text, "profile-level-id=4d042a");
         if (p2) {
-            memcpy(p2 + 17, "42e01f", 6);
+            memcpy(p2 + 17, "42e033", 6);
+        }
+        char *p3 = strstr(text, "profile-level-id=42e01f");
+        if (p3) {
+            memcpy(p3 + 17, "42e033", 6);
         }
     }
 
@@ -422,10 +441,39 @@ static DWORD WINAPI StdinThread(LPVOID lpParam) {
     return 0;
 }
 
+static const char* get_cmd_arg(int argc, char *argv[], const char *flag, const char *default_val) {
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp(argv[i], flag) == 0) {
+            return argv[i + 1];
+        }
+    }
+    return default_val;
+}
+
+static int get_cmd_arg_int(int argc, char *argv[], const char *flag, int default_val) {
+    const char *val = get_cmd_arg(argc, argv, flag, NULL);
+    if (val) return atoi(val);
+    return default_val;
+}
+
 int main(int argc, char *argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     InitializeCriticalSection(&cs_out);
     InitializeCriticalSection(&cs_slots);
+
+    int width = get_cmd_arg_int(argc, argv, "--width", 1920);
+    int height = get_cmd_arg_int(argc, argv, "--height", 1080);
+    int fps = get_cmd_arg_int(argc, argv, "--fps", 60);
+    int bitrate = get_cmd_arg_int(argc, argv, "--bitrate", 10000);
+    int monitor_idx = get_cmd_arg_int(argc, argv, "--monitor-index", -1);
+    const char *codec = get_cmd_arg(argc, argv, "--codec", "h264");
+    const char *usage_profile = get_cmd_arg(argc, argv, "--usage-profile", "low-latency");
+    const char *adapter_luid_str = get_cmd_arg(argc, argv, "--adapter-luid", NULL);
+    parent_pid = (DWORD)get_cmd_arg_int(argc, argv, "--parent-pid", 0);
+
+    if (parent_pid > 0) {
+        CreateThread(NULL, 0, ParentWatchdogThread, NULL, 0, NULL);
+    }
 
     memset(slots, 0, sizeof(slots));
     for (int i = 0; i < MAX_PEER_SLOTS; i++) {
@@ -473,27 +521,84 @@ int main(int argc, char *argv[]) {
     fn_gst_init(NULL, NULL);
     loop = fn_g_main_loop_new(NULL, 0);
 
-    // Build pipeline description with tee and MAX_PEER_SLOTS webrtcbin branches
+    const char *amf_usage = "ultra-low-latency";
+    const char *amf_rate_control = "cbr";
+    const char *amf_preset = "speed";
+    if (strcmp(usage_profile, "balanced") == 0) {
+        amf_usage = "low-latency";
+        amf_rate_control = "cbr";
+        amf_preset = "balanced";
+    } else if (strcmp(usage_profile, "quality") == 0) {
+        amf_usage = "transcoding";
+        amf_rate_control = "cbr";
+        amf_preset = "quality";
+    }
+
+    char capture_opts[256];
+    if (monitor_idx >= 0) {
+        snprintf(capture_opts, sizeof(capture_opts), "capture-api=wgc show-cursor=true do-timestamp=true monitor-index=%d", monitor_idx);
+    } else {
+        snprintf(capture_opts, sizeof(capture_opts), "capture-api=wgc show-cursor=true do-timestamp=true");
+    }
+
+    char enc_desc[2048];
+    const char *rtp_encoding_name = "H264";
+    if (strcmp(codec, "av1") == 0) {
+        rtp_encoding_name = "AV1";
+        if (adapter_luid_str) {
+            snprintf(enc_desc, sizeof(enc_desc),
+                "amfav1enc name=enc usage=%s rate-control=%s bitrate=%d max-bitrate=%d gop-size=%d preset=%s adapter-luid=%s ! "
+                "av1parse ! "
+                "rtpav1pay pt=96 ! ",
+                amf_usage, amf_rate_control, bitrate, bitrate, fps, amf_preset, adapter_luid_str
+            );
+        } else {
+            snprintf(enc_desc, sizeof(enc_desc),
+                "amfav1enc name=enc usage=%s rate-control=%s bitrate=%d max-bitrate=%d gop-size=%d preset=%s ! "
+                "av1parse ! "
+                "rtpav1pay pt=96 ! ",
+                amf_usage, amf_rate_control, bitrate, bitrate, fps, amf_preset
+            );
+        }
+    } else {
+        rtp_encoding_name = "H264";
+        if (adapter_luid_str) {
+            snprintf(enc_desc, sizeof(enc_desc),
+                "amfh264enc name=enc usage=%s rate-control=%s bitrate=%d max-bitrate=%d gop-size=%d b-frames=0 preset=%s min-force-key-unit-interval=500000000 adapter-luid=%s ! "
+                "video/x-h264,profile=constrained-baseline ! "
+                "h264parse config-interval=-1 ! "
+                "rtph264pay config-interval=-1 aggregate-mode=zero-latency pt=96 ! ",
+                amf_usage, amf_rate_control, bitrate, bitrate, fps, amf_preset, adapter_luid_str
+            );
+        } else {
+            snprintf(enc_desc, sizeof(enc_desc),
+                "amfh264enc name=enc usage=%s rate-control=%s bitrate=%d max-bitrate=%d gop-size=%d b-frames=0 preset=%s min-force-key-unit-interval=500000000 ! "
+                "video/x-h264,profile=constrained-baseline ! "
+                "h264parse config-interval=-1 ! "
+                "rtph264pay config-interval=-1 aggregate-mode=zero-latency pt=96 ! ",
+                amf_usage, amf_rate_control, bitrate, bitrate, fps, amf_preset
+            );
+        }
+    }
+
     char pipe_desc[16384];
     int offset = snprintf(pipe_desc, sizeof(pipe_desc),
-        "d3d11screencapturesrc capture-api=wgc show-cursor=true do-timestamp=true ! "
+        "d3d11screencapturesrc %s ! "
         "videorate skip-to-first=true ! "
-        "video/x-raw(memory:D3D11Memory),framerate=60/1 ! "
+        "video/x-raw(memory:D3D11Memory),framerate=%d/1 ! "
         "d3d11convert ! "
-        "video/x-raw(memory:D3D11Memory),format=NV12,width=1920,height=1080,framerate=60/1 ! "
-        "amfh264enc name=enc usage=ultra-low-latency rate-control=cbr bitrate=10000 max-bitrate=10000 gop-size=60 b-frames=0 preset=speed min-force-key-unit-interval=500000000 ! "
-        "video/x-h264,profile=constrained-baseline ! "
-        "h264parse config-interval=-1 ! "
-        "rtph264pay config-interval=-1 aggregate-mode=zero-latency pt=96 ! "
-        "tee name=t "
+        "video/x-raw(memory:D3D11Memory),format=NV12,width=%d,height=%d,framerate=%d/1 ! "
+        "%s"
+        "tee name=t ",
+        capture_opts, fps, width, height, fps, enc_desc
     );
 
     for (int i = 0; i < MAX_PEER_SLOTS; i++) {
         offset += snprintf(pipe_desc + offset, sizeof(pipe_desc) - offset,
             "t. ! queue leaky=downstream max-size-buffers=0 max-size-time=200000000 max-size-bytes=0 ! "
-            "application/x-rtp,media=video,encoding-name=H264,payload=96 ! "
+            "application/x-rtp,media=video,encoding-name=%s,payload=96 ! "
             "webrtcbin name=wb%d bundle-policy=max-bundle stun-server=stun://stun.l.google.com:19302 ",
-            i
+            rtp_encoding_name, i
         );
     }
 

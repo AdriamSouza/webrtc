@@ -113,7 +113,6 @@ const lightboxAuthor = document.getElementById('lightboxAuthor');
 const btnCloseLightbox = document.getElementById('btnCloseLightbox');
 const participantsList = document.getElementById('participantsList');
 const tabUserCount = document.getElementById('tabUserCount');
-const tabStreamCount = document.getElementById('tabStreamCount');
 
 // Elementos do DOM - HUD Telemetria
 const hudFps = document.getElementById('hudFps');
@@ -148,6 +147,7 @@ const peerRetryCounts = new Map(); // Map<userId, number> - Contador de tentativ
 // ESTADO DO SCREEN WORKER NATIVO (GPU AMD AMF)
 // ========================================================
 let activeWorkerPeerId = null;
+let currentWorkerSourceId = null;
 const viewersWithWorkerStream = new Set();
 let lastAdaptiveDiagnostics = null;
 let workerQualityInterval = null;
@@ -189,7 +189,61 @@ function clearAllViewerReadyTimeouts() {
   viewerFailureReasons.clear();
 }
 
+const DEFAULT_GPU_WORKER_SETTINGS = {
+  version: 2,
+  enabled: false,
+  codec: 'h264',
+  usageProfile: 'low-latency',
+  maxResolution: '1080p',
+  maxFps: 60,
+  adaptationProfile: 'conservative',
+  selectedGpuIndex: 0,
+  bitrateOverrides: {
+    '1440p60': { min: 8000, target: 16000, max: 20000 },
+    '1080p60': { min: 5000, target: 10000, max: 12000 },
+    '1080p30': { min: 3500, target: 6000, max: 8000 },
+    '720p60': { min: 2500, target: 5000, max: 6000 },
+    '720p30': { min: 1500, target: 3000, max: 4000 },
+    '480p30': { min: 800, target: 1500, max: 2000 }
+  }
+};
+
+function getGpuWorkerSettings() {
+  try {
+    const raw = localStorage.getItem('hyperstream_gpu_worker_settings_v2');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.version === 2) {
+        return {
+          ...DEFAULT_GPU_WORKER_SETTINGS,
+          ...parsed,
+          bitrateOverrides: { ...DEFAULT_GPU_WORKER_SETTINGS.bitrateOverrides, ...(parsed.bitrateOverrides || {}) }
+        };
+      }
+    }
+    const oldEnabled = localStorage.getItem('hyperstream_use_gpu_screen_worker') === 'true';
+    const migrated = { ...DEFAULT_GPU_WORKER_SETTINGS, enabled: oldEnabled };
+    localStorage.setItem('hyperstream_gpu_worker_settings_v2', JSON.stringify(migrated));
+    return migrated;
+  } catch (_) {
+    return { ...DEFAULT_GPU_WORKER_SETTINGS };
+  }
+}
+
+function saveGpuWorkerSettings(partial) {
+  try {
+    const current = getGpuWorkerSettings();
+    const updated = { ...current, ...partial, version: 2 };
+    localStorage.setItem('hyperstream_gpu_worker_settings_v2', JSON.stringify(updated));
+    localStorage.setItem('hyperstream_use_gpu_screen_worker', updated.enabled ? 'true' : 'false');
+    return updated;
+  } catch (_) {
+    return partial;
+  }
+}
+
 function startNativeGpuScreenWorker(sourceId = null) {
+  currentWorkerSourceId = sourceId;
   const currentRoom = roomState.roomId;
   if (!roomState.myUserId || !currentRoom) {
     lastScreenWorkerFailureReason = 'Host não está em uma sala ativa';
@@ -208,6 +262,8 @@ function stopNativeGpuScreenWorker() {
   clearAllViewerReadyTimeouts();
   viewersWithWorkerStream.clear();
   activeWorkerPeerId = null;
+  currentWorkerSourceId = null;
+  lastAdaptiveDiagnostics = null;
   if (workerQualityInterval) {
     clearInterval(workerQualityInterval);
     workerQualityInterval = null;
@@ -232,6 +288,16 @@ function startWorkerQualityReporting() {
         let jitterMs = 0;
         let framesDropped = 0;
         let decodeTimeMs = 0;
+        let frameWidth = 0;
+        let frameHeight = 0;
+        let fps = 0;
+        let codecName = '';
+        const codecMap = new Map();
+        for (const report of stats.values()) {
+          if (report.type === 'codec') {
+            codecMap.set(report.id, report.mimeType?.replace(/^video\//i, '').toUpperCase() || '');
+          }
+        }
         for (const report of stats.values()) {
           if (report.type === 'inbound-rtp' && report.kind === 'video') {
             packetsLost = report.packetsLost || 0;
@@ -241,12 +307,19 @@ function startWorkerQualityReporting() {
             if (report.totalDecodeTime && report.framesDecoded) {
               decodeTimeMs = (report.totalDecodeTime / report.framesDecoded) * 1000;
             }
+            if (report.frameWidth) frameWidth = report.frameWidth;
+            if (report.frameHeight) frameHeight = report.frameHeight;
+            if (report.framesPerSecond) fps = Math.round(report.framesPerSecond);
+            if (report.codecId && codecMap.has(report.codecId)) {
+              codecName = codecMap.get(report.codecId);
+            }
           }
         }
         const totalPackets = packetsReceived + packetsLost;
         const lossPercent = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
         const isFocused = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
         const state = document.hidden ? 'background' : (isFocused ? 'active' : 'background');
+        const receivedResolution = (frameWidth > 0 && frameHeight > 0) ? `${frameWidth}x${frameHeight}` : null;
 
         signaling.send('QUALITY_REPORT', {
           packetsLost,
@@ -255,6 +328,11 @@ function startWorkerQualityReporting() {
           jitterMs,
           framesDropped,
           decodeTimeMs,
+          frameWidth,
+          frameHeight,
+          receivedResolution,
+          fps,
+          codec: codecName,
           isFocused,
           state
         }, workerId);
@@ -2189,38 +2267,51 @@ async function renderDiagnosticsData() {
     if (lastAdaptiveDiagnostics && lastAdaptiveDiagnostics.length > 0) {
       viewersAdaptiveTbody.innerHTML = lastAdaptiveDiagnostics.map(item => {
         const pName = roomState.participants.get(item.viewerId)?.name || item.viewerId;
-        const isWorker = item.mode.includes('Worker GPU');
+        const isWorker = Boolean(item.mode && item.mode.includes('Worker GPU'));
+        const codec = item.codec || (isWorker ? 'H.264' : 'H.264');
+        const capt = item.capturedResolution || '1920x1080';
+        const enc = item.encodedResolution || '1920x1080';
+        const rec = item.receivedResolution || enc;
+        const resFlow = `${capt} ➔ ${enc} ➔ ${rec}`;
         return `
           <tr>
             <td><strong>${escapeHtml(pName)}</strong></td>
-            <td><span class="badge ${isWorker ? 'badge-success' : 'badge-neutral'}">${escapeHtml(item.mode)}</span></td>
-            <td><strong>${escapeHtml(item.level || 'L0')} (${escapeHtml(item.label || '1080p60')})</strong></td>
+            <td><span class="badge ${isWorker ? 'badge-gpu' : 'badge-cpu'}">${escapeHtml(item.mode)}</span></td>
+            <td><span class="badge badge-neutral">${escapeHtml(codec)}</span></td>
+            <td><strong>${escapeHtml(item.level || '1080p60')}</strong></td>
+            <td style="font-family: monospace; font-size: 0.75rem;">${escapeHtml(resFlow)}</td>
             <td style="font-family: monospace;">${escapeHtml(item.bitrateKbps ? `${(item.bitrateKbps / 1000).toFixed(1)} Mbps` : '—')}</td>
             <td style="font-family: monospace;">${escapeHtml(item.fps ? `${item.fps} FPS` : '60 FPS')}</td>
             <td style="font-family: monospace;">${escapeHtml(item.lossPercent || '0.0%')}</td>
-            <td><span style="font-size: 0.8rem; color: #a1a1aa;">${escapeHtml(item.lastReason || (isWorker ? 'Normal' : (viewerFailureReasons.get(item.viewerId) || lastScreenWorkerFailureReason)))}</span></td>
+            <td><span style="font-size: 0.8rem; color: #a1a1aa;">${escapeHtml(item.lastReason || (isWorker ? 'Estável' : (viewerFailureReasons.get(item.viewerId) || lastScreenWorkerFailureReason)))}</span></td>
             <td><span class="badge ${item.gpuEncodeStatus === 'medido' ? 'badge-primary' : 'badge-neutral'}">${escapeHtml(item.gpuEncodeStatus || 'não medido')}</span></td>
           </tr>
         `;
       }).join('');
     } else if (participantsList.length === 0) {
-      viewersAdaptiveTbody.innerHTML = `<tr><td colspan="8" class="diag-empty">Nenhum espectador conectado no momento. (Status do Screen Worker: <strong>${escapeHtml(lastScreenWorkerFailureReason)}</strong>)</td></tr>`;
+      viewersAdaptiveTbody.innerHTML = `<tr><td colspan="10" class="diag-empty">Nenhum espectador conectado no momento. (Status do Screen Worker: <strong>${escapeHtml(lastScreenWorkerFailureReason)}</strong>)</td></tr>`;
     } else {
+      const gpuWorkerCfg = getGpuWorkerSettings();
+      const targetRes = gpuWorkerCfg.maxResolution === '1440p' ? '2560x1440' : (gpuWorkerCfg.maxResolution === '720p' ? '1280x720' : (gpuWorkerCfg.maxResolution === '480p' ? '854x480' : '1920x1080'));
       viewersAdaptiveTbody.innerHTML = participantsList.map(p => {
         const isWorker = isWorkerActive && (viewersWithWorkerStream.has(p.id) || webrtc.hostToWorkerMap.size > 0);
         const mode = isWorker ? 'Worker GPU (AMD AMF)' : 'WebRTC (Chromium)';
+        const codec = isWorker ? (gpuWorkerCfg.codec || 'H.264').toUpperCase() : 'H.264';
         const gpuStatus = isWorker ? 'medido' : 'não medido';
-        const level = isWorker ? 'L0 (1080p60)' : 'Padrão';
-        const bitrate = isWorker ? '10.0 Mbps' : '8.0 Mbps';
-        const fps = '60 FPS';
+        const level = isWorker ? `${gpuWorkerCfg.maxResolution || '1080p'}60` : 'Padrão';
+        const bitrate = isWorker ? (gpuWorkerCfg.maxResolution === '1440p' ? '16.0 Mbps' : '10.0 Mbps') : '8.0 Mbps';
+        const fps = `${gpuWorkerCfg.maxFps || 60} FPS`;
         const loss = '0.0%';
+        const resFlow = `${targetRes} ➔ ${targetRes} ➔ ${targetRes}`;
         const reason = isWorker ? 'Transmissão direta AMF ativa' : (viewerFailureReasons.get(p.id) || lastScreenWorkerFailureReason);
 
         return `
           <tr>
             <td><strong>${escapeHtml(p.name)}</strong></td>
-            <td><span class="badge ${isWorker ? 'badge-success' : 'badge-neutral'}">${escapeHtml(mode)}</span></td>
+            <td><span class="badge ${isWorker ? 'badge-gpu' : 'badge-cpu'}">${escapeHtml(mode)}</span></td>
+            <td><span class="badge badge-neutral">${escapeHtml(codec)}</span></td>
             <td><strong>${escapeHtml(level)}</strong></td>
+            <td style="font-family: monospace; font-size: 0.75rem;">${escapeHtml(resFlow)}</td>
             <td style="font-family: monospace;">${escapeHtml(bitrate)}</td>
             <td style="font-family: monospace;">${escapeHtml(fps)}</td>
             <td style="font-family: monospace;">${escapeHtml(loss)}</td>
@@ -2454,10 +2545,15 @@ async function enterRoom({ roomId, username, isHost, password, submitBtn }) {
   try {
     await signaling.connect();
     signaling.roomId = sanitizedRoom;
+    const supportedCodecs = (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function')
+      ? (RTCRtpReceiver.getCapabilities('video')?.codecs || []).map(c => c.mimeType.replace(/^video\//i, '').toUpperCase())
+      : ['H264', 'VP8'];
+
     const sent = signaling.send('JOIN_ROOM', {
       username: cleanUsername,
       isHost,
-      password: cleanPassword
+      password: cleanPassword,
+      supportedCodecs: [...new Set(supportedCodecs)]
     });
 
     if (!sent) {
@@ -2588,7 +2684,8 @@ function setupEventListeners() {
             baseUrl = sUrl.replace(/\/$/, '');
           }
         } catch (_) {}
-      } else if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+      }
+      if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
         baseUrl = 'https://hyperstream-g9gz.onrender.com';
       }
 
@@ -3172,7 +3269,7 @@ async function handleToggleScreenShare() {
       signaling.send('MEDIA_STATE', { type: 'screen', active: true, trackId, streamId, userId: roomState.myUserId });
 
       // Se a opção de Worker Nativo por GPU estiver ligada nas configurações (DESLIGADA por padrão)
-      const useGpuWorker = localStorage.getItem('hyperstream_use_gpu_screen_worker') === 'true';
+      const useGpuWorker = getGpuWorkerSettings().enabled;
       if (!window.desktopAPI) {
         lastScreenWorkerFailureReason = 'Disponível apenas no Desktop Windows';
         console.log(`[ScreenWorker] Recusa: ${lastScreenWorkerFailureReason}. Utilizando WebRTC padrão.`);
@@ -3618,11 +3715,19 @@ function setupSignalingEvents() {
         const sUrl = (window.desktopAPI && typeof window.desktopAPI.getServerUrl === 'function')
           ? await window.desktopAPI.getServerUrl()
           : null;
+        const workerSettings = getGpuWorkerSettings();
         const res = await window.desktopAPI.startScreenWorker({
           roomId: roomState.roomId,
           hostId: roomState.myUserId,
           workerToken: token,
-          serverUrl: sUrl
+          serverUrl: sUrl,
+          sourceId: currentWorkerSourceId,
+          codec: workerSettings.codec,
+          usageProfile: workerSettings.usageProfile,
+          maxResolution: workerSettings.maxResolution,
+          maxFps: workerSettings.maxFps,
+          adaptationProfile: workerSettings.adaptationProfile,
+          targetBitrate: workerSettings.bitrateOverrides?.[workerSettings.maxResolution + (workerSettings.maxFps || 60)]?.target || 10000
         });
         if (!res || !res.success) {
           lastScreenWorkerFailureReason = res?.error || 'Falha ao iniciar processo do worker';
@@ -3962,10 +4067,14 @@ function setupSignalingEvents() {
       if (roomState.roomId) {
         console.log(`[App] WebSocket de sinalização reconectado. Re-ingressando na sala ${roomState.roomId}...`);
         signaling.roomId = roomState.roomId;
+        const reconnCodecs = (typeof RTCRtpReceiver !== 'undefined' && typeof RTCRtpReceiver.getCapabilities === 'function')
+          ? (RTCRtpReceiver.getCapabilities('video')?.codecs || []).map(c => c.mimeType.replace(/^video\//i, '').toUpperCase())
+          : ['H264', 'VP8'];
         signaling.send('JOIN_ROOM', {
           roomId: roomState.roomId,
           username: roomState.myUserName,
-          pin: roomState.roomPin
+          pin: roomState.roomPin,
+          supportedCodecs: [...new Set(reconnCodecs)]
         });
 
         // Aguarda 1s para renegociar túneis de mídia com os demais participantes
@@ -4018,8 +4127,9 @@ function updateParticipantsUI() {
 }
 
 function updateStreamCatalogBadge() {
-  if (tabStreamCount) {
-    tabStreamCount.textContent = roomState.availableStreams.size;
+  const el = document.getElementById('tabStreamCount');
+  if (el) {
+    el.textContent = roomState.availableStreams.size;
   }
 }
 
@@ -4621,7 +4731,6 @@ function setupSettingsModal() {
       };
 
       localStorage.setItem('hyperstream_audio_apps_config', JSON.stringify(stateObj));
-      localStorage.setItem('hyperstream_audio_apps_filter', JSON.stringify(stateObj));
 
       // Notifica imediatamente o MediaManager com os apps e PIDs excluídos
       if (media && typeof media.updateAudioAppFilter === 'function') {
@@ -5063,12 +5172,42 @@ function setupSettingsModal() {
 
   // --- CONTROLES DA ABA AVANÇADO (SCREEN WORKER GPU AMD AMF) ---
   const settingUseGpuScreenWorker = document.getElementById('settingUseGpuScreenWorker');
+  const gpuWorkerStatusBadge = document.getElementById('gpuWorkerStatusBadge');
   const gpuWorkerHelpText = document.getElementById('gpuWorkerHelpText');
+  const gpuWorkerControlsContainer = document.getElementById('gpuWorkerControlsContainer');
+  const settingGpuCodec = document.getElementById('settingGpuCodec');
+  const optGpuCodecAv1 = document.getElementById('optGpuCodecAv1');
+  const settingGpuUsageProfile = document.getElementById('settingGpuUsageProfile');
+  const gpuUsageNote = document.getElementById('gpuUsageNote');
+  const settingGpuMaxResolution = document.getElementById('settingGpuMaxResolution');
+  const settingGpuMaxFps = document.getElementById('settingGpuMaxFps');
+  const settingGpuAdaptationProfile = document.getElementById('settingGpuAdaptationProfile');
+  const settingGpuAdapter = document.getElementById('settingGpuAdapter');
+  const gpuAdapterStatusText = document.getElementById('gpuAdapterStatusText');
+  const btnRestoreLadderDefaults = document.getElementById('btnRestoreLadderDefaults');
+
+  const currentGpuSettings = getGpuWorkerSettings();
+
+  function updateAppliedPropsNote(profile, codec) {
+    if (!gpuUsageNote) return;
+    const isAv1 = codec === 'av1';
+    const encName = isAv1 ? 'amfav1enc' : 'amfh264enc';
+    let usage = 'ultra-low-latency';
+    let preset = 'speed';
+    if (profile === 'balanced') {
+      usage = 'low-latency';
+      preset = 'balanced';
+    } else if (profile === 'quality') {
+      usage = 'transcoding';
+      preset = 'quality';
+    }
+    const bframes = isAv1 ? '' : ' b-frames=0';
+    gpuUsageNote.textContent = `Propriedades AMF aplicadas: ${encName} usage=${usage} rate-control=cbr preset=${preset}${bframes}.`;
+  }
 
   if (settingUseGpuScreenWorker) {
-    const savedWorkerPref = localStorage.getItem('hyperstream_use_gpu_screen_worker') === 'true';
-    settingUseGpuScreenWorker.checked = savedWorkerPref;
-    lastScreenWorkerFailureReason = savedWorkerPref ? 'Toggle ativado' : 'Toggle desligado';
+    settingUseGpuScreenWorker.checked = currentGpuSettings.enabled;
+    lastScreenWorkerFailureReason = currentGpuSettings.enabled ? 'Toggle ativado' : 'Toggle desligado';
 
     if (window.desktopAPI && typeof window.desktopAPI.isGpuWorkerSupported === 'function') {
       window.desktopAPI.isGpuWorkerSupported().then(res => {
@@ -5076,35 +5215,125 @@ function setupSettingsModal() {
           settingUseGpuScreenWorker.checked = false;
           settingUseGpuScreenWorker.disabled = true;
           lastScreenWorkerFailureReason = res.reason;
-          console.warn(`[ScreenWorker] Recusa de hardware/ambiente: ${res.reason}`);
+          if (gpuWorkerStatusBadge) {
+            gpuWorkerStatusBadge.className = 'badge badge-cpu';
+            gpuWorkerStatusBadge.textContent = 'Indisponível';
+            gpuWorkerStatusBadge.title = res.reason;
+          }
           if (gpuWorkerHelpText) {
-            gpuWorkerHelpText.innerHTML = `<span style="color: #ef4444;">⚠️ Indisponível neste dispositivo: ${escapeHtml(res.reason)}.</span>`;
+            gpuWorkerHelpText.innerHTML = `<span style="color: #a1a1aa;">${escapeHtml(res.reason)}. O streaming utiliza o pipeline WebRTC padrão com total estabilidade.</span>`;
+          }
+          if (gpuWorkerControlsContainer) {
+            gpuWorkerControlsContainer.style.opacity = '0.55';
+          }
+        } else {
+          if (gpuWorkerStatusBadge) {
+            gpuWorkerStatusBadge.className = 'badge badge-gpu';
+            gpuWorkerStatusBadge.textContent = 'Disponível';
           }
         }
       }).catch((err) => {
         settingUseGpuScreenWorker.checked = false;
         settingUseGpuScreenWorker.disabled = true;
         lastScreenWorkerFailureReason = 'Falha ao verificar suporte';
-        console.warn(`[ScreenWorker] Recusa: ${lastScreenWorkerFailureReason}`, err);
+        if (gpuWorkerStatusBadge) {
+          gpuWorkerStatusBadge.className = 'badge badge-cpu';
+          gpuWorkerStatusBadge.textContent = 'Indisponível';
+        }
       });
     } else {
       settingUseGpuScreenWorker.checked = false;
       settingUseGpuScreenWorker.disabled = true;
       lastScreenWorkerFailureReason = 'Disponível apenas no Desktop Windows';
+      if (gpuWorkerStatusBadge) {
+        gpuWorkerStatusBadge.className = 'badge badge-cpu';
+        gpuWorkerStatusBadge.textContent = 'Web (Desktop apenas)';
+      }
       if (gpuWorkerHelpText) {
         gpuWorkerHelpText.innerHTML = `<span style="color: #71717a;">Disponível exclusivamente no app Desktop Hyperstream para Windows com GPU AMD Radeon.</span>`;
+      }
+      if (gpuWorkerControlsContainer) {
+        gpuWorkerControlsContainer.style.opacity = '0.55';
       }
     }
 
     settingUseGpuScreenWorker.addEventListener('change', () => {
       const isEnabled = settingUseGpuScreenWorker.checked;
-      localStorage.setItem('hyperstream_use_gpu_screen_worker', isEnabled ? 'true' : 'false');
+      saveGpuWorkerSettings({ enabled: isEnabled });
       lastScreenWorkerFailureReason = isEnabled ? 'Toggle ativado' : 'Toggle desligado';
-      console.log(`[ScreenWorker] Configuração alterada pelo usuário: ${lastScreenWorkerFailureReason}`);
       if (window.desktopAPI && typeof window.desktopAPI.savePreferences === 'function') {
         window.desktopAPI.savePreferences({ useGpuScreenWorker: isEnabled });
       }
-      appendSystemChat(`Transmissão de tela por GPU nativa: ${isEnabled ? 'Ativada' : 'Desativada'}`);
+      appendSystemChat(`Aceleração por GPU (worker nativo): ${isEnabled ? 'Ativada' : 'Desativada'}`);
+    });
+  }
+
+  if (settingGpuCodec) {
+    settingGpuCodec.value = currentGpuSettings.codec || 'h264';
+    settingGpuCodec.addEventListener('change', () => {
+      saveGpuWorkerSettings({ codec: settingGpuCodec.value });
+      updateAppliedPropsNote(settingGpuUsageProfile?.value || 'low-latency', settingGpuCodec.value);
+      appendSystemChat(`Codec do worker GPU alterado para: ${settingGpuCodec.value.toUpperCase()} (vale para a próxima transmissão)`);
+    });
+  }
+
+  if (settingGpuUsageProfile) {
+    settingGpuUsageProfile.value = currentGpuSettings.usageProfile || 'low-latency';
+    updateAppliedPropsNote(settingGpuUsageProfile.value, settingGpuCodec?.value || 'h264');
+    settingGpuUsageProfile.addEventListener('change', () => {
+      saveGpuWorkerSettings({ usageProfile: settingGpuUsageProfile.value });
+      updateAppliedPropsNote(settingGpuUsageProfile.value, settingGpuCodec?.value || 'h264');
+      appendSystemChat(`Perfil AMF alterado para: ${settingGpuUsageProfile.value} (vale para a próxima transmissão)`);
+    });
+  }
+
+  if (settingGpuMaxResolution) {
+    settingGpuMaxResolution.value = currentGpuSettings.maxResolution || '1080p';
+    settingGpuMaxResolution.addEventListener('change', () => {
+      saveGpuWorkerSettings({ maxResolution: settingGpuMaxResolution.value });
+      appendSystemChat(`Resolução máxima da GPU: ${settingGpuMaxResolution.value} (vale para a próxima transmissão)`);
+    });
+  }
+
+  if (settingGpuMaxFps) {
+    settingGpuMaxFps.value = String(currentGpuSettings.maxFps || 60);
+    settingGpuMaxFps.addEventListener('change', () => {
+      saveGpuWorkerSettings({ maxFps: parseInt(settingGpuMaxFps.value, 10) || 60 });
+      appendSystemChat(`Taxa de quadros máxima da GPU: ${settingGpuMaxFps.value} FPS (vale para a próxima transmissão)`);
+    });
+  }
+
+  if (settingGpuAdaptationProfile) {
+    settingGpuAdaptationProfile.value = currentGpuSettings.adaptationProfile || 'conservative';
+    settingGpuAdaptationProfile.addEventListener('change', () => {
+      saveGpuWorkerSettings({ adaptationProfile: settingGpuAdaptationProfile.value });
+      appendSystemChat(`Agressividade da adaptação: ${settingGpuAdaptationProfile.value} (vale para a próxima transmissão)`);
+    });
+  }
+
+  if (settingGpuAdapter && window.desktopAPI && typeof window.desktopAPI.getGpuDiagnostics === 'function') {
+    window.desktopAPI.getGpuDiagnostics().then(diag => {
+      const gpus = diag?.availableGpus || [];
+      if (gpus.length > 0) {
+        settingGpuAdapter.innerHTML = gpus.map((g, idx) => {
+          const activeTag = g.active ? ' (Ativa)' : '';
+          const amdTag = g.isAmd ? ' [AMD AMF]' : '';
+          return `<option value="${idx}">${escapeHtml(g.name)}${activeTag}${amdTag}</option>`;
+        }).join('');
+        const activeGpu = gpus.find(g => g.active) || gpus[0];
+        if (gpuAdapterStatusText && activeGpu) {
+          gpuAdapterStatusText.textContent = `GPU ativa no sistema: ${activeGpu.name} (Driver ${activeGpu.driverVersion || 'Nativo'})`;
+        }
+      }
+    }).catch(() => {});
+  }
+
+  if (btnRestoreLadderDefaults) {
+    btnRestoreLadderDefaults.addEventListener('click', () => {
+      saveGpuWorkerSettings({
+        bitrateOverrides: { ...DEFAULT_GPU_WORKER_SETTINGS.bitrateOverrides }
+      });
+      appendSystemChat('Degraus de bitrate da GPU restaurados para os valores padrão.');
     });
   }
 
